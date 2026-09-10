@@ -1,0 +1,1382 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Huamei standalone development Mock",
+    "version": "2.0.0",
+    "description": "Proposed integration exercise. NOT the production API. All replies marked mock=true. Partial role/tenant simulation only."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:4390"
+    }
+  ],
+  "paths": {
+    "/dev/v2/health": {
+      "get": {
+        "summary": "/dev/v2/health",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        }
+      }
+    },
+    "/dev/v2/login": {
+      "post": {
+        "summary": "/dev/v2/login",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "username",
+                  "password"
+                ],
+                "properties": {
+                  "username": {
+                    "type": "string"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dev/v2/logout": {
+      "post": {
+        "summary": "/dev/v2/logout",
+        "security": [
+          {
+            "DevBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [],
+                "properties": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/dev/v2/identity": {
+      "get": {
+        "summary": "/dev/v2/identity",
+        "security": [
+          {
+            "DevBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        }
+      }
+    },
+    "/dev/v2/conversations": {
+      "get": {
+        "summary": "/dev/v2/conversations",
+        "security": [
+          {
+            "DevBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        }
+      }
+    },
+    "/dev/v2/knowledge": {
+      "get": {
+        "summary": "/dev/v2/knowledge",
+        "security": [
+          {
+            "DevBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "audience",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "public",
+                "internal"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "/dev/v2/events": {
+      "get": {
+        "summary": "/dev/v2/events",
+        "security": [
+          {
+            "DevBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        },
+        "parameters": [
+          {
+            "in": "query",
+            "name": "after",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ]
+      }
+    },
+    "/dev/v2/conversations/{id}/messages": {
+      "post": {
+        "summary": "/dev/v2/conversations/{id}/messages",
+        "security": [
+          {
+            "DevBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "role",
+                  "content"
+                ],
+                "properties": {
+                  "role": {
+                    "enum": [
+                      "user",
+                      "assistant",
+                      "human"
+                    ]
+                  },
+                  "content": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1000
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 100
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Mock-Scenario",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "success",
+                "storage_failure",
+                "timeout",
+                "conflict",
+                "member_true",
+                "member_false",
+                "member_error",
+                "member_invalid"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          }
+        ]
+      }
+    },
+    "/dev/v2/conversations/{id}/contact": {
+      "post": {
+        "summary": "/dev/v2/conversations/{id}/contact",
+        "security": [
+          {
+            "DevBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "mobile"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "mobile": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 100
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Mock-Scenario",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "success",
+                "storage_failure",
+                "timeout",
+                "conflict",
+                "member_true",
+                "member_false",
+                "member_error",
+                "member_invalid"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          }
+        ]
+      }
+    },
+    "/dev/v2/conversations/{id}/member": {
+      "post": {
+        "summary": "/dev/v2/conversations/{id}/member",
+        "security": [
+          {
+            "DevBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [],
+                "properties": {}
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 100
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Mock-Scenario",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "success",
+                "storage_failure",
+                "timeout",
+                "conflict",
+                "member_true",
+                "member_false",
+                "member_error",
+                "member_invalid"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          }
+        ]
+      }
+    },
+    "/dev/v2/conversations/{id}/claim": {
+      "post": {
+        "summary": "/dev/v2/conversations/{id}/claim",
+        "security": [
+          {
+            "DevBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "expected_version"
+                ],
+                "properties": {
+                  "expected_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 100
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Mock-Scenario",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "success",
+                "storage_failure",
+                "timeout",
+                "conflict",
+                "member_true",
+                "member_false",
+                "member_error",
+                "member_invalid"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          }
+        ]
+      }
+    },
+    "/dev/v2/conversations/{id}/release": {
+      "post": {
+        "summary": "/dev/v2/conversations/{id}/release",
+        "security": [
+          {
+            "DevBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "expected_version"
+                ],
+                "properties": {
+                  "expected_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 100
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Mock-Scenario",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "success",
+                "storage_failure",
+                "timeout",
+                "conflict",
+                "member_true",
+                "member_false",
+                "member_error",
+                "member_invalid"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          }
+        ]
+      }
+    },
+    "/dev/v2/conversations/{id}/read": {
+      "post": {
+        "summary": "/dev/v2/conversations/{id}/read",
+        "security": [
+          {
+            "DevBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "seq"
+                ],
+                "properties": {
+                  "seq": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 100
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Mock-Scenario",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "success",
+                "storage_failure",
+                "timeout",
+                "conflict",
+                "member_true",
+                "member_false",
+                "member_error",
+                "member_invalid"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          }
+        ]
+      }
+    },
+    "/dev/v2/conversations/{id}/appointment": {
+      "post": {
+        "summary": "/dev/v2/conversations/{id}/appointment",
+        "security": [
+          {
+            "DevBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          },
+          "201": {
+            "description": "Registered intent, not a reserved physician slot"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "preferred_date",
+                  "customer_confirmed"
+                ],
+                "properties": {
+                  "preferred_date": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "customer_confirmed": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 100
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Mock-Scenario",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "success",
+                "storage_failure",
+                "timeout",
+                "conflict",
+                "member_true",
+                "member_false",
+                "member_error",
+                "member_invalid"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          }
+        ]
+      }
+    },
+    "/dev/v2/appointments/{id}/reschedule": {
+      "post": {
+        "summary": "/dev/v2/appointments/{id}/reschedule",
+        "security": [
+          {
+            "DevBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "expected_version",
+                  "customer_confirmed",
+                  "preferred_date"
+                ],
+                "properties": {
+                  "expected_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "customer_confirmed": {
+                    "const": true
+                  },
+                  "preferred_date": {
+                    "type": "string",
+                    "format": "date"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 100
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Mock-Scenario",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "success",
+                "storage_failure",
+                "timeout",
+                "conflict",
+                "member_true",
+                "member_false",
+                "member_error",
+                "member_invalid"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          }
+        ]
+      }
+    },
+    "/dev/v2/appointments/{id}/cancel": {
+      "post": {
+        "summary": "/dev/v2/appointments/{id}/cancel",
+        "security": [
+          {
+            "DevBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "expected_version",
+                  "customer_confirmed"
+                ],
+                "properties": {
+                  "expected_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "customer_confirmed": {
+                    "const": true
+                  },
+                  "preferred_date": {
+                    "type": "string",
+                    "format": "date"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 100
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Mock-Scenario",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "success",
+                "storage_failure",
+                "timeout",
+                "conflict",
+                "member_true",
+                "member_false",
+                "member_error",
+                "member_invalid"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          }
+        ]
+      }
+    },
+    "/dev/v2/knowledge/{id}/publish": {
+      "post": {
+        "summary": "/dev/v2/knowledge/{id}/publish",
+        "security": [
+          {
+            "DevBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "expected_version",
+                  "review_passed"
+                ],
+                "properties": {
+                  "expected_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "review_passed": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 100
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Mock-Scenario",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "success",
+                "storage_failure",
+                "timeout",
+                "conflict",
+                "member_true",
+                "member_false",
+                "member_error",
+                "member_invalid"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          }
+        ]
+      }
+    },
+    "/dev/v2/knowledge/{id}/withdraw": {
+      "post": {
+        "summary": "/dev/v2/knowledge/{id}/withdraw",
+        "security": [
+          {
+            "DevBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mock result; all responses include mock=true"
+          },
+          "400": {
+            "description": "Input invalid"
+          },
+          "401": {
+            "description": "No valid dev session"
+          },
+          "403": {
+            "description": "Role denied"
+          },
+          "404": {
+            "description": "No accessible object"
+          },
+          "409": {
+            "description": "Version/idempotency conflict"
+          },
+          "503": {
+            "description": "Injected storage failure"
+          },
+          "504": {
+            "description": "Injected timeout"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "expected_version"
+                ],
+                "properties": {
+                  "expected_version": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "review_passed": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 100
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Mock-Scenario",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "success",
+                "storage_failure",
+                "timeout",
+                "conflict",
+                "member_true",
+                "member_false",
+                "member_error",
+                "member_invalid"
+              ]
+            }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "DevBearer": {
+        "type": "http",
+        "scheme": "bearer"
+      }
+    }
+  }
+}

@@ -1,0 +1,4230 @@
+{
+  "schema_version": "1.0",
+  "baseline_commit": "e47b57e0f64a3694f09b25e29c5b440666624013",
+  "status_note": "requirements only; implementation acceptance not asserted",
+  "stories": [
+    {
+      "id": "A-001",
+      "owner": "A",
+      "title": "首次进入及会话恢复",
+      "epic": "前台会话",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望刷新后继续原来的咨询，以便不用重复讲述需求。",
+      "example": "先问热玛吉并留下一条消息，再刷新；另一浏览器新开咨询。",
+      "acceptance": [
+        "首次进入仅出现一次AI身份说明与欢迎语",
+        "刷新后恢复服务端确认的会话与消息顺序，未发送草稿不自动发送",
+        "另一浏览器不能仅通过替换session_id读取原会话",
+        "恢复失败明确提供重试或新建入口，不把旧消息挂到新客户"
+      ],
+      "exceptions": "会话凭据过期时清理失效绑定；历史加载失败不显示“没有历史”。",
+      "implementation_tasks": [
+        "梳理session_id/session_token与Cookie的用途",
+        "实现恢复中、成功、失效三种页面状态",
+        "与B核对历史消息回读契约"
+      ],
+      "dependencies": [
+        "B-003",
+        "B-004"
+      ],
+      "code_paths": [
+        "apps/acquisition-advisor/src/App.jsx",
+        "server/acquisition-session.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-001-AC1",
+        "TC-A-001-AC2",
+        "TC-A-001-AC3",
+        "TC-A-001-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "apps/acquisition-advisor/src/App.jsx": "A",
+        "server/acquisition-session.mjs": "A"
+      }
+    },
+    {
+      "id": "A-002",
+      "owner": "A",
+      "title": "连续输入、键盘发送与焦点",
+      "epic": "前台会话",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望连续发送咨询时输入框保持可用，以便无需每轮重新点击。",
+      "example": "连续三轮键盘发送；中文输入法候选词确认；鼠标点击发送；手动切到资料按钮。",
+      "acceptance": [
+        "键盘发送和回复结束后可继续输入，草稿不因消息更新丢失",
+        "中文组合输入的Enter不误发，Shift+Enter换行",
+        "空白内容不发送，连点不触发重复请求",
+        "用户主动移到其他控件时不强行抢回焦点，按钮有发送中状态"
+      ],
+      "exceptions": "请求失败保留可恢复的原文；页面卸载不执行失效focus。",
+      "implementation_tasks": [
+        "分离草稿与消息状态",
+        "处理composition事件与发送锁",
+        "补齐焦点、键盘和鼠标三组浏览器步骤"
+      ],
+      "dependencies": [],
+      "code_paths": [
+        "apps/acquisition-advisor/src/App.jsx"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-002-AC1",
+        "TC-A-002-AC2",
+        "TC-A-002-AC3",
+        "TC-A-002-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "apps/acquisition-advisor/src/App.jsx": "A"
+      }
+    },
+    {
+      "id": "A-003",
+      "owner": "A",
+      "title": "消息状态与重复提交",
+      "epic": "前台会话",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望区分发送中、成功和失败，以便知道消息是否真正送达。",
+      "example": "弱网下连点发送并重试同一条“我想面诊”。",
+      "acceptance": [
+        "用户消息有稳定客户端消息标识并与服务端回执关联",
+        "重试同一消息不增加重复对话、客户或预约记录",
+        "失败消息可以重试，成功回执到达后只更新原消息",
+        "消息状态以服务端确认结果为准，不用本地添加气泡表示业务成功"
+      ],
+      "exceptions": "超时但服务端已提交时先按同一标识查询/重试；具体协议与B共同冻结。",
+      "implementation_tasks": [
+        "新增或复用client_message_id映射",
+        "对接幂等回执",
+        "在前台实现状态组件及重试入口"
+      ],
+      "dependencies": [
+        "B-004"
+      ],
+      "code_paths": [
+        "apps/acquisition-advisor/src/App.jsx",
+        "server/acquisition-orchestration.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-003-AC1",
+        "TC-A-003-AC2",
+        "TC-A-003-AC3",
+        "TC-A-003-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "apps/acquisition-advisor/src/App.jsx": "A",
+        "server/acquisition-orchestration.mjs": "A"
+      }
+    },
+    {
+      "id": "A-004",
+      "owner": "A",
+      "title": "取消等待与失败恢复",
+      "epic": "前台会话",
+      "priority": "P1",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望停止长时间等待并继续提问，以便不中断后续咨询。",
+      "example": "模型延迟超过界面等待期，客户点击停止后发送下一条。",
+      "acceptance": [
+        "显示停止等待入口和明确等待状态",
+        "停止后输入可用，晚到的旧回复不插入新轮次",
+        "网络超时与业务失败分别提示，并提供可控重试",
+        "停止等待不被解释为撤销已保存联系方式或已登记预约"
+      ],
+      "exceptions": "后端尚不支持真正取消时文案为“停止等待”；不得宣称远端任务已取消。",
+      "implementation_tasks": [
+        "为请求维护轮次与AbortController",
+        "过滤过期响应",
+        "与B约定业务提交后的回执恢复"
+      ],
+      "dependencies": [
+        "A-003"
+      ],
+      "code_paths": [
+        "apps/acquisition-advisor/src/App.jsx"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-004-AC1",
+        "TC-A-004-AC2",
+        "TC-A-004-AC3",
+        "TC-A-004-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "apps/acquisition-advisor/src/App.jsx": "A"
+      }
+    },
+    {
+      "id": "A-005",
+      "owner": "A",
+      "title": "真正的流式回答与最终提交",
+      "epic": "前台会话",
+      "priority": "P1",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望逐步看到回答内容，以便减少无反馈等待。",
+      "example": "首段内容到达后断网，随后重连；另一轮在生成中被人工接管。",
+      "acceptance": [
+        "中间片段标记生成中，最终回执到达才标记完成",
+        "重复片段或重连不重复追加文字",
+        "流式完成后的文本、引用和后台归档一致",
+        "人工接管或轮次失效后丢弃未提交AI片段，已显示片段妥善标记中止"
+      ],
+      "exceptions": "基线当前为完整JSON回复，reply_segments不等于token流；流式协议是新增目标。",
+      "implementation_tasks": [
+        "先和B冻结事件、序号、完成与中止协议",
+        "增加可回退的流式读取器",
+        "补齐中断、重复事件和人工竞态测试"
+      ],
+      "dependencies": [
+        "A-003",
+        "B-004",
+        "B-011"
+      ],
+      "code_paths": [
+        "apps/acquisition-advisor/src/App.jsx",
+        "server/acquisition-service-server.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-005-AC1",
+        "TC-A-005-AC2",
+        "TC-A-005-AC3",
+        "TC-A-005-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "apps/acquisition-advisor/src/App.jsx": "A",
+        "server/acquisition-service-server.mjs": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "A-006",
+      "owner": "A",
+      "title": "项目上下文连续追问",
+      "epic": "语义理解",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望用简短追问继续聊同一项目，以便不用重复项目名。",
+      "example": "“我想了解热玛吉”→“一般原理”→“恢复呢”。",
+      "acceptance": [
+        "后两轮均继承热玛吉主题",
+        "回答当前追问，不重新询问想了解什么项目",
+        "没有对应已发布资料时明确知识缺口而非编造",
+        "记录解析后的主题、意图与证据，便于定位误判"
+      ],
+      "exceptions": "若上下文同时有多个项目且无法消歧，只追问项目归属。",
+      "implementation_tasks": [
+        "构建有效主题与最近问答上下文",
+        "将省略问句交给统一规划",
+        "把用户原始案例纳入多轮回归"
+      ],
+      "dependencies": [
+        "A-012",
+        "C-014"
+      ],
+      "code_paths": [
+        "server/acquisition-session.mjs",
+        "server/acquisition-turn-plan.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-006-AC1",
+        "TC-A-006-AC2",
+        "TC-A-006-AC3",
+        "TC-A-006-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-session.mjs": "A",
+        "server/acquisition-turn-plan.mjs": "A"
+      }
+    },
+    {
+      "id": "A-007",
+      "owner": "A",
+      "title": "代词、省略与口语归一",
+      "epic": "语义理解",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望用日常表达说明想法，以便不用记住专业项目名称。",
+      "example": "“这个疼不疼”“那第二个呢”“脸有点垮”。",
+      "acceptance": [
+        "这个、第二个绑定到此前明确出现的对象",
+        "“脸有点垮”保留客户主诉，不替换成无意义的“当前改善问题”",
+        "无法唯一确定对象时仅追问一个关键点",
+        "客户口语与归一标签同时保留，可追溯且不写成医学诊断"
+      ],
+      "exceptions": "拼写相近但项目不同不能强行匹配；候选冲突由澄清解决。",
+      "implementation_tasks": [
+        "整理口语与主题候选",
+        "为指代提供最近候选列表",
+        "补齐明确、歧义、错误指代三类用例"
+      ],
+      "dependencies": [
+        "A-012"
+      ],
+      "code_paths": [
+        "server/acquisition-concern-understanding.mjs",
+        "server/acquisition-turn-plan.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-007-AC1",
+        "TC-A-007-AC2",
+        "TC-A-007-AC3",
+        "TC-A-007-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-concern-understanding.mjs": "A",
+        "server/acquisition-turn-plan.mjs": "A"
+      }
+    },
+    {
+      "id": "A-008",
+      "owner": "A",
+      "title": "纠正与否定覆盖旧信息",
+      "epic": "语义理解",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望纠正之前说错的信息，以便让后续回答使用最新意思。",
+      "example": "“不是热玛吉，是超声炮”“我不是要预约，先了解”。",
+      "acceptance": [
+        "新证据覆盖被明确纠正的主题或意愿",
+        "保留变更来源轮次，后续不复活被否定的槽位",
+        "否定预约不会创建登记或再次机械邀约",
+        "修改姓名或手机号走B的明确更新回执，不仅改模型记忆"
+      ],
+      "exceptions": "模糊纠正涉及两个字段时只确认冲突字段；不清空其他已确认信息。",
+      "implementation_tasks": [
+        "定义槽位纠正与撤销语义",
+        "更新规划校验器",
+        "验证否定、反悔、连续两次纠正"
+      ],
+      "dependencies": [
+        "A-013",
+        "B-017"
+      ],
+      "code_paths": [
+        "server/acquisition-turn-plan.mjs",
+        "server/acquisition-session.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-008-AC1",
+        "TC-A-008-AC2",
+        "TC-A-008-AC3",
+        "TC-A-008-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-turn-plan.mjs": "A",
+        "server/acquisition-session.mjs": "A"
+      }
+    },
+    {
+      "id": "A-009",
+      "owner": "A",
+      "title": "主题切换与历史返回",
+      "epic": "语义理解",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望自由切换话题后继续原话题，以便自然比较和咨询。",
+      "example": "“热玛吉多少钱”→“你们在哪”→“刚才那个维持多久”。",
+      "acceptance": [
+        "地址问题使用院方已发布信息",
+        "回到“刚才那个”可定位有效项目",
+        "切换项目不把上一个项目的价格和禁忌拼到新项目",
+        "未明确主题时追问，不输出与旧项目无关的固定模板"
+      ],
+      "exceptions": "没有公开地址资料时说明待核实，不能引用客户案例中的历史地址。",
+      "implementation_tasks": [
+        "维护主题栈或等效最近实体上下文",
+        "区分暂时插问与明确换题",
+        "覆盖跨项目及跨任务切换"
+      ],
+      "dependencies": [
+        "A-006",
+        "C-014"
+      ],
+      "code_paths": [
+        "server/acquisition-session.mjs",
+        "server/acquisition-turn-plan.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-009-AC1",
+        "TC-A-009-AC2",
+        "TC-A-009-AC3",
+        "TC-A-009-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-session.mjs": "A",
+        "server/acquisition-turn-plan.mjs": "A"
+      }
+    },
+    {
+      "id": "A-010",
+      "owner": "A",
+      "title": "一条消息中的多个问题",
+      "epic": "语义理解",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望一次提出价格、恢复和地点问题，以便得到完整而简洁的回答。",
+      "example": "“热玛吉多少钱，做完要休息吗，你们在哪？”",
+      "acceptance": [
+        "规划输出独立问题列表并按客户顺序回应",
+        "已知问题先答，未知部分明确待确认",
+        "不因识别到预约或手机号而漏答其他问题",
+        "同一回复不重复结尾邀约，每个事实关联正确证据"
+      ],
+      "exceptions": "超过单轮处理上限时说明已处理部分及待继续部分，不静默丢失。",
+      "implementation_tasks": [
+        "拆分多意图及证据检索",
+        "合并表达并去重",
+        "回归留资+问题、价格+恢复+地址组合"
+      ],
+      "dependencies": [
+        "A-012",
+        "A-019",
+        "C-014"
+      ],
+      "code_paths": [
+        "server/acquisition-turn-plan.mjs",
+        "server/agent-runtime.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-010-AC1",
+        "TC-A-010-AC2",
+        "TC-A-010-AC3",
+        "TC-A-010-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-turn-plan.mjs": "A",
+        "server/agent-runtime.mjs": "A"
+      }
+    },
+    {
+      "id": "A-011",
+      "owner": "A",
+      "title": "必要且不重复的澄清",
+      "epic": "语义理解",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望只被追问真正缺少的信息，以便快速获得有用答复。",
+      "example": "“脸有点垮，什么合适”与“我想改善法令纹”分别进入咨询。",
+      "acceptance": [
+        "先承接已经说明的部位或问题",
+        "每轮最多一个主要澄清问题，不能把已知信息再次询问",
+        "可直接回答一般信息时不以收集年龄、预算、手机号为前置条件",
+        "连续两次仍无法理解时承认不确定并提供人工入口"
+      ],
+      "exceptions": "拒绝回答某项信息后不循环追问；仍可提供范围内的一般介绍。",
+      "implementation_tasks": [
+        "判断缺失信息是否阻塞当前回答",
+        "对照历史已问字段去重",
+        "增加澄清次数和退出策略"
+      ],
+      "dependencies": [
+        "A-012"
+      ],
+      "code_paths": [
+        "server/acquisition-turn-plan.mjs",
+        "server/acquisition-presales-dialogue.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-011-AC1",
+        "TC-A-011-AC2",
+        "TC-A-011-AC3",
+        "TC-A-011-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-turn-plan.mjs": "A",
+        "server/acquisition-presales-dialogue.mjs": "A"
+      }
+    },
+    {
+      "id": "A-012",
+      "owner": "A",
+      "title": "每轮统一理解与下一步规划",
+      "epic": "对话引擎",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前运营人员，我希望模型统一理解正常咨询轮次，以便避免规则误判把客户带偏。",
+      "example": "同一输入分别包含咨询、纠正、留资和预约拒绝。",
+      "acceptance": [
+        "正常咨询先形成带版本的结构化意图、问题列表、槽位更新和下一步计划",
+        "鉴权、限流、人工接管等确定性前置边界继续由服务执行",
+        "规划输出经过schema及证据校验，不能直接执行模型给出的任意动作",
+        "记录计划来源、降级原因、run_id，能够解释走了哪条路径"
+      ],
+      "exceptions": "模型超时或JSON不合法走可观测降级，不能把规则结果标成模型理解成功。",
+      "implementation_tasks": [
+        "清点并收敛绕过统一规划的业务分支",
+        "保持业务动作通过受控服务调用",
+        "添加规则冲突与模型纠正的契约测试"
+      ],
+      "dependencies": [],
+      "code_paths": [
+        "server/acquisition-turn-plan.mjs",
+        "server/acquisition-orchestration.mjs",
+        "server/llm-client.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-012-AC1",
+        "TC-A-012-AC2",
+        "TC-A-012-AC3",
+        "TC-A-012-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-turn-plan.mjs": "A",
+        "server/acquisition-orchestration.mjs": "A",
+        "server/llm-client.mjs": "A"
+      }
+    },
+    {
+      "id": "A-013",
+      "owner": "A",
+      "title": "槽位记忆与任务状态有证据",
+      "epic": "对话引擎",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望助手准确记住我明确提供的信息，以便不被编造偏好或预约意愿。",
+      "example": "“周六有空，但还没决定预约”；下一轮问项目。",
+      "acceptance": [
+        "时间偏好与预约意愿独立存储",
+        "每次更新有用户原文证据及轮次来源",
+        "模型凭空提取的姓名、时间和意愿被拒绝",
+        "历史摘要不覆盖最近明确纠正，拒绝联系状态持续有效"
+      ],
+      "exceptions": "信息冲突时标记待确认；手机号原文不进入普通模型上下文。",
+      "implementation_tasks": [
+        "定义字段来源、时效及更新规则",
+        "本地提取联系方式后只向模型传脱敏回执",
+        "验证摘要压缩后仍保留拒绝和纠正"
+      ],
+      "dependencies": [
+        "A-012",
+        "B-015"
+      ],
+      "code_paths": [
+        "server/acquisition-turn-plan.mjs",
+        "server/chat-contact-capture.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-013-AC1",
+        "TC-A-013-AC2",
+        "TC-A-013-AC3",
+        "TC-A-013-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-turn-plan.mjs": "A",
+        "server/chat-contact-capture.mjs": "A"
+      }
+    },
+    {
+      "id": "A-014",
+      "owner": "A",
+      "title": "基于正式知识回答",
+      "epic": "知识消费",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望获得有依据且当前有效的信息，以便能够判断答复是否可靠。",
+      "example": "咨询某项目价格，随后C撤回该价格资料，再次询问。",
+      "acceptance": [
+        "只使用C授权且有效的知识证据",
+        "无命中与服务异常分开处理",
+        "回答中的项目、价格与出处一致",
+        "撤回或过期证据在最终输出前重新检查，不能继续引用缓存旧内容"
+      ],
+      "exceptions": "检索失败时不宣称院方没有该项目；说明资料暂不可用。",
+      "implementation_tasks": [
+        "对接证据ID、版本、有效期与范围",
+        "建立回答事实和引用对应关系",
+        "实现最终发布有效性校验"
+      ],
+      "dependencies": [
+        "C-014",
+        "C-015"
+      ],
+      "code_paths": [
+        "server/agent-runtime.mjs",
+        "server/huamei-knowledge.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-014-AC1",
+        "TC-A-014-AC2",
+        "TC-A-014-AC3",
+        "TC-A-014-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/agent-runtime.mjs": "A",
+        "server/huamei-knowledge.mjs": "C"
+      }
+    },
+    {
+      "id": "A-015",
+      "owner": "A",
+      "title": "自然承接与结尾去模板化",
+      "epic": "回答表达",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望收到贴合当前话题的简短答复，以便感觉是在连续沟通。",
+      "example": "“谢谢”“先看看”“一般原理”“好的”分别处于不同任务阶段。",
+      "acceptance": [
+        "优先回应当前语义，不对所有短句追问项目",
+        "不每轮重复自我介绍、免责语或预约邀请",
+        "结尾按任务需要选择结束、一个追问或一次邀请",
+        "不冒充真人、医生或已亲自安排服务，保持AI身份可见"
+      ],
+      "exceptions": "风格润色失败回退到正确业务答复；不改变否定、价格、回执等事实。",
+      "implementation_tasks": [
+        "分离内容正确性与表达层",
+        "增加结束意图和邀约频次控制",
+        "用真实案例改写成脱敏评测，不照搬个人承诺"
+      ],
+      "dependencies": [
+        "A-012"
+      ],
+      "code_paths": [
+        "server/acquisition-conversation-style.mjs",
+        "server/acquisition-presales-dialogue.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-015-AC1",
+        "TC-A-015-AC2",
+        "TC-A-015-AC3",
+        "TC-A-015-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-conversation-style.mjs": "A",
+        "server/acquisition-presales-dialogue.mjs": "A"
+      }
+    },
+    {
+      "id": "A-016",
+      "owner": "A",
+      "title": "抗衰类需求的有效介绍",
+      "epic": "回答表达",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望了解与自己关注问题相关的项目方向，以便决定下一步想咨询什么。",
+      "example": "“抗衰老推荐什么项目呢？”“我主要脸有点垮”。",
+      "acceptance": [
+        "承接抗衰或松弛主诉，不输出“当前改善问题”等占位词",
+        "有正式资料时介绍可供了解的方向及区别",
+        "不把一般介绍写成对个人疗效或适应症的确定判断",
+        "资料不足时询问一个必要点，不罗列无依据项目或反复逼约"
+      ],
+      "exceptions": "没有院方证据的项目不作为院方可提供项目；不根据单张照片下诊断。",
+      "implementation_tasks": [
+        "将已出现坏例设为必过回归",
+        "比较类回答绑定项目证据",
+        "检测占位文本和项目错配"
+      ],
+      "dependencies": [
+        "A-011",
+        "A-014"
+      ],
+      "code_paths": [
+        "server/acquisition-concern-understanding.mjs",
+        "server/agent-runtime.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-016-AC1",
+        "TC-A-016-AC2",
+        "TC-A-016-AC3",
+        "TC-A-016-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-concern-understanding.mjs": "A",
+        "server/agent-runtime.mjs": "A"
+      }
+    },
+    {
+      "id": "A-017",
+      "owner": "A",
+      "title": "价格、活动与到院信息问答",
+      "epic": "回答表达",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望清楚知道价格依据和到院信息，以便评估是否继续咨询。",
+      "example": "“多少钱，有没有活动，周日可以去吗？”",
+      "acceptance": [
+        "有有效公开报价时说明适用项目、条件和有效期",
+        "缺少报价不编金额，可说明需要进一步核实",
+        "营业信息与医生具体排班区分，不把营业当成有号",
+        "不复制示范聊天中的旧定金、接送和优惠承诺"
+      ],
+      "exceptions": "价格资料冲突时停用冲突事实并转核实；不要求先留手机号才答已有公开信息。",
+      "implementation_tasks": [
+        "读取结构化事实及来源",
+        "为冲突与过期设置输出规则",
+        "覆盖活动过期及无排班情况"
+      ],
+      "dependencies": [
+        "A-014",
+        "C-003"
+      ],
+      "code_paths": [
+        "server/agent-runtime.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-017-AC1",
+        "TC-A-017-AC2",
+        "TC-A-017-AC3",
+        "TC-A-017-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/agent-runtime.mjs": "A"
+      }
+    },
+    {
+      "id": "A-018",
+      "owner": "A",
+      "title": "主动提交姓名电话的承接",
+      "epic": "留资与任务",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望主动留资后得到明确回应，以便知道助手已接收到我的信息。",
+      "example": "模拟客户：“测试客户甲 13800000001”。仅使用本地假数据与mock接口。",
+      "acceptance": [
+        "格式有效后调用B保存，不增加OTP或额外身份验证步骤",
+        "只有accepted回执才说“已记下”；失败则说明未保存成功",
+        "已有咨询主题时承接该主题，不重新问想了解什么项目",
+        "回复仅展示必要脱敏信息，不完整复述手机号"
+      ],
+      "exceptions": "姓名可缺失不阻断有效手机号保存；格式错误只指出具体问题并请更正。",
+      "implementation_tasks": [
+        "本地识别姓名和联系方式",
+        "接入保存回执并更新前台状态",
+        "覆盖仅电话、姓名+电话、错误号码和保存失败"
+      ],
+      "dependencies": [
+        "B-015",
+        "B-019"
+      ],
+      "code_paths": [
+        "server/chat-contact-capture.mjs",
+        "apps/acquisition-advisor/src/App.jsx"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-018-AC1",
+        "TC-A-018-AC2",
+        "TC-A-018-AC3",
+        "TC-A-018-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/chat-contact-capture.mjs": "A",
+        "apps/acquisition-advisor/src/App.jsx": "A"
+      }
+    },
+    {
+      "id": "A-019",
+      "owner": "A",
+      "title": "留资同时继续回答问题",
+      "epic": "留资与任务",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望留联系方式时仍能问问题，以便不会被带回开场流程。",
+      "example": "“测试客户甲，13800000001，热玛吉多少钱？晚上再联系。”",
+      "acceptance": [
+        "分别处理联系方式、联系偏好和价格问题",
+        "保存回执与问答内容都呈现，不能只确认或只回答",
+        "没有报价就如实说明，不因留资而编报价",
+        "偏好写入B回执后准确承接，未确认写入不说已安排晚间电话"
+      ],
+      "exceptions": "保存失败不阻断能够独立回答的公开问题；姓名解析不确定不猜。",
+      "implementation_tasks": [
+        "拆分本地PII与模型任务输入",
+        "聚合各业务结果",
+        "补充部分成功组合测试"
+      ],
+      "dependencies": [
+        "A-010",
+        "A-018",
+        "B-017"
+      ],
+      "code_paths": [
+        "server/chat-contact-capture.mjs",
+        "server/acquisition-orchestration.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-019-AC1",
+        "TC-A-019-AC2",
+        "TC-A-019-AC3",
+        "TC-A-019-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/chat-contact-capture.mjs": "A",
+        "server/acquisition-orchestration.mjs": "A"
+      }
+    },
+    {
+      "id": "A-020",
+      "owner": "A",
+      "title": "拒绝联系与暂缓预约",
+      "epic": "留资与任务",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望表达暂时不联系或不预约，以便咨询节奏得到尊重。",
+      "example": "“先别打电话，我只是看看”“这周没空，下月再说”。",
+      "acceptance": [
+        "识别不联系、联系时间偏好和暂不预约三类不同语义",
+        "偏好保存回执失败时明确未登记，不能假称销售已知",
+        "拒绝后当前轮和后续未改意愿的轮次不重复索要号码或催约",
+        "仅明确新意愿才恢复邀请，不把“谢谢”解释为同意"
+      ],
+      "exceptions": "相对时间不明确时不推算成具体预约；自动外呼不属于本条范围。",
+      "implementation_tasks": [
+        "定义拒绝与偏好状态",
+        "对接客户备注/联系偏好",
+        "设置拒绝后连续三轮回归"
+      ],
+      "dependencies": [
+        "A-013",
+        "B-017"
+      ],
+      "code_paths": [
+        "server/acquisition-presales-dialogue.mjs",
+        "server/acquisition-turn-plan.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-020-AC1",
+        "TC-A-020-AC2",
+        "TC-A-020-AC3",
+        "TC-A-020-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-presales-dialogue.mjs": "A",
+        "server/acquisition-turn-plan.mjs": "A"
+      }
+    },
+    {
+      "id": "A-021",
+      "owner": "A",
+      "title": "预约意向的多轮收集与确认",
+      "epic": "留资与任务",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望自然表达时间并确认面诊意向，以便不重复填写已提供信息。",
+      "example": "“想周六下午去”→补充必要信息→“确认登记”。",
+      "acceptance": [
+        "只补充B接口必要且尚未提供字段",
+        "展示期望日期、时间和联系信息摘要让客户确认",
+        "确认后调用幂等登记接口，回执到达才展示登记成功",
+        "清楚说明这是到院意向登记，未获排班回执不宣称已锁定专家"
+      ],
+      "exceptions": "日期歧义、过去时间或版本冲突提示修正；拒绝后不继续登记。",
+      "implementation_tasks": [
+        "将预约意图与提交动作分开",
+        "复用前台预约组件",
+        "接入登记、改期和取消结果"
+      ],
+      "dependencies": [
+        "B-023",
+        "B-024",
+        "B-025"
+      ],
+      "code_paths": [
+        "server/acquisition-orchestration.mjs",
+        "apps/acquisition-advisor/src/App.jsx"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-021-AC1",
+        "TC-A-021-AC2",
+        "TC-A-021-AC3",
+        "TC-A-021-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-orchestration.mjs": "A",
+        "apps/acquisition-advisor/src/App.jsx": "A"
+      }
+    },
+    {
+      "id": "A-022",
+      "owner": "A",
+      "title": "客户主动要求人工",
+      "epic": "人工衔接",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望随时转到人工接待，以便复杂问题有人跟进。",
+      "example": "“转人工”“找真人聊”“你一直没听懂”。",
+      "acceptance": [
+        "识别明确人工请求并调用B创建接待任务",
+        "回执成功显示待接待状态，失败可重试",
+        "等待时不虚构客服在线、已接通或到达时间",
+        "客户无需重复描述，提供脱敏咨询摘要给有权限的接待人员"
+      ],
+      "exceptions": "当前已有接待任务时复用，不创建重复排队；没有人工在线时说明待处理。",
+      "implementation_tasks": [
+        "增加显式转人工入口与语义触发",
+        "生成事实摘要",
+        "对接排队与接管状态展示"
+      ],
+      "dependencies": [
+        "B-009"
+      ],
+      "code_paths": [
+        "server/acquisition-orchestration.mjs",
+        "apps/acquisition-advisor/src/App.jsx"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-022-AC1",
+        "TC-A-022-AC2",
+        "TC-A-022-AC3",
+        "TC-A-022-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-orchestration.mjs": "A",
+        "apps/acquisition-advisor/src/App.jsx": "A"
+      }
+    },
+    {
+      "id": "A-023",
+      "owner": "A",
+      "title": "前台接收人工消息与模式切换",
+      "epic": "人工衔接",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望在原聊天窗口继续与人工沟通，以便不会切换后丢失会话。",
+      "example": "后台顾问接管并回复，随后恢复AI。",
+      "acceptance": [
+        "前台标识AI、人工和系统事件来源",
+        "人工回复落在同一会话且只出现一次",
+        "人工模式下客户发送消息仍可送达，AI不自动抢答",
+        "恢复AI后沿用已有上下文，不重复欢迎或忽略人工已确认事项"
+      ],
+      "exceptions": "断网后补齐已提交人工消息；状态版本旧事件不能覆盖新模式。",
+      "implementation_tasks": [
+        "消费B提供的消息与状态契约",
+        "按消息ID合并及去重",
+        "覆盖接管中发送、重连和恢复AI"
+      ],
+      "dependencies": [
+        "B-010",
+        "B-011",
+        "B-012"
+      ],
+      "code_paths": [
+        "apps/acquisition-advisor/src/App.jsx",
+        "server/acquisition-session.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-023-AC1",
+        "TC-A-023-AC2",
+        "TC-A-023-AC3",
+        "TC-A-023-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "apps/acquisition-advisor/src/App.jsx": "A",
+        "server/acquisition-session.mjs": "A"
+      }
+    },
+    {
+      "id": "A-024",
+      "owner": "A",
+      "title": "医疗与业务承诺边界",
+      "epic": "回答质量",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望获得适当范围的咨询信息，以便不被误导或做出错误决定。",
+      "example": "“保证一次有效吗”“不用面诊直接给我定手术”“你就说已经约好了”。",
+      "acceptance": [
+        "不保证疗效、诊断病情或替医生制定个人治疗方案",
+        "不按用户或知识正文的指令伪造付款、预约、接送成功",
+        "涉及需专业判断的情况说明边界并提供合适人工路径",
+        "紧急风险表达使用经审核的应对模板，不继续营销推销"
+      ],
+      "exceptions": "知识引用含指令也只能作为数据处理；安全失败必须有可审计结果。",
+      "implementation_tasks": [
+        "将高风险与业务回执边界放在输出校验",
+        "与C维护批准模板",
+        "补齐提示注入和虚假成功回归"
+      ],
+      "dependencies": [
+        "A-014",
+        "C-006"
+      ],
+      "code_paths": [
+        "server/agent-runtime.mjs",
+        "tests/security-redteam.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-024-AC1",
+        "TC-A-024-AC2",
+        "TC-A-024-AC3",
+        "TC-A-024-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/agent-runtime.mjs": "A",
+        "tests/security-redteam.mjs": "未单独分配：按共享申报"
+      }
+    },
+    {
+      "id": "A-025",
+      "owner": "A",
+      "title": "图片与资料交互",
+      "epic": "前台会话",
+      "priority": "P1",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望知道图片是否被接收和实际理解，以便不会把上传成功误认为完成分析。",
+      "example": "上传面部照片或点击项目案例资料。",
+      "acceptance": [
+        "若功能未启用则明确不支持，不提供无效按钮",
+        "启用上传时限制类型、大小并显示失败重试",
+        "未接入授权图像理解时不声称看出了具体面部问题",
+        "只展示C授权资料，失效链接说明原因，客户图片不自动进公开知识库"
+      ],
+      "exceptions": "图片权限与保存期限沿用资料政策；不在普通日志输出图片或联系信息。",
+      "implementation_tasks": [
+        "核对当前media能力是否可用",
+        "与C冻结上传和访问权限",
+        "设置不可用能力的页面降级"
+      ],
+      "dependencies": [
+        "C-016"
+      ],
+      "code_paths": [
+        "apps/acquisition-advisor/src/App.jsx",
+        "server/knowledge-media.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-025-AC1",
+        "TC-A-025-AC2",
+        "TC-A-025-AC3",
+        "TC-A-025-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "apps/acquisition-advisor/src/App.jsx": "A",
+        "server/knowledge-media.mjs": "C"
+      }
+    },
+    {
+      "id": "A-026",
+      "owner": "A",
+      "title": "模型不可用时的可用体验",
+      "epic": "对话引擎",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望服务异常时仍能保存需求并知道下一步，以便不用反复尝试不明状态。",
+      "example": "禁用LLM、模型超时、返回非法JSON；客户同时留手机号。",
+      "acceptance": [
+        "模型关闭、超时、结构化失败可在运行记录中区分",
+        "独立留资与人工申请按B回执继续工作",
+        "面向客户给出简洁错误及重试/人工入口，不暴露堆栈",
+        "不将兜底模板质量当成真实模型自然对话验收通过"
+      ],
+      "exceptions": "不无限重试模型导致重复费用或重复业务写入；最大重试与超时可配置。",
+      "implementation_tasks": [
+        "集中管理降级路径",
+        "为模型调用设置时限及错误分类",
+        "断言失败前后业务回执一致"
+      ],
+      "dependencies": [
+        "A-012",
+        "B-015"
+      ],
+      "code_paths": [
+        "server/llm-client.mjs",
+        "server/acquisition-orchestration.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-026-AC1",
+        "TC-A-026-AC2",
+        "TC-A-026-AC3",
+        "TC-A-026-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/llm-client.mjs": "A",
+        "server/acquisition-orchestration.mjs": "A"
+      }
+    },
+    {
+      "id": "A-027",
+      "owner": "A",
+      "title": "反馈与坏例追踪",
+      "epic": "评测运营",
+      "priority": "P1",
+      "status": "待逐项核验",
+      "user_story": "作为质量人员，我希望定位客户点赞或点踩的具体回答，以便有依据地改进体验。",
+      "example": "对同一回答点踩并选择“没理解问题”；再次点击。",
+      "acceptance": [
+        "反馈绑定会话、消息、run_id及回答版本",
+        "重复操作按既定更新规则处理，不重复统计",
+        "失败可重试，成功提示不刷新整个聊天",
+        "质量人员看到脱敏问题链路，不能通过反馈接口读取无权限客户信息"
+      ],
+      "exceptions": "回答已删除或失效时说明不可反馈；匿名访客只可反馈自己的会话。",
+      "implementation_tasks": [
+        "梳理反馈字段和幂等规则",
+        "对接B会话标识与C质量权限",
+        "从反馈导出脱敏坏例"
+      ],
+      "dependencies": [
+        "B-004",
+        "C-028"
+      ],
+      "code_paths": [
+        "apps/acquisition-advisor/src/App.jsx",
+        "server/acquisition-feedback-store.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-027-AC1",
+        "TC-A-027-AC2",
+        "TC-A-027-AC3",
+        "TC-A-027-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "apps/acquisition-advisor/src/App.jsx": "A",
+        "server/acquisition-feedback-store.mjs": "A"
+      }
+    },
+    {
+      "id": "A-028",
+      "owner": "A",
+      "title": "可重复的多轮质量评测",
+      "epic": "评测运营",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为项目负责人，我希望看到逐例可复现的对话评测结果，以便判断自然度和任务完成度是否改善。",
+      "example": "热玛吉追问、抗衰主诉、主动留资、拒绝联系、人工接管五条旅程。",
+      "acceptance": [
+        "每例包含上下文、输入、期望意图、禁止行为、业务副作用和评分理由",
+        "规则mock测试与真实模型结果分开，记录模型、提示版本、知识版本和配置指纹",
+        "本清单P0场景全部有回归映射，越权与虚假成功例零容忍",
+        "自然度、语义、事实与任务推进分别评分，保留失败原始输出的脱敏版本"
+      ],
+      "exceptions": "真实模型未配置标blocked；自动裁判分数不能代替对关键失败的人审。",
+      "implementation_tasks": [
+        "梳理现有评测文件并去重",
+        "增加本次坏例和多轮断言",
+        "输出story_id到case_id再到结果的报告"
+      ],
+      "dependencies": [
+        "A-006",
+        "A-016",
+        "A-018",
+        "A-024"
+      ],
+      "code_paths": [
+        "tests/natural-dialogue.mjs",
+        "tests/presales-journey.mjs",
+        "scripts/evaluate-acquisition-agent.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-028-AC1",
+        "TC-A-028-AC2",
+        "TC-A-028-AC3",
+        "TC-A-028-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "tests/natural-dialogue.mjs": "A",
+        "tests/presales-journey.mjs": "A",
+        "scripts/evaluate-acquisition-agent.mjs": "未单独分配：按共享申报"
+      }
+    },
+    {
+      "id": "A-029",
+      "owner": "A",
+      "title": "移动端阅读与可操作性",
+      "epic": "前台会话",
+      "priority": "P1",
+      "status": "待逐项核验",
+      "user_story": "作为手机咨询客户，我希望在小屏幕和键盘展开时正常聊天，以便顺畅阅读和操作。",
+      "example": "窄屏打开键盘、阅读较早消息、收到新回复、点击资料。",
+      "acceptance": [
+        "输入框与发送按钮不被软键盘遮挡",
+        "阅读历史时新消息不强制滚到底部，有新消息提示",
+        "长文本、电话号码和引用不撑破布局",
+        "主要按钮有可读名称与焦点状态，失败提示可见且不挡输入"
+      ],
+      "exceptions": "浏览器高度变化不重复提交消息；无障碍检查使用模拟资料。",
+      "implementation_tasks": [
+        "处理可视区域高度及滚动锚点",
+        "补齐按钮状态与可访问名称",
+        "在桌面与移动尺寸完成截图和操作验证"
+      ],
+      "dependencies": [
+        "A-002"
+      ],
+      "code_paths": [
+        "apps/acquisition-advisor/src/App.jsx"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-029-AC1",
+        "TC-A-029-AC2",
+        "TC-A-029-AC3",
+        "TC-A-029-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "apps/acquisition-advisor/src/App.jsx": "A"
+      }
+    },
+    {
+      "id": "A-030",
+      "owner": "A",
+      "title": "LangGraph编排渐进接入",
+      "epic": "后续增强",
+      "priority": "P2",
+      "status": "待逐项核验",
+      "user_story": "作为研发负责人，我希望在不破坏业务提交的前提下评估编排框架，以便选择可验证的后续架构。",
+      "example": "相同脱敏输入对比legacy与shadow规划，再模拟Python进程不可用。",
+      "acceptance": [
+        "先shadow比较结构化决策，不直接替换现有权威回复",
+        "Node保留认证、幂等、状态提交和业务动作权威",
+        "引擎版本、状态schema和回滚路径可追溯",
+        "持久checkpoint与真实引擎切换前完成隔离、迁移和故障测试"
+      ],
+      "exceptions": "基线默认legacy；存在LangGraph依赖不代表对客链路已启用。",
+      "implementation_tasks": [
+        "阅读现有TurnDecision契约与图状态",
+        "对齐统一规划且避免双写",
+        "提出接入决策报告及独立验收结果"
+      ],
+      "dependencies": [
+        "A-012",
+        "B-029"
+      ],
+      "code_paths": [
+        "agent-orchestrator/pyproject.toml",
+        "agent-orchestrator/app/graph.py",
+        "agent-orchestrator/README.md"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-A-030-AC1",
+        "TC-A-030-AC2",
+        "TC-A-030-AC3",
+        "TC-A-030-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:turn-planning",
+        "npm run test:presales-dialogue",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "agent-orchestrator/pyproject.toml": "未单独分配：按共享申报",
+        "agent-orchestrator/app/graph.py": "未单独分配：按共享申报",
+        "agent-orchestrator/README.md": "未单独分配：按共享申报"
+      }
+    },
+    {
+      "id": "B-001",
+      "owner": "B",
+      "title": "客户与接待菜单可进入",
+      "epic": "后台入口",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望进入自己有权限的业务页面，以便开始接待和跟进。",
+      "example": "登录后点击客户管理、会话与接待、预约列表，再刷新深链接。",
+      "acceptance": [
+        "有权限菜单可点击，路由与页面标题一致",
+        "刷新和浏览器前进后退保留有效路由",
+        "无权限页面显示明确拒绝或可访问入口，不出现空白页",
+        "页面初始加载、空列表、失败重试分别呈现"
+      ],
+      "exceptions": "登录过期交由C统一处理，不把401当空数据。",
+      "implementation_tasks": [
+        "核查现有路由及事件绑定",
+        "将页面逻辑逐步抽到独立业务模块",
+        "为三个入口记录浏览器验收步骤"
+      ],
+      "dependencies": [
+        "C-019",
+        "C-022"
+      ],
+      "code_paths": [
+        "src/app.js",
+        "src/subpages.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-001-AC1",
+        "TC-B-001-AC2",
+        "TC-B-001-AC3",
+        "TC-B-001-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/app.js": "共享：需申报变更",
+        "src/subpages.js": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "B-002",
+      "owner": "B",
+      "title": "接待工作台三栏布局",
+      "epic": "后台入口",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望同时查看会话列表、对话和客户资料，以便减少切换操作。",
+      "example": "参考用户提供截图，选中客户后查看聊天、资料及常用语。",
+      "acceptance": [
+        "左侧列表、中间对话与输入区、右侧资料/常用语职责清楚",
+        "接管、发送、结束等关键动作状态明确",
+        "窄屏提供可切换面板，不遮挡输入和发送",
+        "改变列表筛选不清空当前未发送草稿"
+      ],
+      "exceptions": "资料无权限时显示权限提示；不能因隐藏面板而移除服务端校验。",
+      "implementation_tasks": [
+        "抽取reception页面与样式作用域",
+        "绑定真实数据与按钮状态",
+        "测试窄屏、空会话及长消息"
+      ],
+      "dependencies": [
+        "B-001",
+        "C-019"
+      ],
+      "code_paths": [
+        "src/app.js",
+        "styles.css"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-002-AC1",
+        "TC-B-002-AC2",
+        "TC-B-002-AC3",
+        "TC-B-002-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/app.js": "共享：需申报变更",
+        "styles.css": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "B-003",
+      "owner": "B",
+      "title": "前台咨询自动建同一会话",
+      "epic": "会话消息",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望立即看到新客户咨询，以便及时接待。",
+      "example": "两个浏览器分别发送咨询，随后各发送第二条消息。",
+      "acceptance": [
+        "服务端建立可追溯tenant、conversation、channel标识",
+        "同一访客后续消息进入原会话",
+        "不同访客不串会话或客户档案",
+        "不依赖后台手动刷新或客户先留手机号才出现会话"
+      ],
+      "exceptions": "建档部分失败可恢复；服务异常不能静默丢弃已接收消息。",
+      "implementation_tasks": [
+        "统一入口到归档的ID映射",
+        "补齐匿名客户与会话关联",
+        "验证两个并发访客与刷新恢复"
+      ],
+      "dependencies": [],
+      "code_paths": [
+        "server/local-conversation-store.mjs",
+        "server/acquisition-operations-store.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-003-AC1",
+        "TC-B-003-AC2",
+        "TC-B-003-AC3",
+        "TC-B-003-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/local-conversation-store.mjs": "B",
+        "server/acquisition-operations-store.mjs": "B"
+      }
+    },
+    {
+      "id": "B-004",
+      "owner": "B",
+      "title": "消息持久化、顺序与幂等",
+      "epic": "会话消息",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望看到完整有序且不重复的消息，以便可靠理解客户历史。",
+      "example": "相同消息重复到达、AI响应晚到、人工消息紧接客户消息。",
+      "acceptance": [
+        "消息具有稳定ID、来源、服务端顺序和提交状态",
+        "同一幂等键重试不产生重复消息或业务动作",
+        "后台、前台与持久化记录的最终消息内容一致",
+        "分页或重连使用稳定游标，不仅按浏览器时间排序"
+      ],
+      "exceptions": "持久化失败不得返回已提交成功；幂等键内容冲突明确拒绝。",
+      "implementation_tasks": [
+        "定义消息回执与唯一约束",
+        "区分处理中与已提交记录",
+        "做重复、乱序及提交失败测试"
+      ],
+      "dependencies": [],
+      "code_paths": [
+        "server/local-conversation-store.mjs",
+        "server/acquisition-operations-store.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-004-AC1",
+        "TC-B-004-AC2",
+        "TC-B-004-AC3",
+        "TC-B-004-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/local-conversation-store.mjs": "B",
+        "server/acquisition-operations-store.mjs": "B"
+      }
+    },
+    {
+      "id": "B-005",
+      "owner": "B",
+      "title": "只更新相关会话窗口",
+      "epic": "会话消息",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望新消息到达时保留当前操作，以便不会丢失输入和阅读位置。",
+      "example": "顾问编辑草稿时收到当前会话及其他会话新消息。",
+      "acceptance": [
+        "只更新受影响列表项和消息区域，不全页重绘",
+        "当前草稿、焦点和滚动位置保持",
+        "当前在底部时适当跟随新消息，阅读历史时显示提示",
+        "其他会话新消息不强制切换当前选中客户"
+      ],
+      "exceptions": "更新失败显示同步异常且保留旧内容，不清空面板。",
+      "implementation_tasks": [
+        "将增量渲染与整页render分离",
+        "按消息ID合并状态",
+        "覆盖输入中、历史阅读中及快速切换"
+      ],
+      "dependencies": [
+        "B-004"
+      ],
+      "code_paths": [
+        "src/app.js",
+        "src/conversation-unread.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-005-AC1",
+        "TC-B-005-AC2",
+        "TC-B-005-AC3",
+        "TC-B-005-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/app.js": "共享：需申报变更",
+        "src/conversation-unread.js": "B"
+      }
+    },
+    {
+      "id": "B-006",
+      "owner": "B",
+      "title": "实时推送与断线补偿",
+      "epic": "会话消息",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望断线重连后收到所有消息，以便不遗漏咨询。",
+      "example": "断网20秒期间客户和AI各发消息，恢复网络后继续接待。",
+      "acceptance": [
+        "SSE只通知当前授权范围内变更",
+        "重连通过持久化游标补齐缺失消息并去重",
+        "推送不可用时保留有退避的轮询兜底",
+        "登录失效、离开页面或权限撤回后关闭连接并停止无权限拉取"
+      ],
+      "exceptions": "基线已有EventSource加轮询；不把连接建立当成消息完整送达。",
+      "implementation_tasks": [
+        "核查事件端点与查询游标",
+        "实现重连补拉及失效清理",
+        "记录丢包、重复事件、断网测试"
+      ],
+      "dependencies": [
+        "B-004",
+        "C-022"
+      ],
+      "code_paths": [
+        "src/app.js",
+        "server/api-router.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-006-AC1",
+        "TC-B-006-AC2",
+        "TC-B-006-AC3",
+        "TC-B-006-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/app.js": "共享：需申报变更",
+        "server/api-router.mjs": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "B-007",
+      "owner": "B",
+      "title": "多客户未读红点与已读位置",
+      "epic": "会话消息",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望看清哪些会话有未读消息，以便安排接待优先级。",
+      "example": "同时三个客户咨询；顾问只打开其中一个并停留在历史区域。",
+      "acceptance": [
+        "未查看会话的新用户或AI消息触发红点，数量口径在界面一致",
+        "当前可见且读到底部才推进已读游标",
+        "自己的人工发送及重复同步不虚增未读",
+        "切换账号、跨租户和重连不混用已读状态"
+      ],
+      "exceptions": "建议采用每个接待账号独立已读游标；若共享已读需先明确产品口径，不可暗中混用。",
+      "implementation_tasks": [
+        "固定read_cursor与消息序号规则",
+        "对接服务端或明确临时本地存储边界",
+        "验证三会话、两账号及重复事件"
+      ],
+      "dependencies": [
+        "B-004",
+        "B-006"
+      ],
+      "code_paths": [
+        "src/conversation-unread.js",
+        "src/app.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-007-AC1",
+        "TC-B-007-AC2",
+        "TC-B-007-AC3",
+        "TC-B-007-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/conversation-unread.js": "B",
+        "src/app.js": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "B-008",
+      "owner": "B",
+      "title": "会话搜索、筛选与历史分页",
+      "epic": "会话消息",
+      "priority": "P1",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望快速找到待处理客户和历史消息，以便减少列表查找时间。",
+      "example": "按客户昵称、接待状态搜索，再加载较早记录。",
+      "acceptance": [
+        "搜索与状态筛选可组合，筛选条件可清除",
+        "分页有稳定排序，不重复或跳漏",
+        "历史加载不把当前阅读位置跳到底部",
+        "无结果与接口错误区分，搜索不绕过授权范围"
+      ],
+      "exceptions": "手机号搜索只在允许的权限范围内处理，查询与日志脱敏。",
+      "implementation_tasks": [
+        "定义查询参数和游标",
+        "实现搜索防抖及旧请求取消",
+        "覆盖筛选中收到新消息"
+      ],
+      "dependencies": [
+        "B-003",
+        "C-027"
+      ],
+      "code_paths": [
+        "src/app.js",
+        "server/local-conversation-store.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-008-AC1",
+        "TC-B-008-AC2",
+        "TC-B-008-AC3",
+        "TC-B-008-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/app.js": "共享：需申报变更",
+        "server/local-conversation-store.mjs": "B"
+      }
+    },
+    {
+      "id": "B-009",
+      "owner": "B",
+      "title": "人工请求排队与领取",
+      "epic": "人工接待",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望领取待接待会话，以便明确谁在负责客户。",
+      "example": "客户请求人工，两名顾问同时点击接管。",
+      "acceptance": [
+        "同一请求只建一个有效待接待任务",
+        "领取是原子操作，仅一名顾问成功",
+        "列表和对话窗口显示负责人及状态",
+        "未授权顾问不能通过修改handoverId领取其他科室会话"
+      ],
+      "exceptions": "冲突返回最新状态；没有可用顾问时保持待处理，不伪造已接通。",
+      "implementation_tasks": [
+        "明确pending/human等状态映射",
+        "使用版本或数据库原子领取",
+        "测试并发领取与越权"
+      ],
+      "dependencies": [
+        "B-003",
+        "C-027"
+      ],
+      "code_paths": [
+        "server/acquisition-operations-store.mjs",
+        "server/persistence/postgres-operations-store.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-009-AC1",
+        "TC-B-009-AC2",
+        "TC-B-009-AC3",
+        "TC-B-009-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-operations-store.mjs": "B",
+        "server/persistence/postgres-operations-store.mjs": "B"
+      }
+    },
+    {
+      "id": "B-010",
+      "owner": "B",
+      "title": "人工消息送达到前台",
+      "epic": "人工接待",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望发送消息后收到明确回执，以便确认客户可以看到回复。",
+      "example": "已接管会话发送“您好，我来帮您了解”，前台实时收到。",
+      "acceptance": [
+        "发送前校验当前接管权和状态版本",
+        "前台、后台和消息归档共享同一消息ID",
+        "成功回执区分已提交与渠道实际送达，不能混称客户已读",
+        "失败保留草稿并可幂等重试"
+      ],
+      "exceptions": "外部渠道没有读回执时不显示“客户已读”；未接管或接管已撤销时禁止发送。",
+      "implementation_tasks": [
+        "实现发送命令到渠道/前台的闭环",
+        "区分提交、投递与阅读状态",
+        "端到端验证发送、失败、重试"
+      ],
+      "dependencies": [
+        "B-004",
+        "B-009"
+      ],
+      "code_paths": [
+        "server/acquisition-operations-store.mjs",
+        "src/app.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-010-AC1",
+        "TC-B-010-AC2",
+        "TC-B-010-AC3",
+        "TC-B-010-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-operations-store.mjs": "B",
+        "src/app.js": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "B-011",
+      "owner": "B",
+      "title": "接管后阻止AI抢答",
+      "epic": "人工接待",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望接管期间由人工统一回复，以便避免AI和人工冲突。",
+      "example": "AI正在生成时接管；生成完成后返回旧结果。",
+      "acceptance": [
+        "接管状态在生成前与提交前均检查",
+        "迟到AI回复不能提交或外发",
+        "客户新消息继续归档并通知人工",
+        "旧接管版本不能恢复覆盖新状态"
+      ],
+      "exceptions": "多进程条件下不能只用内存布尔值；持久化版本比较失败应丢弃旧动作。",
+      "implementation_tasks": [
+        "定义接管状态版本与提交屏障",
+        "对接A的取消/晚到过滤",
+        "在生成中、提交前、重试时分别注入接管"
+      ],
+      "dependencies": [
+        "B-004",
+        "B-009"
+      ],
+      "code_paths": [
+        "server/acquisition-operations-store.mjs",
+        "server/acquisition-orchestration.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-011-AC1",
+        "TC-B-011-AC2",
+        "TC-B-011-AC3",
+        "TC-B-011-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-operations-store.mjs": "B",
+        "server/acquisition-orchestration.mjs": "A"
+      }
+    },
+    {
+      "id": "B-012",
+      "owner": "B",
+      "title": "结束接待与恢复AI",
+      "epic": "人工接待",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望明确结束处理并恢复适当服务状态，以便完成交接而不丢信息。",
+      "example": "顾问填写处理结果，选择结束或恢复AI。",
+      "acceptance": [
+        "结束接待与恢复AI为明确动作，不因关闭窗口自动触发",
+        "重复点击不重复关闭或创建任务",
+        "处理结果和负责人可追溯",
+        "恢复AI携带已确认事实摘要，未完成预约或失败投递仍可追踪"
+      ],
+      "exceptions": "存在并发更新时提示刷新确认；不能把关闭任务等同客户问题全部解决。",
+      "implementation_tasks": [
+        "梳理完成状态及必要处理字段",
+        "原子更新任务与会话状态",
+        "验证完成后的前台下一轮"
+      ],
+      "dependencies": [
+        "B-009",
+        "B-011"
+      ],
+      "code_paths": [
+        "server/acquisition-operations-store.mjs",
+        "src/app.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-012-AC1",
+        "TC-B-012-AC2",
+        "TC-B-012-AC3",
+        "TC-B-012-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/acquisition-operations-store.mjs": "B",
+        "src/app.js": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "B-013",
+      "owner": "B",
+      "title": "常用语检索与插入",
+      "epic": "人工接待",
+      "priority": "P1",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望快速使用已批准话术，以便提高回复效率。",
+      "example": "在右侧搜索项目话术并插入输入区，编辑后发送。",
+      "acceptance": [
+        "仅展示C允许该岗位使用的有效话术",
+        "点击插入草稿，不自动向客户发送",
+        "含变量的话术未填完时提醒",
+        "撤回话术不能继续作为有效推荐，已发送历史保留"
+      ],
+      "exceptions": "没有可用话术时仍可手工回复；不能把历史截图的优惠话术直接上线。",
+      "implementation_tasks": [
+        "对接C话术目录及版本",
+        "实现搜索、分类和插入",
+        "验证变量、撤回及无权限情况"
+      ],
+      "dependencies": [
+        "C-018",
+        "B-010"
+      ],
+      "code_paths": [
+        "src/app.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-013-AC1",
+        "TC-B-013-AC2",
+        "TC-B-013-AC3",
+        "TC-B-013-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/app.js": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "B-014",
+      "owner": "B",
+      "title": "草稿、阅读位置与快捷操作",
+      "epic": "人工接待",
+      "priority": "P1",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望切换客户时保留各自草稿，以便不把消息发错人。",
+      "example": "客户甲写到一半，切换乙回复，再切回甲。",
+      "acceptance": [
+        "草稿按账号与会话隔离",
+        "发送时再次核对当前会话及接管权",
+        "同步或筛选不丢失草稿和滚动锚点",
+        "登出清理敏感草稿，快捷键与输入法不冲突"
+      ],
+      "exceptions": "账号切换不能读取前一账号草稿；持久化策略优先会话级临时内存。",
+      "implementation_tasks": [
+        "建立会话草稿映射",
+        "发送按钮绑定稳定会话引用",
+        "补齐快速切换与登出回归"
+      ],
+      "dependencies": [
+        "B-005",
+        "C-021"
+      ],
+      "code_paths": [
+        "src/app.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-014-AC1",
+        "TC-B-014-AC2",
+        "TC-B-014-AC3",
+        "TC-B-014-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/app.js": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "B-015",
+      "owner": "B",
+      "title": "手机号格式校验后保存",
+      "epic": "客户留资",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望主动提交手机号后直接保存，以便便于后续销售联系。",
+      "example": "仅手机号、姓名+手机号、带空格手机号、位数错误号码。",
+      "acceptance": [
+        "规范化允许格式后校验；有效手机号不要求OTP或前置归属验证",
+        "姓名缺失不阻止保存，未知姓名不能伪造",
+        "返回accepted/invalid/failed等明确保存结果及客户关联",
+        "会员查询失败不回滚已成功保存的联系信息"
+      ],
+      "exceptions": "测试只用mock号码；手机号具体格式规则集中配置，跨境格式超出当前范围时明确提示。",
+      "implementation_tasks": [
+        "统一表单和自然语言留资校验",
+        "保存服务端回执及幂等键",
+        "覆盖无姓名、重复、错误格式和存储失败"
+      ],
+      "dependencies": [
+        "B-004"
+      ],
+      "code_paths": [
+        "server/lead-store.mjs",
+        "server/contact-vault.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-015-AC1",
+        "TC-B-015-AC2",
+        "TC-B-015-AC3",
+        "TC-B-015-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/lead-store.mjs": "B",
+        "server/contact-vault.mjs": "B"
+      }
+    },
+    {
+      "id": "B-016",
+      "owner": "B",
+      "title": "同一客户与多会话关联",
+      "epic": "客户留资",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望看到同一联系方式的相关咨询，以便避免重复建档和漏跟进。",
+      "example": "同一模拟手机号在两个独立会话留资；另一租户也使用同号。",
+      "acceptance": [
+        "仅在同一授权租户内按既定规则关联客户",
+        "保留原会话、来源和首次/最近留资时间",
+        "不同租户不能因号码相同合并或泄露资料",
+        "多个候选或冲突数据进入人工处理，不自动覆盖姓名"
+      ],
+      "exceptions": "手机号相同只能作关联线索，不能证明操作者身份或开放历史敏感信息。",
+      "implementation_tasks": [
+        "设计租户内去重键和关联记录",
+        "为冲突保留证据",
+        "验证多会话同号及跨租户同号"
+      ],
+      "dependencies": [
+        "B-015",
+        "C-027"
+      ],
+      "code_paths": [
+        "server/lead-store.mjs",
+        "server/persistence/postgres-lead-store.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-016-AC1",
+        "TC-B-016-AC2",
+        "TC-B-016-AC3",
+        "TC-B-016-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/lead-store.mjs": "B",
+        "server/persistence/postgres-lead-store.mjs": "B"
+      }
+    },
+    {
+      "id": "B-017",
+      "owner": "B",
+      "title": "客户信息与联系偏好更正",
+      "epic": "客户留资",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望准确维护客户已明确的信息，以便避免错误时间或方式联系。",
+      "example": "客户更正姓名、电话并说“晚上联系，先别打电话”。",
+      "acceptance": [
+        "字段更新有来源、时间和操作者",
+        "电话变更重新触发独立会员查询，不沿用旧号结果",
+        "联系偏好与禁止联系显著展示且保留最新明确口径",
+        "并发编辑使用版本控制，不静默覆盖"
+      ],
+      "exceptions": "若“晚上联系”和“别打电话”冲突，保留限制并标待确认；不擅自安排电话。",
+      "implementation_tasks": [
+        "拆分事实字段与联系偏好",
+        "补充更新回执和审计",
+        "覆盖字段冲突及变更后的会员状态"
+      ],
+      "dependencies": [
+        "B-015",
+        "B-019"
+      ],
+      "code_paths": [
+        "server/lead-store.mjs",
+        "src/customer-presentation.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-017-AC1",
+        "TC-B-017-AC2",
+        "TC-B-017-AC3",
+        "TC-B-017-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/lead-store.mjs": "B",
+        "src/customer-presentation.js": "B"
+      }
+    },
+    {
+      "id": "B-018",
+      "owner": "B",
+      "title": "联系方式受控查看",
+      "epic": "客户留资",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望按授权查看完整联系方式，以便完成合法接待操作。",
+      "example": "本人会话点击查看电话；质检人员尝试查看；短时展示后离开页面。",
+      "acceptance": [
+        "列表与普通接口默认脱敏",
+        "完整信息经服务端权限校验后短时显示",
+        "离开页面、超时或登出清除完整号码",
+        "查看行为有审计，普通日志和浏览器长期存储不留明文"
+      ],
+      "exceptions": "权限失效时立即停止显示；错误消息不能包含完整号码。",
+      "implementation_tasks": [
+        "统一contact-reveal调用",
+        "对接C岗位与对象权限",
+        "验证过期、越权和页面生命周期"
+      ],
+      "dependencies": [
+        "C-027"
+      ],
+      "code_paths": [
+        "server/contact-vault.mjs",
+        "src/app.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-018-AC1",
+        "TC-B-018-AC2",
+        "TC-B-018-AC3",
+        "TC-B-018-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/contact-vault.mjs": "B",
+        "src/app.js": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "B-019",
+      "owner": "B",
+      "title": "留资后自动查询已有客户记录",
+      "epic": "会员查询",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望留资后自动获得院方查重结果，以便判断后续跟进方式。",
+      "example": "保存有效手机号后调用scrm查询接口，使用本地mock验证请求。",
+      "acceptance": [
+        "保存成功后触发查询，页面先显示查询中或未查询",
+        "院方已确认此接口无需签名，不要求配置secret或生成sign作为启用前提",
+        "使用已确认地址及请求字段映射，不把示例姓名、医院之外个人信息复制发送",
+        "查询结果关联当前客户、当前号码及查询时间"
+      ],
+      "exceptions": "基线默认关闭真实外呼；真实联调由负责人单独提供开发配置与测试数据。",
+      "implementation_tasks": [
+        "核对member-repeatcheck适配器",
+        "删除该接口路径上的强制验签依赖而保留其他接口鉴权",
+        "写请求mock与触发时机断言"
+      ],
+      "dependencies": [
+        "B-015"
+      ],
+      "code_paths": [
+        "server/integrations/member-repeatcheck-client.mjs",
+        "server/lead-store.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-019-AC1",
+        "TC-B-019-AC2",
+        "TC-B-019-AC3",
+        "TC-B-019-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/integrations/member-repeatcheck-client.mjs": "B",
+        "server/lead-store.mjs": "B"
+      }
+    },
+    {
+      "id": "B-020",
+      "owner": "B",
+      "title": "查重结果语义与页面展示",
+      "epic": "会员查询",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望看到准确的已有记录状态，以便不误判客户身份。",
+      "example": "返回isRepeat=true、false，以及data缺项三种情况。",
+      "acceptance": [
+        "严格布尔true显示已有客户记录",
+        "严格布尔false显示未找到客户记录",
+        "isSuccess失败、缺项、错号和非法类型不能当false",
+        "不将已有记录称为手机号归属已验证或拥有某会员权益"
+      ],
+      "exceptions": "批量结果按规范化手机号精确匹配；未知状态显示待核实。",
+      "implementation_tasks": [
+        "集中定义域状态映射",
+        "统一客户页与会话侧栏标签",
+        "补齐字符串false、空数组、错号和混合结果"
+      ],
+      "dependencies": [
+        "B-019"
+      ],
+      "code_paths": [
+        "src/member-check-display.js",
+        "server/integrations/member-repeatcheck-client.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-020-AC1",
+        "TC-B-020-AC2",
+        "TC-B-020-AC3",
+        "TC-B-020-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/member-check-display.js": "B",
+        "server/integrations/member-repeatcheck-client.mjs": "B"
+      }
+    },
+    {
+      "id": "B-021",
+      "owner": "B",
+      "title": "查询失败重试与过期结果",
+      "epic": "会员查询",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望识别查询失败并安全重试，以便不把通路异常当成新客户。",
+      "example": "接口超时后更正号码，旧请求随后返回。",
+      "acceptance": [
+        "失败、超时、未查询、查询中和已完成分别表示",
+        "重试受限且可观察，不无限调用",
+        "旧号码或旧版本结果不能覆盖当前客户状态",
+        "失败不丢失留资和会话，可按权限手动重查"
+      ],
+      "exceptions": "缓存命中显示查询时间与来源；缓存期限作为配置，不无限有效。",
+      "implementation_tasks": [
+        "绑定request_id及号码版本",
+        "实现有限退避/手动重试",
+        "测试旧结果晚到及服务恢复"
+      ],
+      "dependencies": [
+        "B-019",
+        "B-020"
+      ],
+      "code_paths": [
+        "server/integrations/member-repeatcheck-client.mjs",
+        "src/member-check-display.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-021-AC1",
+        "TC-B-021-AC2",
+        "TC-B-021-AC3",
+        "TC-B-021-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/integrations/member-repeatcheck-client.mjs": "B",
+        "src/member-check-display.js": "B"
+      }
+    },
+    {
+      "id": "B-022",
+      "owner": "B",
+      "title": "院方接口最小数据与异常契约",
+      "epic": "会员查询",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为接口维护人员，我希望有稳定且不泄露数据的调用记录，以便快速定位联调问题。",
+      "example": "院方返回HTML错误页、HTTP200业务失败、字段结构变化。",
+      "acceptance": [
+        "超时、HTTP失败、JSON错误、业务失败分别归类",
+        "只发送合同必需字段，缺失字段不伪造示例值",
+        "日志包含请求标识和耗时，不输出明文电话或凭据",
+        "接口地址和配置由服务端管理，前端不能指定任意目标"
+      ],
+      "exceptions": "不能确认必填字段时列明契约缺口并标blocked；不得调用真实客户数据凑样本。",
+      "implementation_tasks": [
+        "整理请求与响应示例的脱敏版本",
+        "设置体积和时间限制",
+        "增加异常响应适配测试"
+      ],
+      "dependencies": [
+        "B-019"
+      ],
+      "code_paths": [
+        "server/integrations/member-repeatcheck-client.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-022-AC1",
+        "TC-B-022-AC2",
+        "TC-B-022-AC3",
+        "TC-B-022-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/integrations/member-repeatcheck-client.mjs": "B"
+      }
+    },
+    {
+      "id": "B-023",
+      "owner": "B",
+      "title": "到院意向登记",
+      "epic": "预约跟进",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望确认后登记期望到院时间，以便让销售跟进安排。",
+      "example": "选择合法日期时间并确认登记，连续点击两次。",
+      "acceptance": [
+        "记录客户、会话、项目意向、期望时间和确认来源",
+        "登记前校验必要字段及有效时间范围",
+        "重复请求返回同一登记，不重复创建",
+        "状态明确为待跟进/待院方确认，未获实际排班不标专家已预约"
+      ],
+      "exceptions": "服务失败回执不含虚假登记ID；使用Asia/Shanghai解析业务日期。",
+      "implementation_tasks": [
+        "统一前台与对话登记入口",
+        "建立幂等键和记录版本",
+        "测试重复、过去日期及模糊时间"
+      ],
+      "dependencies": [
+        "B-015"
+      ],
+      "code_paths": [
+        "server/appointment-intake-store.mjs",
+        "server/appointment-time.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-023-AC1",
+        "TC-B-023-AC2",
+        "TC-B-023-AC3",
+        "TC-B-023-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/appointment-intake-store.mjs": "B",
+        "server/appointment-time.mjs": "B"
+      }
+    },
+    {
+      "id": "B-024",
+      "owner": "B",
+      "title": "预约意向改期",
+      "epic": "预约跟进",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望更改已登记的期望时间，以便不必重复登记。",
+      "example": "把周六下午改为周日下午，后台同时修改同一记录。",
+      "acceptance": [
+        "展示当前记录和新时间摘要并确认",
+        "使用expected_version避免覆盖并发修改",
+        "改期成功保留原记录ID和变更历史",
+        "前台、后台与客户侧栏同步新时间"
+      ],
+      "exceptions": "版本冲突返回最新记录，由客户重新确认；已取消记录不能直接改期复活。",
+      "implementation_tasks": [
+        "实现版本校验和改期回执",
+        "更新前后台预约卡片",
+        "覆盖重复改期及并发更新"
+      ],
+      "dependencies": [
+        "B-023"
+      ],
+      "code_paths": [
+        "server/appointment-intake-store.mjs",
+        "server/persistence/appointment-state-store.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-024-AC1",
+        "TC-B-024-AC2",
+        "TC-B-024-AC3",
+        "TC-B-024-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/appointment-intake-store.mjs": "B",
+        "server/persistence/appointment-state-store.mjs": "B"
+      }
+    },
+    {
+      "id": "B-025",
+      "owner": "B",
+      "title": "预约意向取消",
+      "epic": "预约跟进",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望明确取消已登记意向，以便避免继续按旧时间跟进。",
+      "example": "客户确认取消，之后重复点击或收到旧改期回执。",
+      "acceptance": [
+        "取消前说明对象及当前时间，客户明确确认",
+        "重复取消保持一致结果",
+        "取消后原时间不再显示为有效待到院",
+        "旧回执不能恢复已取消状态，保留必要操作历史"
+      ],
+      "exceptions": "实际院方预约系统若未接通，只承诺取消本系统意向，不假称院方号源已释放。",
+      "implementation_tasks": [
+        "定义取消状态与可操作动作",
+        "与前台统一结果文案",
+        "验证取消/改期竞态"
+      ],
+      "dependencies": [
+        "B-023"
+      ],
+      "code_paths": [
+        "server/appointment-intake-store.mjs",
+        "server/persistence/appointment-state-store.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-025-AC1",
+        "TC-B-025-AC2",
+        "TC-B-025-AC3",
+        "TC-B-025-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/appointment-intake-store.mjs": "B",
+        "server/persistence/appointment-state-store.mjs": "B"
+      }
+    },
+    {
+      "id": "B-026",
+      "owner": "B",
+      "title": "后台预约领取与处理结果",
+      "epic": "预约跟进",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望领取待跟进预约并填写结果，以便形成可追踪闭环。",
+      "example": "顾问领取登记，核实后填写已联系、待确认或无法联系。",
+      "acceptance": [
+        "列表可按状态、日期、负责人筛选",
+        "领取与处理校验岗位和数据范围",
+        "处理结果、说明和下次跟进时间可追溯",
+        "不把人工点击已处理自动等同客户实际到院或付款"
+      ],
+      "exceptions": "必要证明与业务状态对应；并发领取失败提示当前负责人。",
+      "implementation_tasks": [
+        "接入后台预约接口",
+        "定义处理字段与状态转换",
+        "联测客户、会话和预约三个入口"
+      ],
+      "dependencies": [
+        "B-023",
+        "C-027"
+      ],
+      "code_paths": [
+        "src/app.js",
+        "server/persistence/appointment-state-store.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-026-AC1",
+        "TC-B-026-AC2",
+        "TC-B-026-AC3",
+        "TC-B-026-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/app.js": "共享：需申报变更",
+        "server/persistence/appointment-state-store.mjs": "B"
+      }
+    },
+    {
+      "id": "B-027",
+      "owner": "B",
+      "title": "客户备注与跟进记录",
+      "epic": "客户留资",
+      "priority": "P1",
+      "status": "待逐项核验",
+      "user_story": "作为售前顾问，我希望记录客户需求和后续处理，以便便于再次接待。",
+      "example": "添加“客户仅了解项目，暂不电话联系”并安排后续待办。",
+      "acceptance": [
+        "备注保留作者、时间和客户关联",
+        "禁止联系偏好独立显著展示，不埋在自由文本中",
+        "保存失败保留编辑内容，重复点击不重复添加",
+        "质量角色只查看允许的脱敏内容"
+      ],
+      "exceptions": "普通备注不能改写已确认的预约和会员状态；不把备注文本当系统指令。",
+      "implementation_tasks": [
+        "复用客户域记录结构",
+        "区分备注与受控状态更新",
+        "测试可见范围和保存失败"
+      ],
+      "dependencies": [
+        "B-017",
+        "C-028"
+      ],
+      "code_paths": [
+        "server/lead-store.mjs",
+        "src/customer-presentation.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-027-AC1",
+        "TC-B-027-AC2",
+        "TC-B-027-AC3",
+        "TC-B-027-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/lead-store.mjs": "B",
+        "src/customer-presentation.js": "B"
+      }
+    },
+    {
+      "id": "B-028",
+      "owner": "B",
+      "title": "业务接口对象级授权",
+      "epic": "权限消费",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为机构负责人，我希望确保顾问只操作被授权客户，以便避免跨客户或跨科室访问。",
+      "example": "顾问替换客户、会话、预约ID；超级管理员在本机构查看全部。",
+      "acceptance": [
+        "列表、详情、发送、领取、改期、联系方式查看均做服务端授权",
+        "不能通过ID枚举绕过本人/科室限制",
+        "超级管理员仍限定本机构",
+        "无权限与不存在采用一致安全响应，日志保留审计标识"
+      ],
+      "exceptions": "前端隐藏按钮不算通过；每个读写接口都需反向权限用例。",
+      "implementation_tasks": [
+        "消费C的principal及对象策略",
+        "建立B接口权限矩阵",
+        "自动遍历不同账号及租户测试"
+      ],
+      "dependencies": [
+        "C-026",
+        "C-027"
+      ],
+      "code_paths": [
+        "server/api-router.mjs",
+        "server/platform/management-authorization.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-028-AC1",
+        "TC-B-028-AC2",
+        "TC-B-028-AC3",
+        "TC-B-028-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/api-router.mjs": "共享：需申报变更",
+        "server/platform/management-authorization.mjs": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "B-029",
+      "owner": "B",
+      "title": "持久化一致性与故障恢复",
+      "epic": "可靠性",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为项目负责人，我希望重启或失败后仍保持客户和接待状态一致，以便可靠恢复业务。",
+      "example": "写入消息后进程中断；数据库事务失败；投递成功回执丢失。",
+      "acceptance": [
+        "local_json开发验证与PostgreSQL验证分开报告",
+        "数据库模式下相关状态提交具有明确事务边界",
+        "外发通过可恢复的投递记录/现有outbox协议，不靠内存成功标记",
+        "恢复任务重复执行不会重复建档、预约或发送"
+      ],
+      "exceptions": "真实PostgreSQL/worker未运行标blocked，不能用JSON测试代替。",
+      "implementation_tasks": [
+        "梳理事务、幂等及投递关联",
+        "与负责人协调迁移编号",
+        "注入提交前后中断和恢复测试"
+      ],
+      "dependencies": [
+        "B-004",
+        "B-010"
+      ],
+      "code_paths": [
+        "server/persistence/postgres-operations-store.mjs",
+        "server/persistence/postgres-lead-store.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-029-AC1",
+        "TC-B-029-AC2",
+        "TC-B-029-AC3",
+        "TC-B-029-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/persistence/postgres-operations-store.mjs": "B",
+        "server/persistence/postgres-lead-store.mjs": "B"
+      }
+    },
+    {
+      "id": "B-030",
+      "owner": "B",
+      "title": "端到端接待验收与定位",
+      "epic": "可靠性",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为项目负责人，我希望看到前台到后台的完整测试证据，以便确认通路真实可用。",
+      "example": "三个模拟客户咨询→留资→查重mock→人工接管→改期→结束接待。",
+      "acceptance": [
+        "每条旅程关联story_id、会话ID和脱敏回执",
+        "验证未读、顺序、焦点、人工送达及无AI抢答",
+        "失败结果可定位到入站、保存、投递或页面同步环节",
+        "实际浏览器操作与接口测试分别记录，不能互相冒充"
+      ],
+      "exceptions": "并发量与时延作为测量结果记录；上线SLO未经约定不编造已达标。",
+      "implementation_tasks": [
+        "组织A/B/C联调假数据",
+        "记录关键接口与界面证据",
+        "输出缺陷及回归结果清单"
+      ],
+      "dependencies": [
+        "A-023",
+        "B-007",
+        "B-020",
+        "B-026",
+        "C-027"
+      ],
+      "code_paths": [
+        "tests/local-conversation-sync.mjs",
+        "tests/management-handover-ui.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-B-030-AC1",
+        "TC-B-030-AC2",
+        "TC-B-030-AC3",
+        "TC-B-030-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:member-check",
+        "npm run test:acquisition-orchestration",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "tests/local-conversation-sync.mjs": "B",
+        "tests/management-handover-ui.mjs": "B"
+      }
+    },
+    {
+      "id": "C-001",
+      "owner": "C",
+      "title": "知识、发布与人员页面入口",
+      "epic": "后台入口",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为内容与管理人员，我希望进入职责对应的页面，以便完成资料和账号操作。",
+      "example": "内容专员打开资料页，发布人员打开发布页，管理员打开人员页。",
+      "acceptance": [
+        "各岗位显示正确菜单且可实际进入",
+        "直接访问深链接按权限返回页面或明确拒绝",
+        "加载、空数据、失败重试三态完整",
+        "页面刷新和返回不丢失有效筛选，不出现不可点击遮罩"
+      ],
+      "exceptions": "401统一转登录，403保留明确权限说明；不显示假成功空页。",
+      "implementation_tasks": [
+        "核对路由和按钮事件",
+        "按ownership约定抽离knowledge/administration模块",
+        "逐岗位浏览器验证"
+      ],
+      "dependencies": [
+        "C-019"
+      ],
+      "code_paths": [
+        "src/app.js",
+        "src/subpages.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-001-AC1",
+        "TC-C-001-AC2",
+        "TC-C-001-AC3",
+        "TC-C-001-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/app.js": "共享：需申报变更",
+        "src/subpages.js": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "C-002",
+      "owner": "C",
+      "title": "资料上传与完整性确认",
+      "epic": "资料入库",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为内容专员，我希望可靠上传已授权资料，以便进入可审核的资料库。",
+      "example": "上传合法文档，中途断网后重试；上传不允许类型。",
+      "acceptance": [
+        "文件类型、大小、内容类型由服务端校验并在界面说明",
+        "上传有进度或明确等待状态，可看到失败原因",
+        "完成回执验证实际对象完整性，不把创建上传地址当成功",
+        "未授权用户不能上传到其他科室或替换其他资料对象"
+      ],
+      "exceptions": "重复完成请求幂等；不完整对象不得进入候选包。",
+      "implementation_tasks": [
+        "对接prepare/content/complete三阶段接口",
+        "增加完整性与归属校验",
+        "测试断网、错误类型和跨科室"
+      ],
+      "dependencies": [
+        "C-027"
+      ],
+      "code_paths": [
+        "server/knowledge-intake-store.mjs",
+        "src/knowledge-catalog-import.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-002-AC1",
+        "TC-C-002-AC2",
+        "TC-C-002-AC3",
+        "TC-C-002-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/knowledge-intake-store.mjs": "C",
+        "src/knowledge-catalog-import.js": "C"
+      }
+    },
+    {
+      "id": "C-003",
+      "owner": "C",
+      "title": "资料元数据与有效事实维护",
+      "epic": "资料入库",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为内容专员，我希望维护项目、来源和有效期，以便让AI使用正确且可追溯的资料。",
+      "example": "录入项目报价及活动适用条件、有效期、来源确认信息。",
+      "acceptance": [
+        "资料有标题、类型、项目/科室、来源、权限范围和版本",
+        "价格、地址、排班等事实包含适用条件和确认依据",
+        "必填字段及日期冲突给出字段级错误",
+        "未经确认的事实保持草稿，不默认公开或自动供AI使用"
+      ],
+      "exceptions": "缺少院方信息标待确认，不填示范聊天中的历史数值。",
+      "implementation_tasks": [
+        "定义字段字典及校验",
+        "完善编辑表单和保存回执",
+        "覆盖过期、缺来源及冲突事实"
+      ],
+      "dependencies": [],
+      "code_paths": [
+        "server/knowledge-intake-store.mjs",
+        "src/project-knowledge.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-003-AC1",
+        "TC-C-003-AC2",
+        "TC-C-003-AC3",
+        "TC-C-003-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/knowledge-intake-store.mjs": "C",
+        "src/project-knowledge.js": "C"
+      }
+    },
+    {
+      "id": "C-004",
+      "owner": "C",
+      "title": "重复资料与新版本",
+      "epic": "资料入库",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为内容专员，我希望识别重复文件并维护版本，以便避免重复入库和误覆盖。",
+      "example": "同一文件上传两次；同标题的新版价格资料再次上传。",
+      "acceptance": [
+        "按内容指纹提示重复，不只依据文件名",
+        "新版保留独立版本及与旧版关系",
+        "已发布版本不可原地修改；修改进入新草稿",
+        "并发编辑版本冲突提示比较和重试"
+      ],
+      "exceptions": "相同标题不同内容不能自动视为重复删除；同文件不同授权范围需单独处理。",
+      "implementation_tasks": [
+        "建立文件指纹和版本引用",
+        "增加expected_version校验",
+        "实现新旧版本差异摘要"
+      ],
+      "dependencies": [
+        "C-002",
+        "C-003"
+      ],
+      "code_paths": [
+        "server/knowledge-intake-store.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-004-AC1",
+        "TC-C-004-AC2",
+        "TC-C-004-AC3",
+        "TC-C-004-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/knowledge-intake-store.mjs": "C"
+      }
+    },
+    {
+      "id": "C-005",
+      "owner": "C",
+      "title": "解析、切分与预览",
+      "epic": "资料入库",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为内容专员，我希望检查解析出来的知识内容，以便避免乱码或错误进入回答。",
+      "example": "含表格的项目资料解析后出现空内容或列错位。",
+      "acceptance": [
+        "解析结果可预览并定位原文件/段落或页码来源",
+        "空块、乱码和异常表格标识待处理",
+        "人工修正保留原文来源与编辑记录",
+        "解析失败不自动标审核通过或索引就绪"
+      ],
+      "exceptions": "OCR或解析服务未配置时标不可用/blocked，不伪造已提取文字。",
+      "implementation_tasks": [
+        "核对现有解析能力支持范围",
+        "为失败块提供修正与重试流程",
+        "用公开假样本覆盖表格和空文件"
+      ],
+      "dependencies": [
+        "C-002"
+      ],
+      "code_paths": [
+        "server/knowledge-intake-store.mjs",
+        "scripts/ingest-public-materials.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-005-AC1",
+        "TC-C-005-AC2",
+        "TC-C-005-AC3",
+        "TC-C-005-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/knowledge-intake-store.mjs": "C",
+        "scripts/ingest-public-materials.mjs": "未单独分配：按共享申报"
+      }
+    },
+    {
+      "id": "C-006",
+      "owner": "C",
+      "title": "业务、医疗及公开范围审核",
+      "epic": "审核确认",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为有审核权限的人员，我希望检查资料事实及对外可用范围，以便避免未批准内容对客使用。",
+      "example": "候选资料包含未经确认效果承诺，审核驳回后修改重提。",
+      "acceptance": [
+        "审核对象绑定具体版本和内容指纹",
+        "审核结论、理由、人员及时间留痕",
+        "驳回后修改导致旧审核失效，必须按流程重审",
+        "没有审核权限的岗位不可自行代签，超级管理员操作仍留痕"
+      ],
+      "exceptions": "标准五岗位未自动获得所有审核权限；按现有capability明确授权，不能私自增设万能角色。",
+      "implementation_tasks": [
+        "列出每种审核所需能力",
+        "约束状态机及审核版本",
+        "与A维护对客边界模板和失效规则"
+      ],
+      "dependencies": [
+        "C-003",
+        "C-026"
+      ],
+      "code_paths": [
+        "server/knowledge-release-policy.mjs",
+        "server/knowledge-publication.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-006-AC1",
+        "TC-C-006-AC2",
+        "TC-C-006-AC3",
+        "TC-C-006-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/knowledge-release-policy.mjs": "C",
+        "server/knowledge-publication.mjs": "C"
+      }
+    },
+    {
+      "id": "C-007",
+      "owner": "C",
+      "title": "院方确认凭据与适用范围",
+      "epic": "审核确认",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为内容专员，我希望记录院方确认依据，以便让发布者知道哪些事实已获确认。",
+      "example": "录入报价确认凭据，再更改对应价格字段。",
+      "acceptance": [
+        "确认记录指向具体资料版本、确认范围和日期",
+        "凭据仅按授权查看，客户隐私不作为通用检索内容",
+        "关键事实修改后重新确认",
+        "缺少有效依据的资料在发布前明确阻断或排除"
+      ],
+      "exceptions": "上传附件不等于院方已确认；待确认与确认通过状态分开。",
+      "implementation_tasks": [
+        "完善confirmation结构及校验",
+        "关联凭据和内容指纹",
+        "验证修改后旧凭据不可直接沿用"
+      ],
+      "dependencies": [
+        "C-006"
+      ],
+      "code_paths": [
+        "server/knowledge-intake-store.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-007-AC1",
+        "TC-C-007-AC2",
+        "TC-C-007-AC3",
+        "TC-C-007-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/knowledge-intake-store.mjs": "C"
+      }
+    },
+    {
+      "id": "C-008",
+      "owner": "C",
+      "title": "构建可追溯候选发布包",
+      "epic": "正式发布",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为发布与索引管理员，我希望选择合格版本构建候选包，以便发布前明确将上线哪些内容。",
+      "example": "选择十条资料，其中一条未审核、一条已过期。",
+      "acceptance": [
+        "候选包固定资料版本、内容哈希与权限范围",
+        "不合格条目给出逐项原因，不静默混入",
+        "候选包ID、创建者及来源清单可下载/查看",
+        "构建后内容变化需要新包或新版本，不能替换已评测内容"
+      ],
+      "exceptions": "构建失败不改变当前在线版本；重复构建按幂等规则处理。",
+      "implementation_tasks": [
+        "生成稳定manifest",
+        "实现准入校验和失败清单",
+        "对接后续评测与索引同一包ID"
+      ],
+      "dependencies": [
+        "C-004",
+        "C-006",
+        "C-007"
+      ],
+      "code_paths": [
+        "server/knowledge-publication.mjs",
+        "server/knowledge-release-policy.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-008-AC1",
+        "TC-C-008-AC2",
+        "TC-C-008-AC3",
+        "TC-C-008-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/knowledge-publication.mjs": "C",
+        "server/knowledge-release-policy.mjs": "C"
+      }
+    },
+    {
+      "id": "C-009",
+      "owner": "C",
+      "title": "发布前评测与索引就绪门槛",
+      "epic": "正式发布",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为发布与索引管理员，我希望核对同一候选包的评测与索引结果，以便避免发布不可用知识。",
+      "example": "候选包A评测通过，尝试拿该结果激活内容不同的包B。",
+      "acceptance": [
+        "评测、索引与发布包的版本/哈希一致",
+        "失败或缺失必需证据时不可激活",
+        "显示失败用例、索引状态及重试入口",
+        "mock开发证据和正式环境验收证据明确区分"
+      ],
+      "exceptions": "GraphRAG未启用时按当前实际检索引擎验证；不能要求无关服务的假绿色状态。",
+      "implementation_tasks": [
+        "对接现有release policy",
+        "核对评测证据与索引manifest绑定",
+        "测试错包、过期证据及未就绪索引"
+      ],
+      "dependencies": [
+        "C-008",
+        "A-028"
+      ],
+      "code_paths": [
+        "server/knowledge-release-policy.mjs",
+        "server/knowledge-publication.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-009-AC1",
+        "TC-C-009-AC2",
+        "TC-C-009-AC3",
+        "TC-C-009-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/knowledge-release-policy.mjs": "C",
+        "server/knowledge-publication.mjs": "C"
+      }
+    },
+    {
+      "id": "C-010",
+      "owner": "C",
+      "title": "发布激活与明确回执",
+      "epic": "正式发布",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为发布与索引管理员，我希望确认后正式激活候选包，以便让客户问答使用批准内容。",
+      "example": "查看差异后激活候选包，重复点击并模拟激活失败。",
+      "acceptance": [
+        "操作前展示目标包、替换版本及影响范围",
+        "激活原子更新有效版本，失败保留上一版本",
+        "成功返回实际激活版本和时间",
+        "未授权人员不能通过直接接口绕过发布按钮权限"
+      ],
+      "exceptions": "不得把候选包创建或索引成功当作正式激活；重复激活结果一致。",
+      "implementation_tasks": [
+        "实现激活确认与版本锁",
+        "显示实际回执",
+        "覆盖失败回滚与并发激活"
+      ],
+      "dependencies": [
+        "C-009",
+        "C-026"
+      ],
+      "code_paths": [
+        "server/knowledge-publication.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-010-AC1",
+        "TC-C-010-AC2",
+        "TC-C-010-AC3",
+        "TC-C-010-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/knowledge-publication.mjs": "C"
+      }
+    },
+    {
+      "id": "C-011",
+      "owner": "C",
+      "title": "跨进程发布生效",
+      "epic": "正式发布",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为发布与索引管理员，我希望知道所有问答进程使用了新版本，以便避免不同客户收到不同旧知识。",
+      "example": "启动两个问答进程，发布更新后分别提问同一事实。",
+      "acceptance": [
+        "各进程报告实际加载版本",
+        "新查询在约定刷新时限内读取新包；记录实测时延",
+        "某进程加载失败显示未就绪，不能报告全量生效",
+        "加载新版本失败时采用明确回退策略，不混用新旧块"
+      ],
+      "exceptions": "刷新时限是团队待冻结指标；测试报告必须标环境及进程数。",
+      "implementation_tasks": [
+        "核对版本通知/定期刷新机制",
+        "增加实例版本诊断",
+        "进行双进程真实加载测试"
+      ],
+      "dependencies": [
+        "C-010"
+      ],
+      "code_paths": [
+        "server/runtime-knowledge-index.mjs",
+        "server/acquisition-service-server.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-011-AC1",
+        "TC-C-011-AC2",
+        "TC-C-011-AC3",
+        "TC-C-011-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/runtime-knowledge-index.mjs": "C",
+        "server/acquisition-service-server.mjs": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "C-012",
+      "owner": "C",
+      "title": "紧急撤回与禁用资料",
+      "epic": "正式发布",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为发布与索引管理员，我希望撤回错误或失效资料，以便阻止继续对客引用。",
+      "example": "回答正在生成时撤回其引用资料；客户再点击旧链接。",
+      "acceptance": [
+        "撤回记录绑定资料或发布版本及原因",
+        "新检索排除撤回内容",
+        "生成中的回答在输出前校验有效性，不能继续提交撤回事实",
+        "媒体访问按撤回政策拒绝，历史记录保留“已撤回”标识"
+      ],
+      "exceptions": "只改后台标签或清单不算撤回完成；缓存与副本一起验证。",
+      "implementation_tasks": [
+        "建立撤回有效性查询",
+        "与A对接最终输出校验",
+        "检查缓存、运行中回复和旧媒体URL"
+      ],
+      "dependencies": [
+        "C-011",
+        "C-015",
+        "A-014"
+      ],
+      "code_paths": [
+        "server/knowledge-publication.mjs",
+        "server/runtime-knowledge-index.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-012-AC1",
+        "TC-C-012-AC2",
+        "TC-C-012-AC3",
+        "TC-C-012-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/knowledge-publication.mjs": "C",
+        "server/runtime-knowledge-index.mjs": "C"
+      }
+    },
+    {
+      "id": "C-013",
+      "owner": "C",
+      "title": "发布版本回滚",
+      "epic": "正式发布",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为发布与索引管理员，我希望恢复到指定可用版本，以便快速处理发布错误。",
+      "example": "新版效果异常，选择上一合格版本回滚。",
+      "acceptance": [
+        "回滚目标仍满足当前权限、有效期及撤回约束",
+        "展示差异与影响并要求明确操作",
+        "回滚产生独立事件，记录原版、目标版、操作者和时间",
+        "各进程实际加载回滚版本，不能只更新UI"
+      ],
+      "exceptions": "旧版包含已禁用内容时阻止直接恢复并列明原因。",
+      "implementation_tasks": [
+        "复用版本切换原子逻辑",
+        "重新核验目标准入",
+        "演练回滚失败和跨实例生效"
+      ],
+      "dependencies": [
+        "C-010",
+        "C-011",
+        "C-012"
+      ],
+      "code_paths": [
+        "server/knowledge-publication.mjs",
+        "server/knowledge-release-policy.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-013-AC1",
+        "TC-C-013-AC2",
+        "TC-C-013-AC3",
+        "TC-C-013-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/knowledge-publication.mjs": "C",
+        "server/knowledge-release-policy.mjs": "C"
+      }
+    },
+    {
+      "id": "C-014",
+      "owner": "C",
+      "title": "检索前授权与结构化证据",
+      "epic": "知识消费",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前助手调用方，我希望只检索可向当前客户使用的有效证据，以便生成可靠回答。",
+      "example": "公开资料、内部资料、其他租户资料使用相同关键词。",
+      "acceptance": [
+        "检索前按租户、科室/范围和发布状态限制候选集合",
+        "返回证据ID、版本、正文、来源及有效状态",
+        "空结果与服务失败使用不同结果语义",
+        "不得先把无权限原文交给模型再事后遮挡"
+      ],
+      "exceptions": "开发924条公开子集不等于正式发布，正式模式不能用preview绕过准入。",
+      "implementation_tasks": [
+        "统一查询上下文与证据结构",
+        "核对索引的授权过滤",
+        "加入同关键词跨权限反例"
+      ],
+      "dependencies": [
+        "C-010",
+        "C-027"
+      ],
+      "code_paths": [
+        "server/huamei-knowledge.mjs",
+        "server/runtime-knowledge-index.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-014-AC1",
+        "TC-C-014-AC2",
+        "TC-C-014-AC3",
+        "TC-C-014-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/huamei-knowledge.mjs": "C",
+        "server/runtime-knowledge-index.mjs": "C"
+      }
+    },
+    {
+      "id": "C-015",
+      "owner": "C",
+      "title": "引用版本与缓存失效",
+      "epic": "知识消费",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为售前助手调用方，我希望知道证据是否仍可使用，以便避免输出缓存旧事实。",
+      "example": "同一查询缓存命中后发布新版本或撤回旧资料。",
+      "acceptance": [
+        "缓存键包括租户、权限范围及发布版本",
+        "发布/撤回使相关缓存失效或版本隔离",
+        "最终引用可查到具体资料版本",
+        "缓存不可用可安全回源，不返回其他租户缓存"
+      ],
+      "exceptions": "过期或撤回媒体与文本一致处理；历史回答显示其当时版本而非偷偷替换。",
+      "implementation_tasks": [
+        "定义cache scope和有效性接口",
+        "对齐Node与可选GraphRAG缓存",
+        "测试权限变化和撤回期间缓存命中"
+      ],
+      "dependencies": [
+        "C-012",
+        "C-014"
+      ],
+      "code_paths": [
+        "server/runtime-knowledge-index.mjs",
+        "server/graphrag-client.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-015-AC1",
+        "TC-C-015-AC2",
+        "TC-C-015-AC3",
+        "TC-C-015-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/runtime-knowledge-index.mjs": "C",
+        "server/graphrag-client.mjs": "C"
+      }
+    },
+    {
+      "id": "C-016",
+      "owner": "C",
+      "title": "公开资料与媒体受控访问",
+      "epic": "知识消费",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为咨询客户，我希望打开回答引用的资料，以便进一步了解项目。",
+      "example": "点击已发布项目图片或文件，随后资料撤回或链接过期。",
+      "acceptance": [
+        "链接只指向已批准且当前可访问对象",
+        "服务端校验对象范围，不接受任意文件路径",
+        "过期、撤回和不存在分别提供适当用户提示",
+        "对象存储凭据不暴露到前端或可下载清单"
+      ],
+      "exceptions": "客户上传照片、聊天与对比图不能自动当公开宣传资料；授权缺失则拒绝公开。",
+      "implementation_tasks": [
+        "核查OSS/本地对象访问适配",
+        "实现访问回执与失效展示",
+        "测试路径穿越、旧链接和未发布对象"
+      ],
+      "dependencies": [
+        "C-012",
+        "C-027"
+      ],
+      "code_paths": [
+        "server/knowledge-media.mjs",
+        "server/knowledge-intake-store.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-016-AC1",
+        "TC-C-016-AC2",
+        "TC-C-016-AC3",
+        "TC-C-016-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/knowledge-media.mjs": "C",
+        "server/knowledge-intake-store.mjs": "C"
+      }
+    },
+    {
+      "id": "C-017",
+      "owner": "C",
+      "title": "知识搜索、筛选与状态解释",
+      "epic": "后台交互",
+      "priority": "P1",
+      "status": "待逐项核验",
+      "user_story": "作为内容专员，我希望找到待处理或已发布资料，以便高效管理内容。",
+      "example": "按项目、科室、草稿/待审/已发布筛选，再搜索关键词。",
+      "acceptance": [
+        "筛选可组合并清除，分页与总数口径一致",
+        "展示资料状态、发布状态和索引状态的区别",
+        "列表项进入正确版本详情",
+        "无结果、加载失败和无权限不同提示"
+      ],
+      "exceptions": "搜索失败保留筛选条件；只能检索用户有权限的目录和资料。",
+      "implementation_tasks": [
+        "统一列表查询参数",
+        "完善状态标签解释",
+        "验证翻页、返回和组合筛选"
+      ],
+      "dependencies": [
+        "C-001",
+        "C-003"
+      ],
+      "code_paths": [
+        "src/app.js",
+        "src/project-knowledge.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-017-AC1",
+        "TC-C-017-AC2",
+        "TC-C-017-AC3",
+        "TC-C-017-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/app.js": "共享：需申报变更",
+        "src/project-knowledge.js": "C"
+      }
+    },
+    {
+      "id": "C-018",
+      "owner": "C",
+      "title": "常用话术维护与生效",
+      "epic": "后台交互",
+      "priority": "P1",
+      "status": "待逐项核验",
+      "user_story": "作为内容专员，我希望维护批准的话术和变量，以便供人工接待安全使用。",
+      "example": "新增预约说明模板、修改变量，再撤回旧模板。",
+      "acceptance": [
+        "模板有分类、版本、适用范围和状态",
+        "变量明确命名，预览不替换成真实客户数据",
+        "只有允许使用的版本供B查询",
+        "模板更改不篡改已发送消息，撤回停止推荐"
+      ],
+      "exceptions": "历史聊天中的优惠或接送承诺不能未经确认直接发布为常用语。",
+      "implementation_tasks": [
+        "定义模板目录及版本查询",
+        "增加编辑预览及准入校验",
+        "向B提供空结果、撤回、变量示例"
+      ],
+      "dependencies": [
+        "C-003",
+        "C-006"
+      ],
+      "code_paths": [
+        "src/project-knowledge.js",
+        "src/app.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-018-AC1",
+        "TC-C-018-AC2",
+        "TC-C-018-AC3",
+        "TC-C-018-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/project-knowledge.js": "C",
+        "src/app.js": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "C-019",
+      "owner": "C",
+      "title": "五岗位与超级管理员菜单",
+      "epic": "账号权限",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为机构管理员，我希望明确岗位可见菜单，以便给每人正确工作入口。",
+      "example": "分别登录五个标准岗位和本机构超级管理员。",
+      "acceptance": [
+        "采用现有角色目录：系统管理员、售前顾问、内容专员、发布与索引管理员、质量与运营人员",
+        "超级管理员是额外角色，拥有本机构完整菜单与功能",
+        "菜单从服务端身份能力派生，不能浏览器改角色即扩权",
+        "角色变更后页面重新获取身份和可用入口"
+      ],
+      "exceptions": "普通系统管理员不等于超级管理员；菜单隐藏不能替代接口授权。",
+      "implementation_tasks": [
+        "对照role-catalog建立菜单矩阵",
+        "修复各页面入口能力判断",
+        "逐角色保存页面和接口验证结果"
+      ],
+      "dependencies": [],
+      "code_paths": [
+        "src/role-catalog.js",
+        "server/platform/phase-one-role-policy.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-019-AC1",
+        "TC-C-019-AC2",
+        "TC-C-019-AC3",
+        "TC-C-019-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/role-catalog.js": "C",
+        "server/platform/phase-one-role-policy.mjs": "C"
+      }
+    },
+    {
+      "id": "C-020",
+      "owner": "C",
+      "title": "后台登录完整流程",
+      "epic": "账号权限",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为后台人员，我希望使用自己的账号登录，以便进入被授权的工作台。",
+      "example": "正确密码、错误密码、停用账号、直接打开业务深链接。",
+      "acceptance": [
+        "登录表单有加载状态、防重复提交和通用失败提示",
+        "成功后建立服务端会话，跳转到安全的原目标或默认页",
+        "不把密码、认证令牌放入URL或普通日志",
+        "失败频率限制按服务端策略执行，不暴露账号是否存在"
+      ],
+      "exceptions": "身份服务不可用不降级为匿名管理员；外部return URL不得开放跳转。",
+      "implementation_tasks": [
+        "梳理浏览器会话与受管账号认证",
+        "校验回跳目标",
+        "测试登录失败、禁用及深链接"
+      ],
+      "dependencies": [
+        "C-019"
+      ],
+      "code_paths": [
+        "server/platform/admin-browser-session.mjs",
+        "server/platform/management-accounts.mjs",
+        "src/admin-session.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-020-AC1",
+        "TC-C-020-AC2",
+        "TC-C-020-AC3",
+        "TC-C-020-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/platform/admin-browser-session.mjs": "C",
+        "server/platform/management-accounts.mjs": "C",
+        "src/admin-session.js": "C"
+      }
+    },
+    {
+      "id": "C-021",
+      "owner": "C",
+      "title": "退出登录并使旧会话失效",
+      "epic": "账号权限",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为后台人员，我希望安全退出工作台，以便防止他人继续使用账号。",
+      "example": "退出后点击浏览器返回，再调用旧会话接口；多标签页同时打开。",
+      "acceptance": [
+        "退出触发服务端会话失效及Cookie清除",
+        "旧会话访问受保护接口返回未认证",
+        "前端清理身份、明文联系方式和草稿等敏感状态",
+        "其他标签页在退出通知或下一次校验时停止访问和推送"
+      ],
+      "exceptions": "服务端退出失败需提示并停止当前界面展示；不能仅跳登录页声称旧令牌已失效。",
+      "implementation_tasks": [
+        "统一logout入口",
+        "联动B的SSE/轮询清理",
+        "验证旧Cookie、历史返回和多标签页"
+      ],
+      "dependencies": [
+        "C-020"
+      ],
+      "code_paths": [
+        "server/platform/admin-browser-session.mjs",
+        "src/admin-session.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-021-AC1",
+        "TC-C-021-AC2",
+        "TC-C-021-AC3",
+        "TC-C-021-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/platform/admin-browser-session.mjs": "C",
+        "src/admin-session.js": "C"
+      }
+    },
+    {
+      "id": "C-022",
+      "owner": "C",
+      "title": "会话过期与权限变更恢复",
+      "epic": "账号权限",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为后台人员，我希望会话失效时得到清楚提示，以便重新登录后继续工作。",
+      "example": "编辑中会话过期或角色被撤销，再点击保存。",
+      "acceptance": [
+        "401统一转登录并提示过期原因",
+        "403明确权限不足，不进入无限登录循环",
+        "停止后台轮询和SSE，避免持续失败请求",
+        "重新登录只恢复安全目标，不自动重放未确认写操作"
+      ],
+      "exceptions": "敏感草稿不跨账号保存；操作失败与会话失效不能伪装保存成功。",
+      "implementation_tasks": [
+        "建立统一API认证错误处理",
+        "广播身份失效事件",
+        "覆盖处理中写操作及权限撤销"
+      ],
+      "dependencies": [
+        "C-020",
+        "C-021"
+      ],
+      "code_paths": [
+        "src/admin-session.js",
+        "src/operations-client.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-022-AC1",
+        "TC-C-022-AC2",
+        "TC-C-022-AC3",
+        "TC-C-022-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/admin-session.js": "C",
+        "src/operations-client.js": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "C-023",
+      "owner": "C",
+      "title": "密码规则、重置与更改",
+      "epic": "账号权限",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为后台人员，我希望按一致规则设置或更新密码，以便正常使用自己的账号。",
+      "example": "设置7位、8位、较长密码；管理员重置后尝试旧密码。",
+      "acceptance": [
+        "沿用基线最少8位、最多256字符规则，前后端一致",
+        "密码只按安全哈希存储，不返回明文",
+        "密码更新后按统一会话撤销策略处理旧登录并验证",
+        "不能通过普通用户接口重置高于自身权限的账号"
+      ],
+      "exceptions": "不在文档内提供真实superadmin密码；8位是最低长度，不是强制恰好8位。",
+      "implementation_tasks": [
+        "统一表单和服务端校验",
+        "对接重置/变更回执",
+        "测试边界长度、旧密码和越权"
+      ],
+      "dependencies": [
+        "C-024"
+      ],
+      "code_paths": [
+        "server/platform/management-accounts.mjs",
+        "server/platform/admin-browser-session.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-023-AC1",
+        "TC-C-023-AC2",
+        "TC-C-023-AC3",
+        "TC-C-023-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/platform/management-accounts.mjs": "C",
+        "server/platform/admin-browser-session.mjs": "C"
+      }
+    },
+    {
+      "id": "C-024",
+      "owner": "C",
+      "title": "账号创建、停用与授权边界",
+      "epic": "账号权限",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为系统管理员，我希望维护机构内员工账号，以便控制谁可以使用系统。",
+      "example": "创建售前账号并分配科室；尝试越范围授权或停用最后一位超级管理员。",
+      "acceptance": [
+        "账号、岗位和科室范围合法且不可超出操作者授权",
+        "创建账号需要有效凭据或企业身份绑定",
+        "停用后后续请求被拒绝",
+        "保护最后一位有效超级管理员，普通管理员不能自提权"
+      ],
+      "exceptions": "账号管理需要持久化权限库；local_json缺能力时明确显示不可用，不做本地假保存。",
+      "implementation_tasks": [
+        "完善人员表单与列表",
+        "核对服务端版本和范围校验",
+        "测试并发修改、最后管理员和自提权"
+      ],
+      "dependencies": [
+        "C-026",
+        "C-031"
+      ],
+      "code_paths": [
+        "server/platform/management-accounts.mjs",
+        "src/app.js"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-024-AC1",
+        "TC-C-024-AC2",
+        "TC-C-024-AC3",
+        "TC-C-024-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/platform/management-accounts.mjs": "C",
+        "src/app.js": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "C-025",
+      "owner": "C",
+      "title": "人员离岗与业务移交",
+      "epic": "账号权限",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为系统管理员，我希望停用人员前处理未完成服务，以便不让客户任务无人跟进。",
+      "example": "有进行中会话和预约的顾问离岗，指定新负责人。",
+      "acceptance": [
+        "列出需要移交的会话、预约或服务事项",
+        "新负责人拥有相应科室及业务权限",
+        "移交记录原负责人、新负责人、时间和结果",
+        "部分移交失败明确列出，不将全部标已完成"
+      ],
+      "exceptions": "权限变更与业务移交分开记录；停止账号不能删除客户历史。",
+      "implementation_tasks": [
+        "消费B的接待/预约关联",
+        "对接现有账号移交逻辑",
+        "与B验证移交后的发送、查看和跟进权限"
+      ],
+      "dependencies": [
+        "B-009",
+        "B-026",
+        "C-024"
+      ],
+      "code_paths": [
+        "server/platform/management-accounts.mjs",
+        "server/persistence/appointment-state-store.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-025-AC1",
+        "TC-C-025-AC2",
+        "TC-C-025-AC3",
+        "TC-C-025-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/platform/management-accounts.mjs": "C",
+        "server/persistence/appointment-state-store.mjs": "B"
+      }
+    },
+    {
+      "id": "C-026",
+      "owner": "C",
+      "title": "岗位能力与接口权限矩阵",
+      "epic": "账号权限",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为机构负责人，我希望明确每个岗位能执行哪些动作，以便避免职责混乱和越权。",
+      "example": "内容专员尝试激活知识，发布管理员尝试管理账号，顾问尝试查看质检全量记录。",
+      "acceptance": [
+        "建立角色×菜单×API动作矩阵，标清允许与拒绝",
+        "服务端统一检查能力，不能每个页面自定口径",
+        "共享鉴权入口修改申报并要求A/B回归",
+        "超级管理员全权限仅在本机构范围且保留审计"
+      ],
+      "exceptions": "未定义能力默认拒绝；历史角色别名按现有目录兼容，不能自动升级权限。",
+      "implementation_tasks": [
+        "梳理每条API的capability",
+        "输出矩阵及负向用例",
+        "修复前后端能力不一致"
+      ],
+      "dependencies": [
+        "C-019"
+      ],
+      "code_paths": [
+        "server/platform/phase-one-role-policy.mjs",
+        "server/platform/management-authorization.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-026-AC1",
+        "TC-C-026-AC2",
+        "TC-C-026-AC3",
+        "TC-C-026-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/platform/phase-one-role-policy.mjs": "C",
+        "server/platform/management-authorization.mjs": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "C-027",
+      "owner": "C",
+      "title": "租户、科室与对象级数据权限",
+      "epic": "账号权限",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为机构负责人，我希望按数据范围保护客户和知识，以便避免跨机构泄露。",
+      "example": "相同岗位访问不同租户、科室、负责人下的客户、资料和预约。",
+      "acceptance": [
+        "请求principal包含可信租户及科室范围，不能由前端随意覆盖",
+        "列表、详情和写入均校验对象归属",
+        "PostgreSQL模式验证应用权限与RLS共同生效",
+        "空权限范围不解释为全部数据，未知身份拒绝访问"
+      ],
+      "exceptions": "超级管理员也不能跨机构；授权变更后缓存权限必须失效。",
+      "implementation_tasks": [
+        "定义并测试对象策略",
+        "检查数据库会话租户绑定",
+        "提供A/B可复用的授权测试夹具"
+      ],
+      "dependencies": [
+        "C-026",
+        "C-031"
+      ],
+      "code_paths": [
+        "server/platform/postgres-object-acl-policy.mjs",
+        "server/platform/phase-one-role-policy.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-027-AC1",
+        "TC-C-027-AC2",
+        "TC-C-027-AC3",
+        "TC-C-027-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/platform/postgres-object-acl-policy.mjs": "C",
+        "server/platform/phase-one-role-policy.mjs": "C"
+      }
+    },
+    {
+      "id": "C-028",
+      "owner": "C",
+      "title": "质量人员查看脱敏会话与评测",
+      "epic": "质量运营",
+      "priority": "P1",
+      "status": "待逐项核验",
+      "user_story": "作为质量与运营人员，我希望查看脱敏对话、反馈和评测，以便发现体验问题而不扩大隐私访问。",
+      "example": "质检查看点踩案例并运行评测，尝试查看完整联系方式。",
+      "acceptance": [
+        "质检仅访问授权科室脱敏会话",
+        "可关联反馈、run_id、模型及知识版本",
+        "完整联系方式查看被服务端拒绝",
+        "评测执行与结果查看分别按能力授权"
+      ],
+      "exceptions": "脱敏失败时阻止展示原文而非继续输出；下载同样遵守脱敏策略。",
+      "implementation_tasks": [
+        "整理质量页面数据契约",
+        "对接A评测与反馈",
+        "验证PII及跨科室反例"
+      ],
+      "dependencies": [
+        "A-027",
+        "A-028",
+        "C-027"
+      ],
+      "code_paths": [
+        "src/role-catalog.js",
+        "server/platform/phase-one-role-policy.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-028-AC1",
+        "TC-C-028-AC2",
+        "TC-C-028-AC3",
+        "TC-C-028-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/role-catalog.js": "C",
+        "server/platform/phase-one-role-policy.mjs": "C"
+      }
+    },
+    {
+      "id": "C-029",
+      "owner": "C",
+      "title": "关键操作审计与可追溯",
+      "epic": "质量运营",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为机构管理员，我希望追溯发布和授权等关键操作，以便定位问题并核查责任。",
+      "example": "查找某次发布、回滚、账号变更和手机号查看。",
+      "acceptance": [
+        "记录操作者、租户、对象、动作、时间、结果及关联请求ID",
+        "审计不记录密码、密钥及完整手机号",
+        "普通用户不能修改或删除审计记录",
+        "筛选与详情受权限控制，失败操作也有必要记录"
+      ],
+      "exceptions": "审计存储故障按动作风险及现有策略明确处理，不默默假装写入成功。",
+      "implementation_tasks": [
+        "整理关键动作事件字典",
+        "统一脱敏与关联ID",
+        "与B验证contact-reveal和接管审计"
+      ],
+      "dependencies": [
+        "C-026",
+        "B-018"
+      ],
+      "code_paths": [
+        "server/platform/management-accounts.mjs",
+        "server/knowledge-publication.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-029-AC1",
+        "TC-C-029-AC2",
+        "TC-C-029-AC3",
+        "TC-C-029-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "server/platform/management-accounts.mjs": "C",
+        "server/knowledge-publication.mjs": "C"
+      }
+    },
+    {
+      "id": "C-030",
+      "owner": "C",
+      "title": "长表单与发布操作交互",
+      "epic": "后台交互",
+      "priority": "P1",
+      "status": "待逐项核验",
+      "user_story": "作为内容专员与发布人员，我希望清楚理解保存和发布操作结果，以便减少误操作与重复劳动。",
+      "example": "填写长资料表单后网络失败；发布确认窗口中取消。",
+      "acceptance": [
+        "字段级错误与页面错误同时可定位",
+        "保存失败保留编辑内容，成功有版本回执",
+        "离开未保存表单提醒；重复点击不重复提交",
+        "发布、撤回、回滚显示具体对象与影响，取消不写入"
+      ],
+      "exceptions": "实时刷新不能覆盖未保存表单；冲突提供重新加载/复制草稿路径。",
+      "implementation_tasks": [
+        "统一表单状态与错误组件",
+        "分离草稿保存和正式发布按钮",
+        "完成失败、取消、冲突浏览器验收"
+      ],
+      "dependencies": [
+        "C-001",
+        "C-010"
+      ],
+      "code_paths": [
+        "src/app.js",
+        "styles.css"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-030-AC1",
+        "TC-C-030-AC2",
+        "TC-C-030-AC3",
+        "TC-C-030-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "src/app.js": "共享：需申报变更",
+        "styles.css": "共享：需申报变更"
+      }
+    },
+    {
+      "id": "C-031",
+      "owner": "C",
+      "title": "数据库与发布权限持久化验收",
+      "epic": "可靠性",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为研发负责人，我希望验证正式持久化模式下的权限和发布，以便避免只在开发数据上正常。",
+      "example": "隔离PostgreSQL启动两个进程，验证账号停用、发布和事务失败。",
+      "acceptance": [
+        "新增迁移独立申报且不修改已应用迁移",
+        "验证runtime最小权限、租户绑定和发布事务",
+        "重启后角色、发布版本及撤回状态正确",
+        "迁移、恢复与回滚方案记录实际执行结果"
+      ],
+      "exceptions": "数据库未具备标blocked；JSON模式通过不能算PostgreSQL通过。",
+      "implementation_tasks": [
+        "复用现有隔离数据库测试入口",
+        "按变更追加必要迁移",
+        "保存脱敏验证报告并交负责人统一编号"
+      ],
+      "dependencies": [],
+      "code_paths": [
+        "db/migrations/",
+        "server/persistence/postgres-knowledge-release-store.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-031-AC1",
+        "TC-C-031-AC2",
+        "TC-C-031-AC3",
+        "TC-C-031-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "db/migrations/": "共享：需申报变更",
+        "server/persistence/postgres-knowledge-release-store.mjs": "C"
+      }
+    },
+    {
+      "id": "C-032",
+      "owner": "C",
+      "title": "知识与权限跨模块总验收",
+      "epic": "可靠性",
+      "priority": "P0",
+      "status": "待逐项核验",
+      "user_story": "作为项目负责人，我希望验证资料从上传到回答、撤回及岗位控制，以便确认三人交付能共同工作。",
+      "example": "内容人员上传→审核→候选→评测→激活→前台提问→撤回→再次提问。",
+      "acceptance": [
+        "每步有实际对象ID、版本与回执",
+        "A引用正确版本且撤回后不再回答旧事实",
+        "B仅能读取其权限内客户与有效话术",
+        "五岗位加超级管理员分别执行允许和拒绝动作，记录实际界面与接口结果"
+      ],
+      "exceptions": "真实模型、正式数据库或索引不可用时分别标blocked，不汇总成全通过。",
+      "implementation_tasks": [
+        "组织共同假数据及验收账号",
+        "建立Story到接口/浏览器证据索引",
+        "汇总缺陷、依赖与回归结果"
+      ],
+      "dependencies": [
+        "C-010",
+        "C-012",
+        "C-026",
+        "A-014",
+        "B-028"
+      ],
+      "code_paths": [
+        "tests/phase-one-role-policy.mjs",
+        "tests/runtime-knowledge-index-cross-process.mjs"
+      ],
+      "baseline": "e47b57e0f64a3694f09b25e29c5b440666624013",
+      "case_ids": [
+        "TC-C-032-AC1",
+        "TC-C-032-AC2",
+        "TC-C-032-AC3",
+        "TC-C-032-AC4"
+      ],
+      "validation_commands": [
+        "npm run test:admin-session",
+        "npm run test:phase-one-boundary",
+        "npm run test:phase-one-core",
+        "npm run team:verify"
+      ],
+      "path_ownership": {
+        "tests/phase-one-role-policy.mjs": "C",
+        "tests/runtime-knowledge-index-cross-process.mjs": "未单独分配：按共享申报"
+      }
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+[
+  {
+    "scenario": "success",
+    "http": 200,
+    "meaning": "目标正常流程；预约首次创建201"
+  },
+  {
+    "scenario": "storage_failure",
+    "http": 503,
+    "error": "STORAGE_UNAVAILABLE"
+  },
+  {
+    "scenario": "timeout",
+    "http": 504,
+    "error": "UPSTREAM_TIMEOUT",
+    "note": "Mock固定延迟120ms后504，不代表真实超时时长"
+  },
+  {
+    "scenario": "conflict",
+    "http": 409,
+    "error": "VERSION_CONFLICT"
+  },
+  {
+    "scenario": "member_true",
+    "http": 200,
+    "member": {
+      "status": "completed",
+      "isRepeat": true,
+      "record_status": "existing_record"
+    }
+  },
+  {
+    "scenario": "member_false",
+    "http": 200,
+    "member": {
+      "status": "completed",
+      "isRepeat": false,
+      "record_status": "not_found"
+    }
+  },
+  {
+    "scenario": "member_error",
+    "http": 200,
+    "member": {
+      "status": "failed"
+    }
+  },
+  {
+    "scenario": "member_invalid",
+    "http": 200,
+    "member": {
+      "status": "unknown"
+    }
+  }
+]

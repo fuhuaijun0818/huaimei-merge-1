@@ -1,0 +1,17 @@
+{
+  "interface_id": "IF-01",
+  "producer": "B",
+  "consumers": [
+    "A"
+  ],
+  "existing_fields": [],
+  "new_fields": [],
+  "breaking_changes": [],
+  "error_semantics": [],
+  "idempotency": {},
+  "permission_scope": {},
+  "compatibility_plan": "",
+  "rollback": "",
+  "consumer_tests": [],
+  "status": "draft"
+}

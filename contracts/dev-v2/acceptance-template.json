@@ -1,0 +1,21 @@
+{
+  "task_id": "填写任务号",
+  "baseline_tag": "team-baseline-20260910-v2",
+  "environment": "mock|real_http|browser|postgres|live_model",
+  "results": [
+    {
+      "case_id": "E2E-01",
+      "story_ids": [
+        "B-005",
+        "B-007"
+      ],
+      "status": "not_run",
+      "steps": [],
+      "expected": [],
+      "actual": [],
+      "evidence": [],
+      "blocked_by": []
+    }
+  ],
+  "limitations": []
+}

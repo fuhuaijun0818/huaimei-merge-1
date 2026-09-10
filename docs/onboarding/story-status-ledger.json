@@ -1,0 +1,1100 @@
+[
+  {
+    "story_id": "A-001",
+    "owner": "A",
+    "title": "首次进入及会话恢复",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "apps/acquisition-advisor/src/App.jsx",
+      "server/acquisition-session.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-002",
+    "owner": "A",
+    "title": "连续输入、键盘发送与焦点",
+    "status": "已核验部分，仍需完整AC验收",
+    "evidence_summary": "已有focus与发送锁代码；浏览器焦点/IME四项尚未完整验收",
+    "code_paths": [
+      "apps/acquisition-advisor/src/App.jsx"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-003",
+    "owner": "A",
+    "title": "消息状态与重复提交",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "apps/acquisition-advisor/src/App.jsx",
+      "server/acquisition-orchestration.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-004",
+    "owner": "A",
+    "title": "取消等待与失败恢复",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "apps/acquisition-advisor/src/App.jsx"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-005",
+    "owner": "A",
+    "title": "真正的流式回答与最终提交",
+    "status": "明确新增目标",
+    "evidence_summary": "当前前台response.json读取完整响应；真正流式为明确新增目标",
+    "code_paths": [
+      "apps/acquisition-advisor/src/App.jsx",
+      "server/acquisition-service-server.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-006",
+    "owner": "A",
+    "title": "项目上下文连续追问",
+    "status": "已核验部分，仍需完整AC验收",
+    "evidence_summary": "真实应用HTTP两轮热玛吉→一般原理通过；LLM关闭，不是模型自然度验收",
+    "code_paths": [
+      "server/acquisition-session.mjs",
+      "server/acquisition-turn-plan.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-007",
+    "owner": "A",
+    "title": "代词、省略与口语归一",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/acquisition-concern-understanding.mjs",
+      "server/acquisition-turn-plan.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-008",
+    "owner": "A",
+    "title": "纠正与否定覆盖旧信息",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/acquisition-turn-plan.mjs",
+      "server/acquisition-session.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-009",
+    "owner": "A",
+    "title": "主题切换与历史返回",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/acquisition-session.mjs",
+      "server/acquisition-turn-plan.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-010",
+    "owner": "A",
+    "title": "一条消息中的多个问题",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/acquisition-turn-plan.mjs",
+      "server/agent-runtime.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-011",
+    "owner": "A",
+    "title": "必要且不重复的澄清",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/acquisition-turn-plan.mjs",
+      "server/acquisition-presales-dialogue.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-012",
+    "owner": "A",
+    "title": "每轮统一理解与下一步规划",
+    "status": "已核验部分，仍需完整AC验收",
+    "evidence_summary": "现有统一规划及13组回归通过；真实模型路径需开发者启用后逐例核验",
+    "code_paths": [
+      "server/acquisition-turn-plan.mjs",
+      "server/acquisition-orchestration.mjs",
+      "server/llm-client.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-013",
+    "owner": "A",
+    "title": "槽位记忆与任务状态有证据",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/acquisition-turn-plan.mjs",
+      "server/chat-contact-capture.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-014",
+    "owner": "A",
+    "title": "基于正式知识回答",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/agent-runtime.mjs",
+      "server/huamei-knowledge.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-015",
+    "owner": "A",
+    "title": "自然承接与结尾去模板化",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/acquisition-conversation-style.mjs",
+      "server/acquisition-presales-dialogue.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-016",
+    "owner": "A",
+    "title": "抗衰类需求的有效介绍",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/acquisition-concern-understanding.mjs",
+      "server/agent-runtime.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-017",
+    "owner": "A",
+    "title": "价格、活动与到院信息问答",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/agent-runtime.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-018",
+    "owner": "A",
+    "title": "主动提交姓名电话的承接",
+    "status": "已核验部分，仍需完整AC验收",
+    "evidence_summary": "真实HTTP表单留资及脱敏回执通过；自然语言姓名电话承接另测",
+    "code_paths": [
+      "server/chat-contact-capture.mjs",
+      "apps/acquisition-advisor/src/App.jsx"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-019",
+    "owner": "A",
+    "title": "留资同时继续回答问题",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/chat-contact-capture.mjs",
+      "server/acquisition-orchestration.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-020",
+    "owner": "A",
+    "title": "拒绝联系与暂缓预约",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/acquisition-presales-dialogue.mjs",
+      "server/acquisition-turn-plan.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-021",
+    "owner": "A",
+    "title": "预约意向的多轮收集与确认",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/acquisition-orchestration.mjs",
+      "apps/acquisition-advisor/src/App.jsx"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-022",
+    "owner": "A",
+    "title": "客户主动要求人工",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/acquisition-orchestration.mjs",
+      "apps/acquisition-advisor/src/App.jsx"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-023",
+    "owner": "A",
+    "title": "前台接收人工消息与模式切换",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "apps/acquisition-advisor/src/App.jsx",
+      "server/acquisition-session.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-024",
+    "owner": "A",
+    "title": "医疗与业务承诺边界",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/agent-runtime.mjs",
+      "tests/security-redteam.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-025",
+    "owner": "A",
+    "title": "图片与资料交互",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "apps/acquisition-advisor/src/App.jsx",
+      "server/knowledge-media.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-026",
+    "owner": "A",
+    "title": "模型不可用时的可用体验",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/llm-client.mjs",
+      "server/acquisition-orchestration.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-027",
+    "owner": "A",
+    "title": "反馈与坏例追踪",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "apps/acquisition-advisor/src/App.jsx",
+      "server/acquisition-feedback-store.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-028",
+    "owner": "A",
+    "title": "可重复的多轮质量评测",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "tests/natural-dialogue.mjs",
+      "tests/presales-journey.mjs",
+      "scripts/evaluate-acquisition-agent.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-029",
+    "owner": "A",
+    "title": "移动端阅读与可操作性",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "apps/acquisition-advisor/src/App.jsx"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "A-030",
+    "owner": "A",
+    "title": "LangGraph编排渐进接入",
+    "status": "后续可选增强",
+    "evidence_summary": "已有可选Python编排；默认legacy；非首批必需",
+    "code_paths": [
+      "agent-orchestrator/pyproject.toml",
+      "agent-orchestrator/app/graph.py",
+      "agent-orchestrator/README.md"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-001",
+    "owner": "B",
+    "title": "客户与接待菜单可进入",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "src/app.js",
+      "src/subpages.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-002",
+    "owner": "B",
+    "title": "接待工作台三栏布局",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "src/app.js",
+      "styles.css"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-003",
+    "owner": "B",
+    "title": "前台咨询自动建同一会话",
+    "status": "已核验部分，仍需完整AC验收",
+    "evidence_summary": "真实HTTP前台对话出现在后台同会话ID",
+    "code_paths": [
+      "server/local-conversation-store.mjs",
+      "server/acquisition-operations-store.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-004",
+    "owner": "B",
+    "title": "消息持久化、顺序与幂等",
+    "status": "已核验部分，仍需完整AC验收",
+    "evidence_summary": "已有归档/幂等实现及相关单元回归；全渠道投递未验收",
+    "code_paths": [
+      "server/local-conversation-store.mjs",
+      "server/acquisition-operations-store.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-005",
+    "owner": "B",
+    "title": "只更新相关会话窗口",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "src/app.js",
+      "src/conversation-unread.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-006",
+    "owner": "B",
+    "title": "实时推送与断线补偿",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "src/app.js",
+      "server/api-router.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-007",
+    "owner": "B",
+    "title": "多客户未读红点与已读位置",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "src/conversation-unread.js",
+      "src/app.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-008",
+    "owner": "B",
+    "title": "会话搜索、筛选与历史分页",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "src/app.js",
+      "server/local-conversation-store.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-009",
+    "owner": "B",
+    "title": "人工请求排队与领取",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/acquisition-operations-store.mjs",
+      "server/persistence/postgres-operations-store.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-010",
+    "owner": "B",
+    "title": "人工消息送达到前台",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/acquisition-operations-store.mjs",
+      "src/app.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-011",
+    "owner": "B",
+    "title": "接管后阻止AI抢答",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/acquisition-operations-store.mjs",
+      "server/acquisition-orchestration.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-012",
+    "owner": "B",
+    "title": "结束接待与恢复AI",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/acquisition-operations-store.mjs",
+      "src/app.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-013",
+    "owner": "B",
+    "title": "常用语检索与插入",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "src/app.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-014",
+    "owner": "B",
+    "title": "草稿、阅读位置与快捷操作",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "src/app.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-015",
+    "owner": "B",
+    "title": "手机号格式校验后保存",
+    "status": "已核验部分，仍需完整AC验收",
+    "evidence_summary": "真实HTTP格式留资通过且不要求OTP；自然语言入口另验",
+    "code_paths": [
+      "server/lead-store.mjs",
+      "server/contact-vault.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-016",
+    "owner": "B",
+    "title": "同一客户与多会话关联",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/lead-store.mjs",
+      "server/persistence/postgres-lead-store.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-017",
+    "owner": "B",
+    "title": "客户信息与联系偏好更正",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/lead-store.mjs",
+      "src/customer-presentation.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-018",
+    "owner": "B",
+    "title": "联系方式受控查看",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/contact-vault.mjs",
+      "src/app.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-019",
+    "owner": "B",
+    "title": "留资后自动查询已有客户记录",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/integrations/member-repeatcheck-client.mjs",
+      "server/lead-store.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-020",
+    "owner": "B",
+    "title": "查重结果语义与页面展示",
+    "status": "已核验部分，仍需完整AC验收",
+    "evidence_summary": "现有会员适配器及mock回归通过；真实院方本轮未调用",
+    "code_paths": [
+      "src/member-check-display.js",
+      "server/integrations/member-repeatcheck-client.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-021",
+    "owner": "B",
+    "title": "查询失败重试与过期结果",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/integrations/member-repeatcheck-client.mjs",
+      "src/member-check-display.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-022",
+    "owner": "B",
+    "title": "院方接口最小数据与异常契约",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/integrations/member-repeatcheck-client.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-023",
+    "owner": "B",
+    "title": "到院意向登记",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/appointment-intake-store.mjs",
+      "server/appointment-time.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-024",
+    "owner": "B",
+    "title": "预约意向改期",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/appointment-intake-store.mjs",
+      "server/persistence/appointment-state-store.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-025",
+    "owner": "B",
+    "title": "预约意向取消",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/appointment-intake-store.mjs",
+      "server/persistence/appointment-state-store.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-026",
+    "owner": "B",
+    "title": "后台预约领取与处理结果",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "src/app.js",
+      "server/persistence/appointment-state-store.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-027",
+    "owner": "B",
+    "title": "客户备注与跟进记录",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/lead-store.mjs",
+      "src/customer-presentation.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-028",
+    "owner": "B",
+    "title": "业务接口对象级授权",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/api-router.mjs",
+      "server/platform/management-authorization.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-029",
+    "owner": "B",
+    "title": "持久化一致性与故障恢复",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/persistence/postgres-operations-store.mjs",
+      "server/persistence/postgres-lead-store.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "B-030",
+    "owner": "B",
+    "title": "端到端接待验收与定位",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "tests/local-conversation-sync.mjs",
+      "tests/management-handover-ui.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-001",
+    "owner": "C",
+    "title": "知识、发布与人员页面入口",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "src/app.js",
+      "src/subpages.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-002",
+    "owner": "C",
+    "title": "资料上传与完整性确认",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/knowledge-intake-store.mjs",
+      "src/knowledge-catalog-import.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-003",
+    "owner": "C",
+    "title": "资料元数据与有效事实维护",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/knowledge-intake-store.mjs",
+      "src/project-knowledge.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-004",
+    "owner": "C",
+    "title": "重复资料与新版本",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/knowledge-intake-store.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-005",
+    "owner": "C",
+    "title": "解析、切分与预览",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/knowledge-intake-store.mjs",
+      "scripts/ingest-public-materials.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-006",
+    "owner": "C",
+    "title": "业务、医疗及公开范围审核",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/knowledge-release-policy.mjs",
+      "server/knowledge-publication.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-007",
+    "owner": "C",
+    "title": "院方确认凭据与适用范围",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/knowledge-intake-store.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-008",
+    "owner": "C",
+    "title": "构建可追溯候选发布包",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/knowledge-publication.mjs",
+      "server/knowledge-release-policy.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-009",
+    "owner": "C",
+    "title": "发布前评测与索引就绪门槛",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/knowledge-release-policy.mjs",
+      "server/knowledge-publication.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-010",
+    "owner": "C",
+    "title": "发布激活与明确回执",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/knowledge-publication.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-011",
+    "owner": "C",
+    "title": "跨进程发布生效",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/runtime-knowledge-index.mjs",
+      "server/acquisition-service-server.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-012",
+    "owner": "C",
+    "title": "紧急撤回与禁用资料",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/knowledge-publication.mjs",
+      "server/runtime-knowledge-index.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-013",
+    "owner": "C",
+    "title": "发布版本回滚",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/knowledge-publication.mjs",
+      "server/knowledge-release-policy.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-014",
+    "owner": "C",
+    "title": "检索前授权与结构化证据",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/huamei-knowledge.mjs",
+      "server/runtime-knowledge-index.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-015",
+    "owner": "C",
+    "title": "引用版本与缓存失效",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/runtime-knowledge-index.mjs",
+      "server/graphrag-client.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-016",
+    "owner": "C",
+    "title": "公开资料与媒体受控访问",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/knowledge-media.mjs",
+      "server/knowledge-intake-store.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-017",
+    "owner": "C",
+    "title": "知识搜索、筛选与状态解释",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "src/app.js",
+      "src/project-knowledge.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-018",
+    "owner": "C",
+    "title": "常用话术维护与生效",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "src/project-knowledge.js",
+      "src/app.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-019",
+    "owner": "C",
+    "title": "五岗位与超级管理员菜单",
+    "status": "已核验部分，仍需完整AC验收",
+    "evidence_summary": "真实角色目录存在；岗位策略单元回归通过，六账号浏览器矩阵待测",
+    "code_paths": [
+      "src/role-catalog.js",
+      "server/platform/phase-one-role-policy.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-020",
+    "owner": "C",
+    "title": "后台登录完整流程",
+    "status": "已核验部分，仍需完整AC验收",
+    "evidence_summary": "真实HTTP登录及受保护会话通过；多角色数据库登录未验收",
+    "code_paths": [
+      "server/platform/admin-browser-session.mjs",
+      "server/platform/management-accounts.mjs",
+      "src/admin-session.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-021",
+    "owner": "C",
+    "title": "退出登录并使旧会话失效",
+    "status": "已核验部分，仍需完整AC验收",
+    "evidence_summary": "真实HTTP退出后旧Cookie返回401；多标签页待浏览器验收",
+    "code_paths": [
+      "server/platform/admin-browser-session.mjs",
+      "src/admin-session.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-022",
+    "owner": "C",
+    "title": "会话过期与权限变更恢复",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "src/admin-session.js",
+      "src/operations-client.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-023",
+    "owner": "C",
+    "title": "密码规则、重置与更改",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/platform/management-accounts.mjs",
+      "server/platform/admin-browser-session.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-024",
+    "owner": "C",
+    "title": "账号创建、停用与授权边界",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/platform/management-accounts.mjs",
+      "src/app.js"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-025",
+    "owner": "C",
+    "title": "人员离岗与业务移交",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/platform/management-accounts.mjs",
+      "server/persistence/appointment-state-store.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-026",
+    "owner": "C",
+    "title": "岗位能力与接口权限矩阵",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/platform/phase-one-role-policy.mjs",
+      "server/platform/management-authorization.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-027",
+    "owner": "C",
+    "title": "租户、科室与对象级数据权限",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/platform/postgres-object-acl-policy.mjs",
+      "server/platform/phase-one-role-policy.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-028",
+    "owner": "C",
+    "title": "质量人员查看脱敏会话与评测",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "src/role-catalog.js",
+      "server/platform/phase-one-role-policy.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-029",
+    "owner": "C",
+    "title": "关键操作审计与可追溯",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "server/platform/management-accounts.mjs",
+      "server/knowledge-publication.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-030",
+    "owner": "C",
+    "title": "长表单与发布操作交互",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "src/app.js",
+      "styles.css"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-031",
+    "owner": "C",
+    "title": "数据库与发布权限持久化验收",
+    "status": "环境待具备",
+    "evidence_summary": "存在SQL迁移和RLS测试入口；本轮数据库不可用，执行标blocked",
+    "code_paths": [
+      "db/migrations/",
+      "server/persistence/postgres-knowledge-release-store.mjs"
+    ],
+    "all_ac_passed": false
+  },
+  {
+    "story_id": "C-032",
+    "owner": "C",
+    "title": "知识与权限跨模块总验收",
+    "status": "已有入口，待逐项验收",
+    "evidence_summary": "已核对代码入口存在；不能仅凭文件存在判断完整实现。",
+    "code_paths": [
+      "tests/phase-one-role-policy.mjs",
+      "tests/runtime-knowledge-index-cross-process.mjs"
+    ],
+    "all_ac_passed": false
+  }
+]

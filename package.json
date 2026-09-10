@@ -97,6 +97,14 @@
     "team:build": "npm --prefix apps/acquisition-advisor run build",
     "team:verify": "node scripts/team-verify.mjs",
     "team:deliver": "node scripts/team-deliver.mjs",
-    "team:inspect": "node scripts/team-inspect.mjs"
+    "team:inspect": "node scripts/team-inspect.mjs",
+    "team:seed": "node devkit/seed.mjs",
+    "team:mock": "node devkit/mock-server.mjs",
+    "team:test:mock": "node tests/onboarding/mock-contract.mjs",
+    "team:seed:postgres": "node devkit/seed-postgres.mjs",
+    "team:test:http": "node tests/onboarding/application-http.mjs",
+    "team:doctor": "node devkit/doctor.mjs",
+    "team:test:seed-guards": "node tests/onboarding/seed-guards.mjs",
+    "team:bootstrap": "node devkit/bootstrap.mjs"
   }
 }

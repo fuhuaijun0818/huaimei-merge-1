@@ -23,7 +23,7 @@ if(report.role!==role||report.task_id!==id||!report.summary||report.summary.incl
 for(const field of ['shared_changes','api_changes','migrations','dependency_changes','environment_variable_names','known_limitations','tests'])if(!Array.isArray(report[field]))die(`缺少报告数组：${field}`);
 if(!report.tests.length||report.tests.some(t=>!['pass','fail','blocked'].includes(t.status)||!t.command||!t.evidence))die('每项测试填写pass/fail/blocked及证据，不能留not_run。');
 const all=git('ls-tree','-r','--name-only','-z',head).split('\0').filter(Boolean);
-const forbidden=all.filter(p=>/(^|\/)(?:node_modules|\.local-data|\.git|dist)(\/|$)/.test(p)||/(^|\/)\.env(?:\..+)?$/.test(p)&&!p.endsWith('.env.example')||/\.(?:bundle|sqlite|pem|key)$/.test(p));
+const forbidden=all.filter(p=>/(^|\/)(?:node_modules|\.team-dev|\.local-data|\.git|dist)(\/|$)/.test(p)||/(^|\/)\.env(?:\..+)?$/.test(p)&&!p.endsWith('.env.example')||/\.(?:bundle|sqlite|pem|key)$/.test(p));
 if(forbidden.length)die('发现不允许交付的文件：'+forbidden.join(', '));
 const allowed=JSON.parse(git('show',`${base}:handoff/secret-fixture-hashes.json`)).sha256;
 for(const path of all){const blob=execFileSync('git',['show',`${head}:${path}`],{maxBuffer:64*1024*1024});if(blob.includes(0))continue;const found=secretFindings(blob.toString('utf8'),allowed);if(found.private_key||found.new_credentials)die('发现新的疑似凭据，请替换为环境变量或测试占位：'+path);}

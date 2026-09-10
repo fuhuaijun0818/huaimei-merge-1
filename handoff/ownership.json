@@ -140,7 +140,10 @@
     ".gitignore",
     ".env.example",
     "BASELINE.json",
-    ".gitattributes"
+    ".gitattributes",
+    "devkit/",
+    "tests/onboarding/",
+    "docs/onboarding/"
   ],
   "rule": "shared first; then longest matching prefix; unknown paths require declaration; paths are review ownership, not a security sandbox"
 }

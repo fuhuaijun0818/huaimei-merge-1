@@ -1,0 +1,170 @@
+[
+  {
+    "id": "IF-01",
+    "provider_consumer": "B→A",
+    "title": "消息与会话",
+    "existing_entry": "POST /api/public/acquisition-chat",
+    "mock_entry": "POST /dev/v2/conversations/{id}/messages",
+    "request_example": {
+      "role": "user",
+      "content": "我想了解项目"
+    },
+    "response_example": {
+      "mock": true,
+      "status": "committed",
+      "message": {
+        "id": "msg_example",
+        "seq": 2,
+        "role": "user",
+        "content": "我想了解项目"
+      }
+    },
+    "boundary": "同一Idempotency-Key同内容重放；不同内容409；最终消息按服务端seq合并。正式接口当前没有完整同构消息schema，需要兼容适配。",
+    "status": "development_contract_not_production_equivalence"
+  },
+  {
+    "id": "IF-02",
+    "provider_consumer": "B→A",
+    "title": "留资回执",
+    "existing_entry": "POST /api/public/acquisition-lead",
+    "mock_entry": "POST /dev/v2/conversations/{id}/contact",
+    "request_example": {
+      "name": "模拟客户",
+      "mobile": "13800000001"
+    },
+    "response_example": {
+      "mock": true,
+      "status": "accepted",
+      "receipt_id": "opaque_receipt",
+      "masked_mobile": "138****0001",
+      "verification_status": "pending_manual"
+    },
+    "boundary": "真实表单接口另需service_consent=true及有效会话凭据；Mock只验证保存结果。不加OTP；不得向公开端暴露院方是否已有记录。",
+    "status": "development_contract_not_production_equivalence"
+  },
+  {
+    "id": "IF-03",
+    "provider_consumer": "B→A",
+    "title": "人工模式",
+    "existing_entry": "POST /api/admin/acquisition/handovers/{handoverId}/claim",
+    "mock_entry": "POST /dev/v2/conversations/{id}/claim",
+    "request_example": {
+      "expected_version": 1
+    },
+    "response_example": {
+      "mock": true,
+      "mode": "human",
+      "version": 2,
+      "assignee": "team_alpha_sales"
+    },
+    "boundary": "真实接口使用handoverId和服务端人员身份；Mock使用conversation ID。已领取或旧版本409，AI提交必须检查最新模式。",
+    "status": "development_contract_not_production_equivalence"
+  },
+  {
+    "id": "IF-04",
+    "provider_consumer": "B→A",
+    "title": "预约意向",
+    "existing_entry": "POST /api/public/appointment-intakes",
+    "mock_entry": "POST /dev/v2/conversations/{id}/appointment",
+    "request_example": {
+      "preferred_date": "2099-10-01",
+      "customer_confirmed": true
+    },
+    "response_example": {
+      "mock": true,
+      "appointment": {
+        "id": "apt_example",
+        "status": "registered",
+        "version": 1
+      },
+      "doctor_slot_reserved": false
+    },
+    "boundary": "真实接口还需action_id、branch、项目/医生及确认快照等字段，按原OpenAPI；Mock仅演练幂等与状态，不做完整排班/时间政策校验。",
+    "status": "development_contract_not_production_equivalence"
+  },
+  {
+    "id": "IF-05",
+    "provider_consumer": "C→A",
+    "title": "有效知识",
+    "existing_entry": "内部server/huamei-knowledge.mjs与runtime-knowledge-index调用",
+    "mock_entry": "GET /dev/v2/knowledge",
+    "request_example": null,
+    "response_example": {
+      "mock": true,
+      "data": [
+        {
+          "id": "team_alpha_public",
+          "version": 1,
+          "status": "published",
+          "audience": "public",
+          "content": "开发模拟资料"
+        }
+      ]
+    },
+    "boundary": "真实检索不是本Mock GET的同构替身；需要适配正式证据ID、范围、发布版本及有效性。撤回后的最终输出校验仍由A/C联合实现。",
+    "status": "development_contract_not_production_equivalence"
+  },
+  {
+    "id": "IF-06",
+    "provider_consumer": "C→B/A",
+    "title": "身份与范围",
+    "existing_entry": "GET /api/admin/identity；POST /auth/login",
+    "mock_entry": "GET /dev/v2/identity",
+    "request_example": null,
+    "response_example": {
+      "mock": true,
+      "user": {
+        "username": "team_alpha_sales",
+        "role": "售前顾问",
+        "tenant": "team_alpha"
+      }
+    },
+    "boundary": "真实浏览器使用服务端Cookie及可信身份，Mock使用独立Bearer；不能用Mock令牌访问实际系统。Mock仅租户和角色演练，不替代完整科室/对象/RLS策略。",
+    "status": "development_contract_not_production_equivalence"
+  },
+  {
+    "id": "IF-07",
+    "provider_consumer": "C→B",
+    "title": "常用语",
+    "existing_entry": "现有话术/资料领域能力待消费端冻结",
+    "mock_entry": "无独立Mock端点",
+    "request_example": null,
+    "response_example": {
+      "mock": true,
+      "templates": [
+        {
+          "id": "template_example",
+          "version": 1,
+          "status": "published",
+          "variables": [
+            "称呼"
+          ],
+          "text": "{{称呼}}您好，请问还有哪一点想了解？"
+        }
+      ]
+    },
+    "boundary": "本项只提供目标样例，不宣称已有完整发布话术API；C与B先定字段、变量和撤回规则。",
+    "status": "development_contract_not_production_equivalence"
+  },
+  {
+    "id": "IF-08",
+    "provider_consumer": "A/B协作",
+    "title": "流式协议",
+    "existing_entry": "现有前台完整JSON回复；后台/api/local/conversation-events为SSE通知",
+    "mock_entry": "GET /dev/v2/events?after=0",
+    "request_example": null,
+    "response_example": {
+      "mock": true,
+      "events": [
+        {
+          "id": 1,
+          "tenant": "team_alpha",
+          "type": "message",
+          "object_id": "team_alpha_conv_1"
+        }
+      ]
+    },
+    "boundary": "Mock为事件游标补拉，不是SSE或token流；真正流式为P1，事件schema及最终提交需要独立契约测试。",
+    "status": "development_contract_not_production_equivalence"
+  }
+]

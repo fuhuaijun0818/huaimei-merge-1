@@ -25,3 +25,6 @@ graphrag-service/graphrag_project/logs/
 knowledge/private/
 *.pem
 *.key
+
+# V2 local development harness
+.team-dev/

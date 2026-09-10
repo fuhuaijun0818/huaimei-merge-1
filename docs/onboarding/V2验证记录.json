@@ -1,0 +1,138 @@
+{
+  "version": "V2",
+  "evidence": {
+    "core_suites": {
+      "count": 13,
+      "passed": true,
+      "scope": "existing offline core regression"
+    },
+    "mock": {
+      "scope": "standalone Mock contract tests only; not production/business acceptance",
+      "passed": true,
+      "count": 54,
+      "checks": [
+        "12 generated accounts",
+        "login team_alpha_admin",
+        "login team_alpha_sales",
+        "login team_alpha_content",
+        "login team_alpha_publisher",
+        "login team_alpha_quality",
+        "login team_alpha_super",
+        "login team_beta_admin",
+        "login team_beta_sales",
+        "login team_beta_content",
+        "login team_beta_publisher",
+        "login team_beta_quality",
+        "login team_beta_super",
+        "anonymous denied",
+        "wrong password denied",
+        "cross-origin denied",
+        "content cannot read customer conversations",
+        "tenant filtering",
+        "cross-tenant object denied",
+        "message committed",
+        "same receipt replay",
+        "same key different body conflict",
+        "phone invalid",
+        "no OTP required",
+        "public-style receipt excludes member field",
+        "true existing",
+        "false not found",
+        "failure not false",
+        "malformed unknown",
+        "storage failure",
+        "timeout",
+        "claim",
+        "concurrent claim rejected",
+        "late AI fenced",
+        "human sends",
+        "own human reply not unread",
+        "read cursor",
+        "per-account read isolation",
+        "resume AI",
+        "appointment created",
+        "not doctor slot",
+        "appointment duplicate replay",
+        "stale version",
+        "reschedule",
+        "cancel",
+        "draft hidden",
+        "content cannot publish",
+        "mock review gate",
+        "publish",
+        "published query",
+        "withdraw query",
+        "events tenant scope",
+        "logout revocation",
+        "persisted seed stays"
+      ]
+    },
+    "real_http": {
+      "scope": "isolated real Node application HTTP; LLM/member disabled; local_json; not browser or PostgreSQL acceptance",
+      "passed": true,
+      "count": 14,
+      "checks": [
+        "advisor page",
+        "anonymous management denied",
+        "login",
+        "authenticated session",
+        "chat HTTP 我想了解热玛吉",
+        "server session ID",
+        "chat HTTP 一般原理",
+        "project followup context",
+        "format-only contact save",
+        "public receipt redacted",
+        "management conversation query",
+        "same conversation frontend to backend",
+        "logout",
+        "old session rejected"
+      ]
+    },
+    "doctor": {
+      "scope": "local prerequisites only; no live service verification",
+      "checks": [
+        {
+          "name": "Node >=22",
+          "passed": true
+        },
+        {
+          "name": "Git available",
+          "passed": true
+        },
+        {
+          "name": "root dependencies",
+          "passed": true
+        },
+        {
+          "name": "advisor dependencies",
+          "passed": true
+        },
+        {
+          "name": "advisor built",
+          "passed": true
+        },
+        {
+          "name": "public knowledge",
+          "passed": true
+        },
+        {
+          "name": "Mock accounts initialized",
+          "passed": true
+        }
+      ]
+    },
+    "postgres_seed_guards": {
+      "count": 5,
+      "passed": true,
+      "applied": false
+    }
+  },
+  "not_executed": [
+    "real PostgreSQL seed/apply and RLS",
+    "real hospital query",
+    "live LLM quality evaluation",
+    "browser interaction journey",
+    "external message delivery"
+  ],
+  "baseline_business_modules_changed": false
+}
