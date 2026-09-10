@@ -1,0 +1,13 @@
+services:
+  acquisition:
+    # Apply this override only for the separately approved formal capacity
+    # window. The normal production Compose file does not enable the feature or
+    # mount the manifest, so public/application callers cannot reach it.
+    environment:
+      HUAMEI_EVIDENCE_ENVIRONMENT: "${HUAMEI_EVIDENCE_ENVIRONMENT:?Set preproduction or production to match the signed manifest}"
+      HUAMEI_FORMAL_LOAD_TAXONOMY_ENABLED: "true"
+      HUAMEI_FORMAL_LOAD_TAXONOMY_MANIFEST_PATH: /run/formal-load/taxonomy-manifest.json
+      HUAMEI_FORMAL_LOAD_TAXONOMY_MANIFEST_SHA256: "${HUAMEI_FORMAL_LOAD_TAXONOMY_MANIFEST_SHA256:?Set the SHA-256 of the signed taxonomy manifest}"
+      HUAMEI_FORMAL_LOAD_TAXONOMY_TRUSTED_SIGNERS_B64: "${HUAMEI_FORMAL_LOAD_TAXONOMY_TRUSTED_SIGNERS_B64:?Set the dedicated external Ed25519 signer registry}"
+    volumes:
+      - "${HUAMEI_FORMAL_LOAD_TAXONOMY_MANIFEST_HOST_PATH:?Set the approved signed manifest path}:/run/formal-load/taxonomy-manifest.json:ro"

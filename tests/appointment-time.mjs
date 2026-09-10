@@ -1,0 +1,18 @@
+import assert from "node:assert/strict";
+import { appointmentDateRecommendations as recommend, normalizeAppointmentTime as normalize, shanghaiDate } from "../server/appointment-time.mjs";
+const now = Date.parse("2026-09-11T10:30:00+08:00");
+assert.equal(shanghaiDate(Date.parse("2026-09-10T16:00:00Z")), "2026-09-11");
+assert.throws(() => normalize({ preferred_date:"2026-02-30" }, now), { code:"APPOINTMENT_DATE_REQUIRED" });
+assert.throws(() => normalize({ preferred_date:"2026-09-10" }, now), { code:"APPOINTMENT_TIME_PAST" });
+assert.throws(() => normalize({ preferred_date:"2026-09-11", time_period:"afternoon" }, now), { code:"APPOINTMENT_TODAY_TIME_REQUIRED" });
+assert.throws(() => normalize({ preferred_date:"2026-09-11", preferred_time:"10:30" }, now), { code:"APPOINTMENT_TIME_PAST" });
+assert.equal(normalize({ preferred_date:"2026-09-11", preferred_time:"10:31" }, now).time_precision, "minute");
+assert.equal(normalize({ preferred_date:"2026-09-12" }, now).time_precision, "date");
+assert.throws(() => normalize({ preferred_date:"2026-09-12", preferred_time:"25:00" }, now), { code:"APPOINTMENT_TIME_INVALID" });
+assert.deepEqual(recommend({ now, calendar:null }).dates, []);
+const calendar = { version:"test-fixture-v1", source:"fictional regression fixture", maintained_by:"test", coverage_start:"2026-09-01", coverage_end:"2026-10-01", expires_at:"2026-10-01T00:00:00+08:00", overrides:{ "2026-09-12":true, "2026-09-14":false } };
+assert.deepEqual(recommend({ now, calendar }).dates.map((x)=>x.date), ["2026-09-12","2026-09-15"]);
+assert.equal(recommend({ now, calendar:{ ...calendar, expires_at:"2026-09-01" } }).available, false);
+assert.equal(recommend({ now, calendar:{ ...calendar, coverage_end:"2026-09-12" } }).available, false);
+assert.equal(recommend({ now, calendar:{ ...calendar, source:"" } }).available, false);
+console.log("✓ 上海时区、严格日期、当天具体钟点、调休覆盖和日历缺失降级通过");

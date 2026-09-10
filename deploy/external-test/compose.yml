@@ -1,0 +1,176 @@
+name: huamei-external-test
+
+# 单机受控外测：使用与正式镜像相同的应用构建，但明确保持在 staging
+# 运行态。它不替代 deploy/docker-compose.example.yml 的生产高可用部署。
+services:
+  data-init:
+    # Named volumes are created as root-owned on a fresh host. Initialize only
+    # this application volume before the non-root services begin writing their
+    # local JSON state, so a session flush cannot crash the acquisition agent.
+    image: huamei-ai-saas-mvp:${HUAMEI_BUILD_REVISION:-external-test}
+    pull_policy: never
+    restart: "no"
+    init: true
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /app/.local-data && chown -R node:node /app/.local-data"]
+    volumes:
+      - app_data:/app/.local-data
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+    security_opt:
+      - no-new-privileges:true
+
+  acquisition:
+    build:
+      context: ../..
+      dockerfile: deploy/external-test/Dockerfile
+      args:
+        # 开发外测服务器可覆盖为已验证的镜像加速源；正式模板仍使用
+        # Dockerfile 的官方默认值与不可变镜像策略。
+        NODE_IMAGE: ${HUAMEI_NODE_IMAGE:-docker.m.daocloud.io/library/node:22.22.1-bookworm-slim}
+        HUAMEI_BUILD_REVISION: ${HUAMEI_BUILD_REVISION:-external-test}
+        HUAMEI_BUILD_CREATED: ${HUAMEI_BUILD_CREATED:-unknown}
+    image: huamei-ai-saas-mvp:${HUAMEI_BUILD_REVISION:-external-test}
+    pull_policy: build
+    command: ["node", "server/acquisition-service-server.mjs"]
+    restart: unless-stopped
+    init: true
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    environment:
+      NODE_ENV: production
+      HUAMEI_RUNTIME_ENV: staging
+      HUAMEI_EXTERNAL_TEST_MODE: "true"
+      HUAMEI_EXTERNAL_TEST_ADMIN_BRIDGE_SECRET: ${HUAMEI_EXTERNAL_TEST_ADMIN_BRIDGE_SECRET:?Set an independent development management bridge secret}
+      HUAMEI_ACQUISITION_SERVICE_HOST: 0.0.0.0
+      HUAMEI_ACQUISITION_SERVICE_PORT: "4180"
+      HUAMEI_ACQUISITION_SERVICE_RATE_LIMIT: "300"
+      HUAMEI_ACQUISITION_SERVICE_KEY: ${HUAMEI_ACQUISITION_SERVICE_KEY:?Set a strong internal gateway key}
+      HUAMEI_DEFAULT_TENANT_ID: huamei-shanghai
+      HUAMEI_PUBLIC_TENANT_ID: huamei-shanghai
+      HUAMEI_PERSISTENCE_BACKEND: local_json
+      HUAMEI_CACHE_BACKEND: memory
+      HUAMEI_KNOWLEDGE_ROOT: /knowledge
+      HUAMEI_RAW_DATA_ROOT: /raw-data
+      HUAMEI_PUBLIC_MATERIALS_PACKAGE_ROOT: /knowledge/public-materials-v1
+      HUAMEI_KNOWLEDGE_APPROVAL_MODE: preview
+      HUAMEI_GRAPHRAG_ENABLED: "false"
+      HUAMEI_LLM_ENABLED: ${HUAMEI_LLM_ENABLED:-true}
+      HUAMEI_LLM_PROVIDER: ${HUAMEI_LLM_PROVIDER:?Set the approved LLM provider}
+      HUAMEI_LLM_BASE_URL: ${HUAMEI_LLM_BASE_URL:?Set the approved HTTPS LLM endpoint}
+      HUAMEI_LLM_API_KEY: ${HUAMEI_LLM_API_KEY:?Set the LLM API key only in deploy/external-test/.env}
+      HUAMEI_LLM_MODEL: ${HUAMEI_LLM_MODEL:?Set the LLM model}
+      HUAMEI_LLM_TIMEOUT_MS: ${HUAMEI_LLM_TIMEOUT_MS:-20000}
+      HUAMEI_LLM_MAX_RETRIES: ${HUAMEI_LLM_MAX_RETRIES:-1}
+      MINIMAX_REAL_CALL_ENABLED: "false"
+    volumes:
+      - app_data:/app/.local-data
+      - acquisition_data:/data
+      - ./runtime/knowledge:/knowledge:ro
+      - ./runtime/raw-data:/raw-data:ro
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4180/health').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));"]
+      interval: 20s
+      timeout: 5s
+      start_period: 20s
+      retries: 4
+    networks:
+      - private
+      # The model is a remote HTTPS service. An internal-only Docker network
+      # cannot reach it; this network grants egress without publishing a port.
+      - public
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/external-test/Dockerfile
+      args:
+        NODE_IMAGE: ${HUAMEI_NODE_IMAGE:-docker.m.daocloud.io/library/node:22.22.1-bookworm-slim}
+        HUAMEI_BUILD_REVISION: ${HUAMEI_BUILD_REVISION:-external-test}
+        HUAMEI_BUILD_CREATED: ${HUAMEI_BUILD_CREATED:-unknown}
+    image: huamei-ai-saas-mvp:${HUAMEI_BUILD_REVISION:-external-test}
+    pull_policy: build
+    restart: unless-stopped
+    init: true
+    depends_on:
+      acquisition:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HUAMEI_RUNTIME_ENV: staging
+      PORT: "4173"
+      HUAMEI_HOST: 0.0.0.0
+      HUAMEI_EXTERNAL_TEST_MODE: "true"
+      HUAMEI_EXTERNAL_TEST_ADMIN_BRIDGE_SECRET: ${HUAMEI_EXTERNAL_TEST_ADMIN_BRIDGE_SECRET:?Set the same independent development management bridge secret}
+      HUAMEI_API_KEY: ${HUAMEI_API_KEY:?Set a separate strong API key}
+      HUAMEI_ADMIN_USERNAME: ${HUAMEI_ADMIN_USERNAME:?Set an external-test administrator username}
+      HUAMEI_ADMIN_PASSWORD: ${HUAMEI_ADMIN_PASSWORD:?Set an external-test administrator password}
+      HUAMEI_PREVIEW_USERNAME: ${HUAMEI_PREVIEW_USERNAME:?Set an advisor-preview username}
+      HUAMEI_PREVIEW_PASSWORD: ${HUAMEI_PREVIEW_PASSWORD:?Set an advisor-preview password}
+      HUAMEI_DEFAULT_TENANT_ID: huamei-shanghai
+      HUAMEI_PUBLIC_TENANT_ID: huamei-shanghai
+      HUAMEI_PERSISTENCE_BACKEND: local_json
+      HUAMEI_CACHE_BACKEND: memory
+      HUAMEI_KNOWLEDGE_ROOT: /knowledge
+      HUAMEI_RAW_DATA_ROOT: /raw-data
+      HUAMEI_PUBLIC_MATERIALS_PACKAGE_ROOT: /knowledge/public-materials-v1
+      HUAMEI_KNOWLEDGE_APPROVAL_MODE: preview
+      HUAMEI_ACQUISITION_SERVICE_URL: http://acquisition:4180
+      HUAMEI_ACQUISITION_CALLER_ID: huamei_web_gateway
+      HUAMEI_ACQUISITION_CALLER_SECRET: ${HUAMEI_ACQUISITION_SERVICE_KEY:?Set the same strong internal gateway key}
+      HUAMEI_ACQUISITION_TENANT_ID: huamei-shanghai
+      HUAMEI_ACQUISITION_SERVICE_TIMEOUT_MS: "30000"
+      # Exact browser origins only; no wildcard is permitted for the external
+      # preview, because the public chat API accepts browser-origin requests.
+      HUAMEI_ALLOWED_ORIGINS: ${HUAMEI_ALLOWED_ORIGINS:?Set exact external-test browser origins}
+      HUAMEI_LLM_ENABLED: ${HUAMEI_LLM_ENABLED:-true}
+      HUAMEI_LLM_PROVIDER: ${HUAMEI_LLM_PROVIDER:?Set the approved LLM provider}
+      HUAMEI_LLM_BASE_URL: ${HUAMEI_LLM_BASE_URL:?Set the approved HTTPS LLM endpoint}
+      HUAMEI_LLM_API_KEY: ${HUAMEI_LLM_API_KEY:?Set the LLM API key only in deploy/external-test/.env}
+      HUAMEI_LLM_MODEL: ${HUAMEI_LLM_MODEL:?Set the LLM model}
+      MINIMAX_REAL_CALL_ENABLED: "false"
+    ports:
+      - "${HUAMEI_EXTERNAL_HTTP_BIND_ADDRESS:-127.0.0.1}:${HUAMEI_EXTERNAL_HTTP_PORT:-4173}:4173"
+    volumes:
+      - app_data:/app/.local-data
+      - web_data:/data
+      - ./runtime/knowledge:/knowledge:ro
+      - ./runtime/raw-data:/raw-data:ro
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173/api/health').then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));"]
+      interval: 20s
+      timeout: 5s
+      start_period: 20s
+      retries: 4
+    networks:
+      - private
+      - public
+
+networks:
+  private:
+    internal: true
+  public:
+
+volumes:
+  app_data:
+  acquisition_data:
+  web_data:

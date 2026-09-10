@@ -1,0 +1,93 @@
+{
+  # Bound to container loopback only, so operators can atomically load the
+  # audited stop-AI configuration without exposing the Caddy admin API.
+  admin 127.0.0.1:2019
+}
+
+{$PUBLIC_SITE_ADDRESS} {
+  encode zstd gzip
+
+  header {
+    -Server
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+  }
+
+  @advisor_root path /advisor
+  redir @advisor_root /advisor/ 308
+
+  # Infrastructure probes and signed provider callbacks always stay on the
+  # stable stack and do not expose management credentials.
+  @infrastructure path /api/health /api/webhooks/minimax/video
+  handle @infrastructure {
+    reverse_proxy app:4173 {
+      # Overwrite, rather than append to, caller-controlled forwarding data.
+      # The app accepts it only from Caddy's dedicated fixed proxy address.
+      header_up X-Forwarded-For {http.request.remote.host}
+    }
+  }
+
+  # Header-gated canary traffic is limited to explicitly authorized testers.
+  # The canary services do not exist unless the separate canary Compose profile
+  # is active, and health/webhook traffic always stays on the stable stack.
+  @canary {
+    header X-Huamei-Canary {$HUAMEI_CANARY_TOKEN}
+    path /advisor /advisor/* /assets/* /favicon.ico /favicon-girl.svg /api/public/*
+  }
+  handle @canary {
+    reverse_proxy app-canary:4173 {
+      header_up X-Forwarded-For {http.request.remote.host}
+    }
+  }
+
+  # The end-customer surface is public. Abuse controls are session/IP based at
+  # the app and WAF layers; management credentials are never distributed to
+  # visitors or preview testers.
+  @customer path /advisor /advisor/* /assets/* /favicon.ico /favicon-girl.svg /api/public/*
+  handle @customer {
+    reverse_proxy app:4173 {
+      header_up X-Forwarded-For {http.request.remote.host}
+    }
+  }
+
+  # Never serve the management application from the customer hostname.
+  handle {
+    respond "Not Found" 404
+  }
+}
+
+{$ADMIN_SITE_ADDRESS} {
+  encode zstd gzip
+
+  header {
+    -Server
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "same-origin"
+    X-Frame-Options "SAMEORIGIN"
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'"
+  }
+
+  # Management APIs authenticate the human identity themselves with an OIDC
+  # Bearer token and enforce role + tenant scope.  Do not put Basic auth in
+  # front of these routes: HTTP has only one Authorization header, so doing so
+  # would replace the Bearer identity with an edge password.
+  @management_api path /api/admin/* /api/local/* /api/v1/runs /api/v1/runs/*
+  handle @management_api {
+    reverse_proxy app:4173 {
+      header_up X-Forwarded-For {http.request.remote.host}
+    }
+  }
+
+  # A supported external OIDC authorization-code/PKCE proxy is the only public
+  # entry to this hostname. It keeps the browser session server-side (Redis)
+  # and injects Authorization: Bearer on every upstream request. Node verifies
+  # that token again. Direct access to Caddy must be blocked by network policy.
+  handle {
+    reverse_proxy app:4173 {
+      header_up X-Forwarded-For {http.request.remote.host}
+    }
+  }
+}

@@ -1,0 +1,27 @@
+.env
+.env.*
+!.env.example
+coverage/
+*.log
+node_modules/
+dist/
+.DS_Store
+__pycache__/
+*.pyc
+.local-data/
+.venv-graphrag/
+agent-orchestrator/.venv/
+agent-orchestrator/.venv-ci/
+agent-orchestrator/*.egg-info/
+graphrag-service/graphrag_project/output/
+graphrag-service/graphrag_project/cache/
+graphrag-service/graphrag_project/logs/
+
+# Team delivery artifacts and private working data
+.team-delivery/
+*.bundle
+*.zip
+.tmp*/
+knowledge/private/
+*.pem
+*.key

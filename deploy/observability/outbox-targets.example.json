@@ -1,0 +1,9 @@
+[
+  {
+    "targets": ["outbox:9190"],
+    "labels": {
+      "service_group": "outbox",
+      "environment": "production"
+    }
+  }
+]

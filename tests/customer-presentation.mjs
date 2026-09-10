@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import { customerPresentation } from '../src/customer-presentation.js';
+import { localConversationView } from '../server/local-conversation-store.mjs';
+const row = { id:'test', projects:[], createdAt:new Date().toISOString(), messages:[] };
+const raw = localConversationView(row).customer;
+const shown = customerPresentation(raw);
+assert.equal(shown.sla.includes('超时'), false);
+assert.deepEqual(shown.interests, []);
+assert.deepEqual(shown.journeys, []);
+assert.equal(shown.nextAction.status, '待确认');
+assert.equal(raw.sla, undefined);
+assert.equal(shown.serviceConsent, '未授权');
+assert.equal(customerPresentation({...raw, interests:[{name:'热玛吉'}]}).interests[0].trend, '');
+assert.equal(customerPresentation({...raw, sla:'已超时'}).sla, '已超时');
+console.log('customer presentation: passed');

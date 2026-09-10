@@ -1,0 +1,60 @@
+flowchart LR
+    subgraph client ["客户与运营端"]
+        webClient["网页客户"]
+        wecomClient["企业微信客户"]
+        partnerClient["合作渠道"]
+        operatorConsole["运营与人工坐席"]
+    end
+
+    subgraph gateway ["渠道接入层"]
+        webGateway["网页与管理网关"]
+        channelConnector["企业微信与渠道连接器"]
+    end
+
+    subgraph service ["私有业务服务层"]
+        privateDataService["身份、授权、脱敏与租户服务"]
+        acquisitionService["售前智能体服务"]
+        knowledgeService["知识与配置发布服务"]
+        collaborationService["事件、任务与转人工服务"]
+        integrationService["CRM与预约集成服务"]
+        modelGateway["模型网关"]
+    end
+
+    subgraph datastore ["私有数据存储"]
+        postgresStore["业务数据存储 (当前JSON适配器 / 目标PostgreSQL)"]
+        redisStore["会话与幂等存储 (当前持久化 / 目标Redis)"]
+        objectStore["知识证据与版本对象存储"]
+    end
+
+    subgraph async ["事件与任务总线"]
+        eventBus["消息队列与Outbox (下一阶段)"]
+    end
+
+    subgraph external ["院方与外部系统"]
+        hospitalSystems["华美CRM、排班与企业微信"]
+        modelProviders["大模型供应商与BYOK"]
+        observability["监控、告警与不可篡改审计"]
+    end
+
+    webClient -->|"HTTPS咨询"| webGateway
+    operatorConsole -->|"运营管理"| webGateway
+    wecomClient -->|"企微消息"| channelConnector
+    partnerClient -->|"统一API"| channelConnector
+    webGateway -->|"网页请求"| privateDataService
+    channelConnector -->|"标准化消息"| privateDataService
+    privateDataService -->|"统一协议v1.1"| acquisitionService
+    acquisitionService -->|"检索已发布知识"| knowledgeService
+    acquisitionService -->|"创建接管任务"| collaborationService
+    collaborationService -->|"预约与客户同步"| integrationService
+    acquisitionService -->|"会话与幂等"| redisStore
+    acquisitionService -->|"运行与画像"| postgresStore
+    knowledgeService -->|"版本与审批"| postgresStore
+    knowledgeService -->|"读取知识证据"| objectStore
+    collaborationService -->|"任务、SLA与工时"| postgresStore
+    integrationService -->|"写入业务回执"| postgresStore
+    acquisitionService -.->|"发布领域事件"| eventBus
+    eventBus -.->|"分发任务事件"| collaborationService
+    acquisitionService -->|"受控模型调用"| modelGateway
+    integrationService -.->|"华美系统: CRM与预约"| hospitalSystems
+    modelGateway -.->|"模型服务: 推理与降级"| modelProviders
+    acquisitionService -.->|"可观测性: 指标与审计"| observability

@@ -1,0 +1,54 @@
+# Apply after compose.yml. Requires Docker Compose supporting !override.
+# Basic accounts remain independent for advisor and management access.
+services:
+  web:
+    ports: !override []
+    environment:
+      HUAMEI_EXTERNAL_DOMAIN: ${HUAMEI_EXTERNAL_DOMAIN:?Set the existing DNS name pointing at this host}
+      HUAMEI_PUBLIC_COOKIE_SECURE: "true"
+      HUAMEI_TRUST_PROXY: "true"
+      HUAMEI_TRUSTED_PROXY_ADDRESSES: ${HUAMEI_EXTERNAL_PROXY_IP:-172.30.86.10}
+    networks:
+      edge:
+        aliases:
+          - huamei-preview-web
+
+  proxy:
+    image: ${HUAMEI_EXTERNAL_CADDY_IMAGE:?Set the verified Caddy image digest}
+    restart: unless-stopped
+    init: true
+    environment:
+      HUAMEI_EXTERNAL_DOMAIN: ${HUAMEI_EXTERNAL_DOMAIN:?Set the existing DNS name pointing at this host}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    depends_on:
+      web:
+        condition: service_healthy
+    networks:
+      edge:
+        ipv4_address: ${HUAMEI_EXTERNAL_PROXY_IP:-172.30.86.10}
+      public:
+
+networks:
+  edge:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${HUAMEI_EXTERNAL_PROXY_SUBNET:-172.30.86.0/24}
+
+volumes:
+  caddy_data:
+  caddy_config:

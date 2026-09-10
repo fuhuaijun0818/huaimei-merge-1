@@ -1,0 +1,73 @@
+{
+  admin 127.0.0.1:2019
+}
+
+{$PUBLIC_SITE_ADDRESS} {
+  encode zstd gzip
+
+  header {
+    -Server
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "strict-origin-when-cross-origin"
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+  }
+
+  @advisor_root path /advisor
+  redir @advisor_root /advisor/ 308
+
+  @infrastructure path /api/health /api/webhooks/minimax/video
+  handle @infrastructure {
+    reverse_proxy app:4173 {
+      header_up X-Forwarded-For {http.request.remote.host}
+    }
+  }
+
+  # Fail closed at the public boundary while keeping the site, management API,
+  # existing handover records and manual lead intake available to operators.
+  @ai_chat path /api/public/acquisition-chat
+  handle @ai_chat {
+    header Content-Type "application/json; charset=utf-8"
+    header Cache-Control "no-store"
+    respond `{"error":{"code":"AI_SERVICE_PAUSED","message":"AI咨询服务已暂停，请联系人工顾问"}}` 503
+  }
+
+  @customer path /advisor /advisor/* /assets/* /favicon.ico /favicon-girl.svg /api/public/*
+  handle @customer {
+    reverse_proxy app:4173 {
+      header_up X-Forwarded-For {http.request.remote.host}
+    }
+  }
+
+  handle {
+    respond "Not Found" 404
+  }
+}
+
+{$ADMIN_SITE_ADDRESS} {
+  encode zstd gzip
+
+  header {
+    -Server
+    X-Content-Type-Options "nosniff"
+    Referrer-Policy "same-origin"
+    X-Frame-Options "SAMEORIGIN"
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'self'; form-action 'self'"
+  }
+
+  @management_api path /api/admin/* /api/local/* /api/v1/runs /api/v1/runs/*
+  handle @management_api {
+    reverse_proxy app:4173 {
+      header_up X-Forwarded-For {http.request.remote.host}
+    }
+  }
+
+  # Keep the same external OIDC code/PKCE proxy contract during stop-AI.
+  # It injects Bearer; Node independently verifies role and tenant.
+  handle {
+    reverse_proxy app:4173 {
+      header_up X-Forwarded-For {http.request.remote.host}
+    }
+  }
+}

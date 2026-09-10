@@ -1,0 +1,73 @@
+name: huamei-local-infrastructure
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${HUAMEI_POSTGRES_DB:-huamei}"
+      POSTGRES_USER: "${HUAMEI_POSTGRES_USER:-huamei_app}"
+      POSTGRES_PASSWORD: "${HUAMEI_POSTGRES_PASSWORD:?Set HUAMEI_POSTGRES_PASSWORD in deploy/local/.env}"
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "127.0.0.1:${HUAMEI_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - huamei_postgres_data:/var/lib/postgresql/data
+      - ../../db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - huamei_local_backend
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: "${HUAMEI_REDIS_PASSWORD:?Set HUAMEI_REDIS_PASSWORD in deploy/local/.env}"
+    command:
+      - /bin/sh
+      - -ec
+      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$$REDIS_PASSWORD"
+    ports:
+      - "127.0.0.1:${HUAMEI_REDIS_PORT:-6379}:6379"
+    volumes:
+      - huamei_redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - huamei_local_backend
+
+  adminer:
+    image: adminer:4
+    profiles: ["tools"]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - "127.0.0.1:${HUAMEI_ADMINER_PORT:-8080}:8080"
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - huamei_local_backend
+
+networks:
+  huamei_local_backend:
+
+volumes:
+  huamei_postgres_data:
+  huamei_redis_data:

@@ -1,0 +1,63 @@
+import assert from "node:assert/strict";
+process.env.HUAMEI_KNOWLEDGE_INTAKE_STORE_FILE = ":memory:";
+process.env.HUAMEI_RUNTIME_KNOWLEDGE_INDEX_FILE = ":memory:";
+const kb = await import("../server/knowledge-intake-store.mjs");
+const index = await import("../server/runtime-knowledge-index.mjs");
+const tenant = "huamei-shanghai";
+const scope = { tenant_id:tenant, actor:"content-staff", permitted_departments:["整形外科"] };
+const create = { ...scope, idempotency_key:"draft-lifecycle-create", source_filename:"测试知识.md", department:"整形外科", content_type:"项目介绍", owner:"资料负责人",
+  customer_facing_candidate:true, public_scope:"customer_summary", text_content:"这是专项回归的测试知识正文，仅供测试内部知识维护与版本绑定使用，不包含真实客户信息。" };
+const created = kb.createKnowledgeIntakeDocument(create).document;
+const target = { ...scope, document_id:created.id, expected_version:1 };
+assert.equal(created.status, "draft");
+assert.equal(created.publication_readiness.ready, false);
+assert.deepEqual(index.searchRuntimeKnowledge("测试知识", { tenant_id:tenant, audience:"public" }), []);
+const revision = index.runtimeKnowledgeIndexStatus(tenant).revision;
+for (let i = 0; i < 2; i++) { kb.listKnowledgeIntakeDocuments(scope); kb.getKnowledgeIntakeStoreStatus(tenant); }
+assert.equal(index.runtimeKnowledgeIndexStatus(tenant).revision, revision, "Reads do not index or publish");
+assert.throws(() => kb.submitKnowledgeIntakeDocument({ ...target, idempotency_key:"candidate-missing-data" }), (e) => e.code === "KNOWLEDGE_PUBLICATION_PREREQUISITES_MISSING");
+assert.equal(kb.getKnowledgeIntakeDocument({ ...target, tenant_id:"other-tenant" }), null);
+assert.throws(() => kb.getKnowledgeIntakeDocument({ ...target, permitted_departments:["皮肤科"] }), (e) => e.status === 403);
+assert.equal(kb.getKnowledgeIntakeDocument(target).text_content, create.text_content);
+assert.equal(Object.hasOwn(kb.listKnowledgeIntakeDocuments(scope)[0], "text_content"), false);
+const now = Date.now();
+const updatedInput = { ...target, idempotency_key:"draft-version-update", source_reference:"院方资料单 TEST-001", applicable_campuses:["测试院区"],
+  effective_at:new Date(now - 60_000).toISOString(), expires_at:new Date(now + 86400_000).toISOString() };
+const updated = kb.updateKnowledgeIntakeDocument(updatedInput);
+assert.equal(updated.document.version, 2);
+assert.equal(updated.document.version_history[0].content_hash, created.content_hash);
+assert.ok(updated.document.version_history[0].changed_fields_to_next.includes("source_reference"));
+assert.ok(updated.document.version_history[0].changed_fields_to_next.includes("applicable_campuses"));
+assert.ok(updated.document.version_history[0].changed_fields_to_next.includes("effective_at"));
+assert.equal(kb.updateKnowledgeIntakeDocument(updatedInput).replayed, true);
+assert.throws(() => kb.updateKnowledgeIntakeDocument({ ...updatedInput, title:"冲突标题" }), (e) => e.code === "KNOWLEDGE_INTAKE_IDEMPOTENCY_CONFLICT");
+assert.throws(() => kb.updateKnowledgeIntakeDocument({ ...updatedInput, idempotency_key:"stale-browser-edit" }), (e) => e.code === "KNOWLEDGE_VERSION_CONFLICT");
+const current = { ...target, expected_version:2 };
+const confirm = { ...current, idempotency_key:"hospital-confirmation-v2", reference:"院方确认单 TEST-002", confirmed_by:"测试确认人", confirmed_at:new Date(now - 1000).toISOString(), confirmation_expires_at:new Date(now + 3600_000).toISOString() };
+assert.throws(() => kb.recordKnowledgeIntakeConfirmation({ ...confirm, confirmation_expires_at:new Date(now - 100).toISOString() }), (e) => e.code === "KNOWLEDGE_CONFIRMATION_INVALID");
+assert.throws(() => kb.recordKnowledgeIntakeConfirmation({ ...confirm, confirmed_at:new Date(now + 50000).toISOString() }), (e) => e.code === "KNOWLEDGE_CONFIRMATION_INVALID");
+const confirmed = kb.recordKnowledgeIntakeConfirmation(confirm);
+assert.equal(confirmed.document.hospital_confirmation.recorded_by, scope.actor);
+assert.equal(confirmed.document.publication_readiness.ready, true);
+assert.equal(kb.recordKnowledgeIntakeConfirmation(confirm).replayed, true);
+const candidate = kb.submitKnowledgeIntakeDocument({ ...current, idempotency_key:"candidate-version-two" });
+assert.equal(candidate.document.status, "release_candidate");
+assert.equal(candidate.document.publication_status, "not_published");
+assert.deepEqual(index.searchRuntimeKnowledge("测试知识", { tenant_id:tenant, audience:"public" }), []);
+const clock = Date.now;
+try {
+  Date.now = () => now + 7200_000;
+  assert.equal(kb.getKnowledgeIntakeDocument(current).publication_readiness.ready, false, "Expired offline approval stops candidate preparation");
+  assert.throws(() => kb.submitKnowledgeIntakeDocument({ ...current, idempotency_key:"expired-confirmation-candidate" }), (e) => e.code === "KNOWLEDGE_PUBLICATION_PREREQUISITES_MISSING");
+} finally { Date.now = clock; }
+const edited = kb.updateKnowledgeIntakeDocument({ ...current, idempotency_key:"edit-after-confirmation", title:"测试知识修订标题" }).document;
+assert.equal(edited.version, 3);
+assert.deepEqual(edited.version_history.at(-1).changed_fields_to_next, ["title"]);
+assert.equal(edited.hospital_confirmation, null);
+assert.equal(edited.status, "draft");
+assert.equal(edited.submitted_at, null);
+assert.ok(edited.publication_readiness.missing.includes("hospital_confirmation"));
+assert.throws(() => kb.submitKnowledgeIntakeDocument({ ...current, expected_version:3, idempotency_key:"unconfirmed-new-version" }), (e) => e.code === "KNOWLEDGE_PUBLICATION_PREREQUISITES_MISSING");
+assert.equal(kb.getKnowledgeIntakeStoreStatus(tenant).published, 0);
+assert.ok(!JSON.stringify(edited).includes('"raw_text"'));
+console.log("✓ 知识草稿校订、并发版本冲突、幂等冲突、院方依据版本绑定/到期与候选隔离通过");

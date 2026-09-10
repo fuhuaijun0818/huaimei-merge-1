@@ -1,0 +1,106 @@
+# PostgreSQL/Redis persistence for the controlled staging environment.
+# This does not enable formal production identity, knowledge release or channels.
+services:
+  postgres:
+    image: ${HUAMEI_POSTGRES_IMAGE:?Set the verified PostgreSQL image digest}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: huamei
+      POSTGRES_USER: huamei_bootstrap
+      POSTGRES_PASSWORD: ${HUAMEI_POSTGRES_BOOTSTRAP_PASSWORD:?Set an independent bootstrap password}
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    security_opt: [no-new-privileges:true]
+    networks: [private]
+
+  redis:
+    image: ${HUAMEI_REDIS_IMAGE:?Set the verified Redis image digest}
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${HUAMEI_REDIS_PASSWORD:?Set an independent Redis password}
+    command: [/bin/sh, -ec, 'exec redis-server --appendonly yes --appendfsync everysec --requirepass "$$REDIS_PASSWORD"']
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [CMD-SHELL, 'REDISCLI_AUTH="$$REDIS_PASSWORD" redis-cli ping | grep -q PONG']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    security_opt: [no-new-privileges:true]
+    networks: [private]
+
+  provision-db:
+    image: huamei-ai-saas-mvp:${HUAMEI_BUILD_REVISION:?Set the approved application version}
+    profiles: [database-maintenance]
+    command: [node, scripts/provision-postgres-runtime-role.mjs]
+    environment:
+      HUAMEI_DATABASE_URL: ${HUAMEI_BOOTSTRAP_DATABASE_URL:?Set the bootstrap database URL}
+      HUAMEI_POSTGRES_MIGRATION_PASSWORD: ${HUAMEI_POSTGRES_MIGRATION_PASSWORD:?Set an independent migrator password}
+      HUAMEI_POSTGRES_APP_PASSWORD: ${HUAMEI_POSTGRES_APP_PASSWORD:?Set an independent runtime password}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [private]
+
+  migrate:
+    image: huamei-ai-saas-mvp:${HUAMEI_BUILD_REVISION:?Set the approved application version}
+    profiles: [database-maintenance]
+    command: [node, scripts/run-migrations.mjs]
+    environment:
+      HUAMEI_DATABASE_URL: ${HUAMEI_MIGRATION_DATABASE_URL:?Set the migrator database URL}
+      HUAMEI_POSTGRES_STATEMENT_TIMEOUT_MS: '300000'
+      HUAMEI_POSTGRES_QUERY_TIMEOUT_MS: '310000'
+      HUAMEI_POSTGRES_LOCK_TIMEOUT_MS: '30000'
+      HUAMEI_POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS: '60000'
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    networks: [private]
+
+  web:
+    environment: &runtime-persistence
+      HUAMEI_PERSISTENCE_BACKEND: postgres
+      HUAMEI_CACHE_BACKEND: redis
+      HUAMEI_DATABASE_URL: ${HUAMEI_DATABASE_URL:?Set the least-privilege runtime database URL}
+      HUAMEI_REDIS_URL: ${HUAMEI_REDIS_URL:?Set the authenticated Redis URL}
+      HUAMEI_IDENTITY_PEPPER: ${HUAMEI_IDENTITY_PEPPER:?Set an independent identity pepper}
+      HUAMEI_PUBLIC_SESSION_SECRET: ${HUAMEI_PUBLIC_SESSION_SECRET:?Set an independent session secret}
+      HUAMEI_FIELD_ENCRYPTION_KEYRING_JSON: ${HUAMEI_FIELD_ENCRYPTION_KEYRING_JSON:?Set the field encryption keyring}
+      HUAMEI_CONTACT_VAULT_KEYRING_JSON: ${HUAMEI_CONTACT_VAULT_KEYRING_JSON:?Set the independent contact encryption keyring}
+      HUAMEI_POSTGRES_POOL_MAX: '15'
+      HUAMEI_MEMBER_CHECK_ENABLED: ${HUAMEI_MEMBER_CHECK_ENABLED:-false}
+      HUAMEI_MEMBER_CHECK_AUTH_MODE: ${HUAMEI_MEMBER_CHECK_AUTH_MODE:-none}
+      HUAMEI_MEMBER_CHECK_URL: ${HUAMEI_MEMBER_CHECK_URL:-https://scrm.shhmwz.cn/api/thirdApi/checkPhoneExists}
+      HUAMEI_MEMBER_CHECK_HTTP_METHOD: POST
+      HUAMEI_MEMBER_CHECK_TENANT_ID: huamei-shanghai
+      HUAMEI_MEMBER_CHECK_AKEY: ${HUAMEI_MEMBER_CHECK_AKEY:-}
+      HUAMEI_MEMBER_CHECK_OPERATION: read_only
+      HUAMEI_MEMBER_CHECK_RESULT_SEMANTICS: duplicate_only
+      HUAMEI_MEMBER_CHECK_TIMEOUT_MS: '5000'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  acquisition:
+    environment: *runtime-persistence
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:

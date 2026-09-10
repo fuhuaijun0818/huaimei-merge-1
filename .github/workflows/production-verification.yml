@@ -1,0 +1,339 @@
+name: Production verification
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-verification-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22.22.1"
+  PYTHON_VERSION: "3.12.11"
+  HUAMEI_LLM_ENABLED: "false"
+  MINIMAX_REAL_CALL_ENABLED: "false"
+  LITELLM_LOCAL_MODEL_COST_MAP: "True"
+
+jobs:
+  policy-and-source-scan:
+    name: CI policy and sensitive source scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # pinned commit
+        with:
+          persist-credentials: false
+      - name: Configure Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pinned commit
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/acquisition-advisor/package-lock.json
+      - name: Validate workflow, locks, migrations and sensitive source policy
+        run: node scripts/validate-ci-workflow.mjs
+
+  static-and-node:
+    name: Static policy and Node tests
+    needs:
+      - policy-and-source-scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # pinned commit
+        with:
+          persist-credentials: false
+      - name: Configure Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pinned commit
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/acquisition-advisor/package-lock.json
+      - name: Install locked Node dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npm --prefix apps/acquisition-advisor ci --no-audit --no-fund
+      - name: Run Node service tests
+        run: npm test
+      - name: Run production fail-closed gates
+        run: npm run test:production-gates
+      - name: Build and test the customer advisor
+        run: |
+          npm --prefix apps/acquisition-advisor run build
+          npm --prefix apps/acquisition-advisor run test:sites
+
+  python-tests:
+    name: Python and GraphRAG tests
+    needs:
+      - policy-and-source-scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out source without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # pinned commit
+        with:
+          persist-credentials: false
+      - name: Configure Python
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # pinned commit
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: |
+            graphrag-service/requirements.txt
+            agent-orchestrator/requirements.lock
+      - name: Install locked Python dependencies
+        run: python -m pip install --disable-pip-version-check --requirement graphrag-service/requirements.txt
+      - name: Verify installed Python dependency consistency
+        run: python -m pip check
+      - name: Run Python and GraphRAG tests
+        run: PYTHONPATH=graphrag-service python -m unittest discover -s graphrag-service/tests -v
+      - name: Build isolated LangGraph orchestrator test environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv agent-orchestrator/.venv-ci
+          agent-orchestrator/.venv-ci/bin/python -m pip install --disable-pip-version-check --requirement agent-orchestrator/requirements.lock
+          agent-orchestrator/.venv-ci/bin/python -m pip install --disable-pip-version-check --no-deps ./agent-orchestrator
+          agent-orchestrator/.venv-ci/bin/python -m pip check
+      - name: Run LangGraph orchestrator contract tests
+        run: agent-orchestrator/.venv-ci/bin/python -m unittest discover -s agent-orchestrator/tests -v
+      - name: Validate load-test entrypoints without running load
+        run: |
+          python -m py_compile graphrag-service/loadtest/load_500.py graphrag-service/loadtest/soak_multiturn.py
+          python graphrag-service/loadtest/load_500.py --help >/dev/null
+          python graphrag-service/loadtest/soak_multiturn.py --help >/dev/null
+
+  dependency-audit:
+    name: npm dependency audit
+    needs:
+      - policy-and-source-scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # pinned commit
+        with:
+          persist-credentials: false
+      - name: Configure Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pinned commit
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/acquisition-advisor/package-lock.json
+      - name: Audit runtime and advisor dependencies
+        run: |
+          npm audit --omit=dev --audit-level=high
+          npm --prefix apps/acquisition-advisor audit --audit-level=high
+
+  container-builds:
+    name: Immutable-base container build validation
+    needs:
+      - static-and-node
+      - python-tests
+      - dependency-audit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      HUAMEI_CI_NODE_BASE_IMAGE: ${{ vars.HUAMEI_CI_NODE_BASE_IMAGE }}
+      HUAMEI_CI_PYTHON_BASE_IMAGE: ${{ vars.HUAMEI_CI_PYTHON_BASE_IMAGE }}
+    steps:
+      - name: Check out source without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # pinned commit
+        with:
+          persist-credentials: false
+      - name: Require immutable base image inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for image_ref in "${HUAMEI_CI_NODE_BASE_IMAGE}" "${HUAMEI_CI_PYTHON_BASE_IMAGE}"; do
+            if [[ ! "${image_ref}" =~ @sha256:[0-9a-f]{64}$ ]]; then
+              echo "CI base image repository variable must be an immutable digest reference" >&2
+              exit 1
+            fi
+          done
+      - name: Build Node application image
+        run: >-
+          docker build --pull
+          --build-arg NODE_IMAGE="${HUAMEI_CI_NODE_BASE_IMAGE}"
+          --build-arg HUAMEI_BUILD_REVISION="${GITHUB_SHA}"
+          --file Dockerfile --tag huamei-app:${{ github.sha }} .
+      - name: Build GraphRAG image
+        run: >-
+          docker build --pull
+          --build-arg PYTHON_IMAGE="${HUAMEI_CI_PYTHON_BASE_IMAGE}"
+          --build-arg HUAMEI_BUILD_REVISION="${GITHUB_SHA}"
+          --file graphrag-service/Dockerfile --tag huamei-graphrag:${{ github.sha }} .
+      - name: Build LangGraph orchestrator image
+        run: >-
+          docker build --pull
+          --build-arg PYTHON_IMAGE="${HUAMEI_CI_PYTHON_BASE_IMAGE}"
+          --build-arg HUAMEI_BUILD_REVISION="${GITHUB_SHA}"
+          --file agent-orchestrator/Dockerfile --tag huamei-langgraph-orchestrator:${{ github.sha }} agent-orchestrator
+      - name: Verify image runtime identity and revision metadata
+        run: |
+          test "$(docker image inspect huamei-app:${{ github.sha }} --format '{{.Config.User}}')" = "node"
+          test "$(docker image inspect huamei-graphrag:${{ github.sha }} --format '{{.Config.User}}')" = "graphrag"
+          test "$(docker image inspect huamei-langgraph-orchestrator:${{ github.sha }} --format '{{.Config.User}}')" = "appuser"
+          test "$(docker image inspect huamei-app:${{ github.sha }} --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "${GITHUB_SHA}"
+          test "$(docker image inspect huamei-graphrag:${{ github.sha }} --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "${GITHUB_SHA}"
+          test "$(docker image inspect huamei-langgraph-orchestrator:${{ github.sha }} --format '{{index .Config.Labels "org.opencontainers.image.revision"}}')" = "${GITHUB_SHA}"
+          test "$(docker run --rm --entrypoint node huamei-app:${{ github.sha }} --version)" = "v${NODE_VERSION}"
+          test "$(docker run --rm --entrypoint python huamei-graphrag:${{ github.sha }} --version 2>&1)" = "Python ${PYTHON_VERSION}"
+          test "$(docker run --rm --entrypoint python huamei-langgraph-orchestrator:${{ github.sha }} --version 2>&1)" = "Python ${PYTHON_VERSION}"
+
+  postgres-redis-integration:
+    name: Fresh PostgreSQL 16 and Redis 7 integration
+    needs:
+      - policy-and-source-scan
+      - static-and-node
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      HUAMEI_CI_POSTGRES_IMAGE: ${{ vars.HUAMEI_CI_POSTGRES_IMAGE }}
+      HUAMEI_CI_REDIS_IMAGE: ${{ vars.HUAMEI_CI_REDIS_IMAGE }}
+    steps:
+      - name: Check out source without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # pinned commit
+        with:
+          persist-credentials: false
+      - name: Configure Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # pinned commit
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Install locked runtime dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Require immutable integration image inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          for image_ref in "${HUAMEI_CI_POSTGRES_IMAGE}" "${HUAMEI_CI_REDIS_IMAGE}"; do
+            if [[ ! "${image_ref}" =~ @sha256:[0-9a-f]{64}$ ]]; then
+              echo "CI integration image repository variable must be an immutable digest reference" >&2
+              exit 1
+            fi
+          done
+      - name: Generate and mask ephemeral credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          bootstrap_password="$(openssl rand -hex 32)"
+          migration_password="$(openssl rand -hex 32)"
+          runtime_password="$(openssl rand -hex 32)"
+          redis_password="$(openssl rand -hex 32)"
+          identity_pepper="$(openssl rand -hex 32)"
+          bootstrap_url="postgresql://postgres:${bootstrap_password}@127.0.0.1:55432/huamei"
+          migration_url="postgresql://huamei_migrator:${migration_password}@127.0.0.1:55432/huamei"
+          runtime_url="postgresql://huamei_runtime:${runtime_password}@127.0.0.1:55432/huamei"
+          redis_url="redis://:${redis_password}@127.0.0.1:56379/0"
+          for secret in "${bootstrap_password}" "${migration_password}" "${runtime_password}" "${redis_password}" "${identity_pepper}" "${bootstrap_url}" "${migration_url}" "${runtime_url}" "${redis_url}"; do
+            echo "::add-mask::${secret}"
+          done
+          {
+            echo "CI_PG_BOOTSTRAP_PASSWORD=${bootstrap_password}"
+            echo "HUAMEI_POSTGRES_MIGRATION_PASSWORD=${migration_password}"
+            echo "HUAMEI_POSTGRES_APP_PASSWORD=${runtime_password}"
+            echo "CI_REDIS_PASSWORD=${redis_password}"
+            echo "HUAMEI_IDENTITY_PEPPER=${identity_pepper}"
+            echo "CI_PG_BOOTSTRAP_URL=${bootstrap_url}"
+            echo "HUAMEI_MIGRATION_DATABASE_URL=${migration_url}"
+            echo "HUAMEI_DATABASE_URL=${runtime_url}"
+            echo "HUAMEI_REDIS_URL=${redis_url}"
+            echo "CI_POSTGRES_CONTAINER=huamei-ci-postgres-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            echo "CI_REDIS_CONTAINER=huamei-ci-redis-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          } >> "${GITHUB_ENV}"
+      - name: Start isolated PostgreSQL 16 and Redis 7
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --detach --name "${CI_POSTGRES_CONTAINER}" \
+            --publish 127.0.0.1:55432:5432 \
+            --env POSTGRES_DB=huamei \
+            --env POSTGRES_USER=postgres \
+            --env POSTGRES_PASSWORD="${CI_PG_BOOTSTRAP_PASSWORD}" \
+            "${HUAMEI_CI_POSTGRES_IMAGE}"
+          docker run --detach --name "${CI_REDIS_CONTAINER}" \
+            --publish 127.0.0.1:56379:6379 \
+            "${HUAMEI_CI_REDIS_IMAGE}" \
+            redis-server --save "" --appendonly no --requirepass "${CI_REDIS_PASSWORD}"
+          postgres_ready=false
+          redis_ready=false
+          for attempt in $(seq 1 60); do
+            if docker exec "${CI_POSTGRES_CONTAINER}" pg_isready -U postgres -d huamei >/dev/null 2>&1; then postgres_ready=true; fi
+            if docker exec "${CI_REDIS_CONTAINER}" redis-cli --no-auth-warning -a "${CI_REDIS_PASSWORD}" ping 2>/dev/null | grep -q PONG; then redis_ready=true; fi
+            if [[ "${postgres_ready}" == true && "${redis_ready}" == true ]]; then break; fi
+            sleep 1
+          done
+          if [[ "${postgres_ready}" != true || "${redis_ready}" != true ]]; then
+            docker logs "${CI_POSTGRES_CONTAINER}" || true
+            docker logs "${CI_REDIS_CONTAINER}" || true
+            exit 1
+          fi
+          postgres_version="$(docker exec "${CI_POSTGRES_CONTAINER}" psql -U postgres -d huamei -Atc 'SHOW server_version_num')"
+          redis_server_info="$(docker exec "${CI_REDIS_CONTAINER}" redis-cli --no-auth-warning -a "${CI_REDIS_PASSWORD}" INFO server 2>/dev/null)"
+          if [[ ! "${postgres_version}" =~ ^16[0-9]{4}$ ]]; then
+            echo "PostgreSQL integration image is not major version 16" >&2
+            exit 1
+          fi
+          if [[ ! "${redis_server_info}" =~ redis_version:7\. ]]; then
+            echo "Redis integration image is not major version 7" >&2
+            exit 1
+          fi
+      - name: Provision split database roles
+        shell: bash
+        run: |
+          set -euo pipefail
+          HUAMEI_DATABASE_URL="${CI_PG_BOOTSTRAP_URL}" \
+          HUAMEI_POSTGRES_OWNER_ROLE=huamei_owner \
+          HUAMEI_POSTGRES_MIGRATION_USER=huamei_migrator \
+          HUAMEI_POSTGRES_APP_USER=huamei_runtime \
+          node scripts/provision-postgres-runtime-role.mjs
+      - name: Verify dirty role normalization and SET ROLE isolation
+        run: npm run test:postgres-role-provisioning
+      - name: Apply and replay all migrations including required 001-014
+        shell: bash
+        run: |
+          set -euo pipefail
+          HUAMEI_DATABASE_URL="${HUAMEI_MIGRATION_DATABASE_URL}" \
+          HUAMEI_POSTGRES_OWNER_ROLE=huamei_owner \
+          node scripts/run-migrations.mjs
+          HUAMEI_DATABASE_URL="${HUAMEI_MIGRATION_DATABASE_URL}" \
+          HUAMEI_POSTGRES_OWNER_ROLE=huamei_owner \
+          node scripts/run-migrations.mjs
+      - name: Reconcile exact runtime object ACLs after migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          HUAMEI_DATABASE_URL="${CI_PG_BOOTSTRAP_URL}" \
+          HUAMEI_POSTGRES_OWNER_ROLE=huamei_owner \
+          HUAMEI_POSTGRES_MIGRATION_USER=huamei_migrator \
+          HUAMEI_POSTGRES_APP_USER=huamei_runtime \
+          node scripts/provision-postgres-runtime-role.mjs
+      - name: Verify migration, RLS, knowledge, sessions, Outbox, privacy, encryption and domain contracts
+        env:
+          HUAMEI_PERSISTENCE_BACKEND: postgres
+          HUAMEI_CACHE_BACKEND: redis
+        run: npm run test:postgres:ci
+      - name: Verify live Redis coordination
+        run: npm run test:redis-live
+      - name: Remove ephemeral infrastructure
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${CI_POSTGRES_CONTAINER:-}" ]]; then docker rm --force "${CI_POSTGRES_CONTAINER}" >/dev/null 2>&1 || true; fi
+          if [[ -n "${CI_REDIS_CONTAINER:-}" ]]; then docker rm --force "${CI_REDIS_CONTAINER}" >/dev/null 2>&1 || true; fi

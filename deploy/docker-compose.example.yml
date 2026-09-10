@@ -1,0 +1,710 @@
+name: "${HUAMEI_COMPOSE_PROJECT_NAME:-huamei-production}"
+
+services:
+  postgres:
+    image: "${HUAMEI_POSTGRES_IMAGE:?Set an immutable PostgreSQL image reference ending in @sha256:<digest>}"
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${HUAMEI_POSTGRES_DB:-huamei}"
+      POSTGRES_USER: "${HUAMEI_POSTGRES_BOOTSTRAP_USER:-huamei_bootstrap}"
+      POSTGRES_PASSWORD: "${HUAMEI_POSTGRES_BOOTSTRAP_PASSWORD:?Set a strong bootstrap-role password in deploy/.env}"
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      start_period: 15s
+      retries: 6
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "4"
+          memory: 16G
+        reservations:
+          cpus: "1"
+          memory: 4G
+    networks:
+      - backend
+
+  provision-db:
+    image: "${HUAMEI_APP_IMAGE:?Set the immutable application image reference ending in @sha256:<digest>}"
+    profiles: ["bootstrap"]
+    command: ["node", "scripts/provision-postgres-runtime-role.mjs"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HUAMEI_DATABASE_URL: "${HUAMEI_BOOTSTRAP_DATABASE_URL:?Set the bootstrap-role PostgreSQL URL in deploy/.env}"
+      HUAMEI_POSTGRES_OWNER_ROLE: huamei_owner
+      HUAMEI_POSTGRES_MIGRATION_USER: huamei_migrator
+      HUAMEI_POSTGRES_MIGRATION_PASSWORD: "${HUAMEI_POSTGRES_MIGRATION_PASSWORD:?Set a strong migration-role password in deploy/.env}"
+      HUAMEI_POSTGRES_APP_USER: huamei_runtime
+      HUAMEI_POSTGRES_APP_PASSWORD: "${HUAMEI_POSTGRES_APP_PASSWORD:?Set a strong runtime-role password in deploy/.env}"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+  migrate:
+    image: "${HUAMEI_APP_IMAGE:?Set the immutable application image reference ending in @sha256:<digest>}"
+    command: ["node", "scripts/run-migrations.mjs"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HUAMEI_DATABASE_URL: "${HUAMEI_MIGRATION_DATABASE_URL:?Set the migration-role PostgreSQL URL in deploy/.env}"
+      HUAMEI_POSTGRES_OWNER_ROLE: huamei_owner
+      # Schema/data migrations intentionally receive a wider bounded window
+      # than latency-sensitive runtime requests.
+      HUAMEI_POSTGRES_STATEMENT_TIMEOUT_MS: "300000"
+      HUAMEI_POSTGRES_QUERY_TIMEOUT_MS: "310000"
+      HUAMEI_POSTGRES_LOCK_TIMEOUT_MS: "30000"
+      HUAMEI_POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS: "60000"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - backend
+
+  redis:
+    image: "${HUAMEI_REDIS_IMAGE:?Set an immutable Redis image reference ending in @sha256:<digest>}"
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: "${HUAMEI_REDIS_PASSWORD:?Set a strong Redis password in deploy/.env}"
+    command:
+      - /bin/sh
+      - -ec
+      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$$REDIS_PASSWORD"
+    expose:
+      - "6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 6
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+    networks:
+      - backend
+
+  graphrag:
+    image: "${HUAMEI_GRAPHRAG_IMAGE:?Set the immutable GraphRAG image reference ending in @sha256:<digest>}"
+    restart: unless-stopped
+    init: true
+    environment:
+      HUAMEI_ENVIRONMENT: production
+      HUAMEI_GRAPHRAG_HOST: 0.0.0.0
+      HUAMEI_GRAPHRAG_PORT: "4191"
+      HUAMEI_GRAPHRAG_ENGINE: official
+      HUAMEI_GRAPHRAG_INDEX_VERSION: "${HUAMEI_GRAPHRAG_INDEX_VERSION:?Set the immutable approved GraphRAG index version}"
+      HUAMEI_GRAPHRAG_OFFICIAL_PROJECT_ROOT: /service/graphrag_project
+      HUAMEI_GRAPHRAG_SERVICE_KEY: "${HUAMEI_GRAPHRAG_SERVICE_KEY:?Set a strong GraphRAG service key in deploy/.env}"
+      HUAMEI_GRAPHRAG_METRICS_TOKEN: "${HUAMEI_GRAPHRAG_METRICS_TOKEN:?Set an independent GraphRAG metrics token}"
+      HUAMEI_GRAPHRAG_MAX_CONCURRENCY: "128"
+      HUAMEI_GRAPHRAG_QUEUE_TIMEOUT_SECONDS: "1"
+      HUAMEI_GRAPHRAG_REQUEST_TIMEOUT_SECONDS: "6"
+      HUAMEI_GRAPHRAG_CACHE_TTL_SECONDS: "300"
+      HUAMEI_GRAPHRAG_CACHE_MAX_ENTRIES: "5000"
+      # Prevent LiteLLM from downloading an unapproved remote model-cost map at startup.
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      GRAPHRAG_MODEL_PROVIDER: "${GRAPHRAG_MODEL_PROVIDER:?Set the approved GraphRAG model provider}"
+      GRAPHRAG_API_BASE: "${GRAPHRAG_API_BASE:?Set the approved HTTPS GraphRAG model endpoint}"
+      GRAPHRAG_API_KEY: "${GRAPHRAG_API_KEY:?Set a dedicated GraphRAG model key}"
+      GRAPHRAG_COMPLETION_MODEL: "${GRAPHRAG_COMPLETION_MODEL:?Set the approved GraphRAG completion model}"
+      GRAPHRAG_EMBEDDING_MODEL: "${GRAPHRAG_EMBEDDING_MODEL:?Set the approved GraphRAG embedding model}"
+    expose:
+      - "4191"
+    volumes:
+      - "${HUAMEI_GRAPHRAG_OFFICIAL_OUTPUT_HOST_PATH:?Set the immutable approved GraphRAG output directory}:/service/graphrag_project/output:ro"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 1024
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4191/ready', timeout=2)"]
+      interval: 20s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "4"
+          memory: 4G
+          pids: 1024
+        reservations:
+          cpus: "1"
+          memory: 1G
+    networks:
+      - backend
+      - approved-egress
+
+  acquisition:
+    image: "${HUAMEI_APP_IMAGE:?Set the immutable application image reference ending in @sha256:<digest>}"
+    command: ["node", "server/acquisition-service-server.mjs"]
+    restart: unless-stopped
+    init: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      graphrag:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HUAMEI_RUNTIME_ENV: production
+      HUAMEI_ACQUISITION_SERVICE_HOST: 0.0.0.0
+      HUAMEI_ACQUISITION_SERVICE_PORT: "4180"
+      HUAMEI_ACQUISITION_SERVICE_RATE_LIMIT: "${HUAMEI_ACQUISITION_SERVICE_RATE_LIMIT:?Set the internal service caller rate limit sized for the admitted 20-user workload}"
+      HUAMEI_FORMAL_LOAD_TAXONOMY_ENABLED: "false"
+      HUAMEI_ACQUISITION_CLIENTS_JSON: "${HUAMEI_ACQUISITION_CLIENTS_JSON:?Set the caller-to-tenant client registry in deploy/.env}"
+      HUAMEI_ACQUISITION_CALLER_ID: "${HUAMEI_ACQUISITION_CALLER_ID:?Set the fixed gateway caller id in deploy/.env}"
+      HUAMEI_ACQUISITION_CALLER_SECRET: "${HUAMEI_ACQUISITION_CALLER_SECRET:?Set the fixed gateway caller secret in deploy/.env}"
+      HUAMEI_DEFAULT_TENANT_ID: "${HUAMEI_DEFAULT_TENANT_ID:-huamei-shanghai}"
+      HUAMEI_PUBLIC_TENANT_ID: "${HUAMEI_PUBLIC_TENANT_ID:-huamei-shanghai}"
+      HUAMEI_ACQUISITION_TENANT_ID: "${HUAMEI_ACQUISITION_TENANT_ID:-huamei-shanghai}"
+      HUAMEI_API_KEY: "${HUAMEI_API_KEY:?Set a dedicated application API key}"
+      HUAMEI_IDENTITY_PEPPER: "${HUAMEI_IDENTITY_PEPPER:?Set a dedicated identity pepper}"
+      HUAMEI_PUBLIC_SESSION_SECRET: "${HUAMEI_PUBLIC_SESSION_SECRET:?Set a dedicated public-session signing secret}"
+      HUAMEI_PRIVACY_VERIFICATION_SECRET: "${HUAMEI_PRIVACY_VERIFICATION_SECRET:?Set a dedicated DSR identity-verification signing secret}"
+      HUAMEI_PRIVACY_CANCELLATION_SECRET: "${HUAMEI_PRIVACY_CANCELLATION_SECRET:?Set a separate DSR subject-withdrawal signing secret}"
+      HUAMEI_PRIVACY_COMPLETION_SECRET: "${HUAMEI_PRIVACY_COMPLETION_SECRET:?Set a separate DSR completion-attestation signing secret}"
+      HUAMEI_PUBLIC_GATEWAY_ENABLED: "false"
+      HUAMEI_CONVERSATION_RECEIPT_TIMEOUT_MS: "${HUAMEI_CONVERSATION_RECEIPT_TIMEOUT_MS:-120000}"
+      HUAMEI_CONVERSATION_SEQUENCE_WAIT_MS: "${HUAMEI_CONVERSATION_SEQUENCE_WAIT_MS:-10000}"
+      HUAMEI_PERSISTENCE_BACKEND: postgres
+      HUAMEI_CACHE_BACKEND: redis
+      DATABASE_URL: "${HUAMEI_DATABASE_URL:?Set the runtime-role PostgreSQL URL in deploy/.env}"
+      REDIS_URL: "${HUAMEI_REDIS_URL:?Set the Redis URL in deploy/.env}"
+      HUAMEI_POSTGRES_POOL_MAX: "${HUAMEI_POSTGRES_POOL_MAX:-40}"
+      HUAMEI_POSTGRES_IDLE_TIMEOUT_MS: "${HUAMEI_POSTGRES_IDLE_TIMEOUT_MS:-30000}"
+      HUAMEI_POSTGRES_CONNECT_TIMEOUT_MS: "${HUAMEI_POSTGRES_CONNECT_TIMEOUT_MS:-5000}"
+      HUAMEI_POSTGRES_STATEMENT_TIMEOUT_MS: "${HUAMEI_POSTGRES_STATEMENT_TIMEOUT_MS:-15000}"
+      HUAMEI_POSTGRES_QUERY_TIMEOUT_MS: "${HUAMEI_POSTGRES_QUERY_TIMEOUT_MS:-20000}"
+      HUAMEI_POSTGRES_LOCK_TIMEOUT_MS: "${HUAMEI_POSTGRES_LOCK_TIMEOUT_MS:-3000}"
+      HUAMEI_POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS: "${HUAMEI_POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS:-15000}"
+      HUAMEI_REDIS_CONNECT_TIMEOUT_MS: "${HUAMEI_REDIS_CONNECT_TIMEOUT_MS:-5000}"
+      HUAMEI_REDIS_COMMAND_TIMEOUT_MS: "${HUAMEI_REDIS_COMMAND_TIMEOUT_MS:-3000}"
+      HUAMEI_METRICS_TOKEN: "${HUAMEI_ACQUISITION_METRICS_TOKEN:?Set a dedicated acquisition metrics token of at least 32 random characters}"
+      HUAMEI_KNOWLEDGE_APPROVAL_MODE: enforce
+      HUAMEI_KNOWLEDGE_ROOT: /knowledge
+      HUAMEI_KNOWLEDGE_PUBLIC_SAFE_CATALOG: /knowledge/rag/huamei-public-safe.jsonl
+      HUAMEI_GRAPHRAG_ENABLED: "true"
+      HUAMEI_GRAPHRAG_URL: http://graphrag:4191
+      HUAMEI_GRAPHRAG_SERVICE_KEY: "${HUAMEI_GRAPHRAG_SERVICE_KEY:?Set a strong GraphRAG service key in deploy/.env}"
+      HUAMEI_GRAPHRAG_TIMEOUT_MS: "1500"
+      HUAMEI_GRAPHRAG_TOP_K: "6"
+      HUAMEI_GRAPHRAG_READINESS_RECORD_ID: "${HUAMEI_GRAPHRAG_READINESS_RECORD_ID:?Set one approved immutable record for grounded GraphRAG readiness}"
+      HUAMEI_EXTERNAL_DEPENDENCY_READINESS_MAX_AGE_MS: "20000"
+      HUAMEI_EXTERNAL_DEPENDENCY_PROBE_TIMEOUT_MS: "4000"
+      HUAMEI_LLM_ENABLED: "true"
+      HUAMEI_LLM_PROVIDER: "${HUAMEI_LLM_PROVIDER:?Set the approved production LLM provider}"
+      HUAMEI_LLM_BASE_URL: "${HUAMEI_LLM_BASE_URL:?Set the approved HTTPS production LLM endpoint}"
+      HUAMEI_LLM_API_KEY: "${HUAMEI_LLM_API_KEY:?Set a dedicated production LLM key}"
+      HUAMEI_LLM_MODEL: "${HUAMEI_LLM_MODEL:?Set the approved production LLM model}"
+      HUAMEI_LLM_DATA_EGRESS_APPROVED: "${HUAMEI_LLM_DATA_EGRESS_APPROVED:?Record explicit model data-egress approval}"
+      HUAMEI_OIDC_REQUIRED: "true"
+      HUAMEI_OIDC_ISSUER: "${HUAMEI_OIDC_ISSUER:?Set the enterprise OIDC issuer}"
+      HUAMEI_OIDC_AUDIENCE: "${HUAMEI_OIDC_AUDIENCE:?Set the OIDC audience}"
+      HUAMEI_OIDC_JWKS_URL: "${HUAMEI_OIDC_JWKS_URL:?Set the OIDC JWKS URL}"
+      HUAMEI_OIDC_ROLE_CLAIM: "${HUAMEI_OIDC_ROLE_CLAIM:-roles}"
+      HUAMEI_OIDC_TENANT_CLAIM: "${HUAMEI_OIDC_TENANT_CLAIM:-tenant_ids}"
+      HUAMEI_FIELD_ENCRYPTION_KEYRING_JSON: "${HUAMEI_FIELD_ENCRYPTION_KEYRING_JSON:?Set the production field-encryption keyring}"
+      HUAMEI_CONTACT_VAULT_KEYRING_JSON: "${HUAMEI_CONTACT_VAULT_KEYRING_JSON:?Set an independent production contact-vault keyring}"
+      MINIMAX_REAL_CALL_ENABLED: "false"
+    volumes:
+      - "${HUAMEI_KNOWLEDGE_HOST_PATH:?Set the reviewed knowledge package path}:/knowledge:ro"
+    expose:
+      - "4180"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    stop_grace_period: 45s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4180/ready',{headers:{'X-Caller-Id':process.env.HUAMEI_ACQUISITION_CALLER_ID,'X-Service-Key':process.env.HUAMEI_ACQUISITION_CALLER_SECRET,'X-Tenant-Id':process.env.HUAMEI_PUBLIC_TENANT_ID}}).then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));"]
+      interval: 30s
+      timeout: 8s
+      start_period: 20s
+      retries: 3
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "4"
+          memory: 8G
+          pids: 512
+        reservations:
+          cpus: "1"
+          memory: 2G
+    networks:
+      - backend
+      - approved-egress
+
+  # One-shot, private first-install/knowledge-change controller.  It can run
+  # while acquisition is intentionally not ready because no release is active.
+  # The entrypoint allowlists the governance operations and reads all human OIDC
+  # tokens, payloads and its dedicated caller secret from one read-only mount.
+  knowledge-governance:
+    image: "${HUAMEI_APP_IMAGE:?Set the immutable application image reference ending in @sha256:<digest>}"
+    profiles: ["knowledge-governance"]
+    entrypoint: ["node", "scripts/knowledge-governance-cli.mjs"]
+    command: ["admission"]
+    restart: "no"
+    depends_on:
+      acquisition:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      HUAMEI_RUNTIME_ENV: production
+      HUAMEI_KNOWLEDGE_GOVERNANCE_URL: http://acquisition:4180
+      HUAMEI_KNOWLEDGE_GOVERNANCE_TENANT_ID: "${HUAMEI_KNOWLEDGE_GOVERNANCE_TENANT_ID:-huamei-shanghai}"
+      HUAMEI_KNOWLEDGE_GOVERNANCE_CALLER_ID: "${HUAMEI_KNOWLEDGE_GOVERNANCE_CALLER_ID:?Set the dedicated knowledge-governance caller id}"
+      HUAMEI_KNOWLEDGE_GOVERNANCE_CALLER_SECRET_FILE: /run/knowledge-governance/caller-secret
+      HUAMEI_KNOWLEDGE_GOVERNANCE_INPUT_ROOT: /run/knowledge-governance
+    volumes:
+      - "${HUAMEI_KNOWLEDGE_GOVERNANCE_INPUT_HOST_PATH:?Set the protected first-install governance input directory}:/run/knowledge-governance:ro"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    networks:
+      - backend
+
+  conversation-recovery:
+    image: "${HUAMEI_APP_IMAGE:?Set the immutable application image reference ending in @sha256:<digest>}"
+    command: ["node", "server/workers/conversation-receipt-recovery-worker.mjs"]
+    restart: unless-stopped
+    init: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HUAMEI_PERSISTENCE_BACKEND: postgres
+      DATABASE_URL: "${HUAMEI_DATABASE_URL:?Set the runtime-role PostgreSQL URL in deploy/.env}"
+      HUAMEI_DEFAULT_TENANT_ID: "${HUAMEI_DEFAULT_TENANT_ID:-huamei-shanghai}"
+      HUAMEI_CONVERSATION_RECOVERY_TENANT_IDS: "${HUAMEI_CONVERSATION_RECOVERY_TENANT_IDS:-huamei-shanghai}"
+      HUAMEI_CONVERSATION_RECOVERY_INTERVAL_MS: "${HUAMEI_CONVERSATION_RECOVERY_INTERVAL_MS:-5000}"
+      HUAMEI_CONVERSATION_RECOVERY_MAX_CONSECUTIVE_FAILURES: "${HUAMEI_CONVERSATION_RECOVERY_MAX_CONSECUTIVE_FAILURES:-3}"
+      HUAMEI_CONVERSATION_RECOVERY_MAX_SUCCESS_AGE_MS: "${HUAMEI_CONVERSATION_RECOVERY_MAX_SUCCESS_AGE_MS:-20000}"
+      HUAMEI_CONVERSATION_RECOVERY_OBSERVABILITY_PORT: "9191"
+      HUAMEI_CONVERSATION_RECOVERY_METRICS_TOKEN: "${HUAMEI_CONVERSATION_RECOVERY_METRICS_TOKEN:?Set a dedicated conversation-recovery metrics token of at least 32 random characters}"
+      HUAMEI_FIELD_ENCRYPTION_KEYRING_JSON: "${HUAMEI_FIELD_ENCRYPTION_KEYRING_JSON:?Set the production field-encryption keyring}"
+      HUAMEI_POSTGRES_POOL_MAX: "${HUAMEI_POSTGRES_POOL_MAX:-40}"
+      HUAMEI_POSTGRES_IDLE_TIMEOUT_MS: "${HUAMEI_POSTGRES_IDLE_TIMEOUT_MS:-30000}"
+      HUAMEI_POSTGRES_CONNECT_TIMEOUT_MS: "${HUAMEI_POSTGRES_CONNECT_TIMEOUT_MS:-5000}"
+      HUAMEI_POSTGRES_STATEMENT_TIMEOUT_MS: "${HUAMEI_POSTGRES_STATEMENT_TIMEOUT_MS:-15000}"
+      HUAMEI_POSTGRES_QUERY_TIMEOUT_MS: "${HUAMEI_POSTGRES_QUERY_TIMEOUT_MS:-20000}"
+      HUAMEI_POSTGRES_LOCK_TIMEOUT_MS: "${HUAMEI_POSTGRES_LOCK_TIMEOUT_MS:-3000}"
+      HUAMEI_POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS: "${HUAMEI_POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS:-15000}"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9191/readyz',{headers:{'X-Metrics-Token':process.env.HUAMEI_CONVERSATION_RECOVERY_METRICS_TOKEN}}).then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));"]
+      interval: 30s
+      timeout: 8s
+      start_period: 20s
+      retries: 3
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+          pids: 128
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+    networks:
+      - backend
+
+  # Disabled by default. Enable only after the real HTTPS receiver proves
+  # tenant + event_id idempotency and supplies a dedicated service key.
+  outbox:
+    image: "${HUAMEI_APP_IMAGE:?Set the immutable application image reference ending in @sha256:<digest>}"
+    profiles: ["external-events"]
+    command: ["node", "server/workers/postgres-outbox-worker.mjs"]
+    restart: unless-stopped
+    init: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HUAMEI_RUNTIME_ENV: production
+      HUAMEI_PERSISTENCE_BACKEND: postgres
+      HUAMEI_DATABASE_URL: "${HUAMEI_DATABASE_URL:?Set the runtime-role PostgreSQL URL in deploy/.env}"
+      HUAMEI_OUTBOX_DELIVERY_ENABLED: "true"
+      HUAMEI_OUTBOX_TENANTS: "${HUAMEI_OUTBOX_TENANTS:?List every tenant whose events may be delivered}"
+      HUAMEI_OUTBOX_TARGET_URL: "${HUAMEI_OUTBOX_TARGET_URL:?Set the real HTTPS idempotent event receiver}"
+      HUAMEI_OUTBOX_TARGET_SERVICE_KEY: "${HUAMEI_OUTBOX_TARGET_SERVICE_KEY:?Set a dedicated receiver service key}"
+      HUAMEI_OUTBOX_TARGET_TIMEOUT_MS: "${HUAMEI_OUTBOX_TARGET_TIMEOUT_MS:-10000}"
+      HUAMEI_OUTBOX_BATCH_SIZE: "${HUAMEI_OUTBOX_BATCH_SIZE:-25}"
+      HUAMEI_OUTBOX_MAX_IN_FLIGHT: "${HUAMEI_OUTBOX_MAX_IN_FLIGHT:-50}"
+      HUAMEI_OUTBOX_LEASE_MS: "${HUAMEI_OUTBOX_LEASE_MS:-30000}"
+      HUAMEI_OUTBOX_POLL_INTERVAL_MS: "${HUAMEI_OUTBOX_POLL_INTERVAL_MS:-500}"
+      HUAMEI_OUTBOX_METRICS_INTERVAL_MS: "${HUAMEI_OUTBOX_METRICS_INTERVAL_MS:-60000}"
+      HUAMEI_FIELD_ENCRYPTION_KEYRING_JSON: "${HUAMEI_FIELD_ENCRYPTION_KEYRING_JSON:?Set the production field-encryption keyring}"
+      HUAMEI_POSTGRES_POOL_MAX: "${HUAMEI_POSTGRES_POOL_MAX:-40}"
+      HUAMEI_POSTGRES_IDLE_TIMEOUT_MS: "${HUAMEI_POSTGRES_IDLE_TIMEOUT_MS:-30000}"
+      HUAMEI_POSTGRES_CONNECT_TIMEOUT_MS: "${HUAMEI_POSTGRES_CONNECT_TIMEOUT_MS:-5000}"
+      HUAMEI_POSTGRES_STATEMENT_TIMEOUT_MS: "${HUAMEI_POSTGRES_STATEMENT_TIMEOUT_MS:-15000}"
+      HUAMEI_POSTGRES_QUERY_TIMEOUT_MS: "${HUAMEI_POSTGRES_QUERY_TIMEOUT_MS:-20000}"
+      HUAMEI_POSTGRES_LOCK_TIMEOUT_MS: "${HUAMEI_POSTGRES_LOCK_TIMEOUT_MS:-3000}"
+      HUAMEI_POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS: "${HUAMEI_POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS:-15000}"
+      HUAMEI_METRICS_TOKEN: "${HUAMEI_OUTBOX_METRICS_TOKEN:?Set a dedicated outbox metrics token of at least 32 random characters}"
+      HUAMEI_OBSERVABILITY_HOST: 0.0.0.0
+      HUAMEI_OBSERVABILITY_PORT: "9190"
+      HUAMEI_OBSERVABILITY_ALLOW_NON_LOOPBACK: "true"
+    expose:
+      - "9190"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    stop_grace_period: 45s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9190/readyz',{headers:{'X-Metrics-Token':process.env.HUAMEI_METRICS_TOKEN}}).then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));"]
+      interval: 30s
+      timeout: 8s
+      start_period: 20s
+      retries: 3
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+          pids: 256
+        reservations:
+          cpus: "0.2"
+          memory: 256M
+    networks:
+      - backend
+      - approved-egress
+
+  app:
+    image: "${HUAMEI_APP_IMAGE:?Set the immutable application image reference ending in @sha256:<digest>}"
+    restart: unless-stopped
+    init: true
+    depends_on:
+      acquisition:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HUAMEI_RUNTIME_ENV: production
+      PORT: "4173"
+      HUAMEI_HOST: 0.0.0.0
+      HUAMEI_API_KEY: "${HUAMEI_API_KEY:?Set a strong HUAMEI_API_KEY in deploy/.env}"
+      HUAMEI_ADMIN_BROWSER_AUTH_MODE: external_oidc_pkce_proxy
+      HUAMEI_ADMIN_IDENTITY_PROXY_SESSION_BACKEND: redis
+      HUAMEI_ADMIN_IDENTITY_PROXY_PRODUCT: "${HUAMEI_ADMIN_IDENTITY_PROXY_PRODUCT:?Set the approved OIDC proxy product}"
+      HUAMEI_ADMIN_IDENTITY_PROXY_HEALTH_URL: "${HUAMEI_ADMIN_IDENTITY_PROXY_HEALTH_URL:?Set the OIDC proxy contract health URL}"
+      HUAMEI_ADMIN_IDENTITY_PROXY_UPSTREAM_AUTHORIZATION_MODE: overwrite_verified_bearer
+      HUAMEI_ADMIN_IDENTITY_PROXY_SECURITY_PROFILE: state_nonce_pkce_origin_logout
+      HUAMEI_ADMIN_IDENTITY_PROXY_HA_REPLICAS: "${HUAMEI_ADMIN_IDENTITY_PROXY_HA_REPLICAS:-2}"
+      HUAMEI_EDGE_BIND_ADDRESS: "${HUAMEI_EDGE_BIND_ADDRESS:?Bind Caddy only to loopback/private edge address}"
+      HUAMEI_ADMIN_ORIGIN: "${HUAMEI_ADMIN_ORIGIN:?Set the exact HTTPS management origin}"
+      HUAMEI_IDENTITY_PEPPER: "${HUAMEI_IDENTITY_PEPPER:?Set a strong HUAMEI_IDENTITY_PEPPER in deploy/.env}"
+      HUAMEI_PUBLIC_SESSION_SECRET: "${HUAMEI_PUBLIC_SESSION_SECRET:?Set a dedicated public-session signing secret}"
+      HUAMEI_PRIVACY_VERIFICATION_SECRET: "${HUAMEI_PRIVACY_VERIFICATION_SECRET:?Set a dedicated DSR identity-verification signing secret}"
+      HUAMEI_PRIVACY_CANCELLATION_SECRET: "${HUAMEI_PRIVACY_CANCELLATION_SECRET:?Set a separate DSR subject-withdrawal signing secret}"
+      HUAMEI_PRIVACY_COMPLETION_SECRET: "${HUAMEI_PRIVACY_COMPLETION_SECRET:?Set a separate DSR completion-attestation signing secret}"
+      HUAMEI_PUBLIC_GATEWAY_ENABLED: "true"
+      HUAMEI_TRUST_PROXY: "true"
+      HUAMEI_TRUSTED_PROXY_ADDRESSES: "${HUAMEI_CADDY_PROXY_IP:-172.31.254.2}"
+      HUAMEI_DEFAULT_TENANT_ID: "${HUAMEI_DEFAULT_TENANT_ID:-huamei-shanghai}"
+      HUAMEI_PUBLIC_TENANT_ID: "${HUAMEI_PUBLIC_TENANT_ID:-huamei-shanghai}"
+      HUAMEI_PERSISTENCE_BACKEND: postgres
+      HUAMEI_CACHE_BACKEND: redis
+      DATABASE_URL: "${HUAMEI_DATABASE_URL:?Set the runtime-role PostgreSQL URL in deploy/.env}"
+      REDIS_URL: "${HUAMEI_REDIS_URL:?Set the Redis URL in deploy/.env}"
+      HUAMEI_POSTGRES_POOL_MAX: "${HUAMEI_POSTGRES_POOL_MAX:-40}"
+      HUAMEI_POSTGRES_IDLE_TIMEOUT_MS: "${HUAMEI_POSTGRES_IDLE_TIMEOUT_MS:-30000}"
+      HUAMEI_POSTGRES_CONNECT_TIMEOUT_MS: "${HUAMEI_POSTGRES_CONNECT_TIMEOUT_MS:-5000}"
+      HUAMEI_POSTGRES_STATEMENT_TIMEOUT_MS: "${HUAMEI_POSTGRES_STATEMENT_TIMEOUT_MS:-15000}"
+      HUAMEI_POSTGRES_QUERY_TIMEOUT_MS: "${HUAMEI_POSTGRES_QUERY_TIMEOUT_MS:-20000}"
+      HUAMEI_POSTGRES_LOCK_TIMEOUT_MS: "${HUAMEI_POSTGRES_LOCK_TIMEOUT_MS:-3000}"
+      HUAMEI_POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS: "${HUAMEI_POSTGRES_IDLE_IN_TRANSACTION_TIMEOUT_MS:-15000}"
+      HUAMEI_REDIS_CONNECT_TIMEOUT_MS: "${HUAMEI_REDIS_CONNECT_TIMEOUT_MS:-5000}"
+      HUAMEI_REDIS_COMMAND_TIMEOUT_MS: "${HUAMEI_REDIS_COMMAND_TIMEOUT_MS:-3000}"
+      HUAMEI_ALLOWED_ORIGINS: "${HUAMEI_ALLOWED_ORIGINS:?Set both public and exact management origins in deploy/.env}"
+      HUAMEI_ACQUISITION_SERVICE_URL: http://acquisition:4180
+      HUAMEI_ACQUISITION_READY_TIMEOUT_MS: "6000"
+      HUAMEI_ACQUISITION_CLIENTS_JSON: "${HUAMEI_ACQUISITION_CLIENTS_JSON:?Set the caller-to-tenant client registry in deploy/.env}"
+      HUAMEI_ACQUISITION_CALLER_ID: "${HUAMEI_ACQUISITION_CALLER_ID:?Set the fixed gateway caller id in deploy/.env}"
+      HUAMEI_ACQUISITION_CALLER_SECRET: "${HUAMEI_ACQUISITION_CALLER_SECRET:?Set the fixed gateway caller secret in deploy/.env}"
+      HUAMEI_ACQUISITION_TENANT_ID: "${HUAMEI_ACQUISITION_TENANT_ID:-huamei-shanghai}"
+      HUAMEI_LLM_ENABLED: "true"
+      HUAMEI_LLM_PROVIDER: "${HUAMEI_LLM_PROVIDER:?Set the approved production LLM provider}"
+      HUAMEI_LLM_BASE_URL: "${HUAMEI_LLM_BASE_URL:?Set the approved HTTPS production LLM endpoint}"
+      HUAMEI_LLM_API_KEY: "${HUAMEI_LLM_API_KEY:?Set a dedicated production LLM key}"
+      HUAMEI_LLM_MODEL: "${HUAMEI_LLM_MODEL:?Set the approved production LLM model}"
+      HUAMEI_LLM_DATA_EGRESS_APPROVED: "${HUAMEI_LLM_DATA_EGRESS_APPROVED:?Record explicit model data-egress approval}"
+      HUAMEI_OIDC_REQUIRED: "true"
+      HUAMEI_OIDC_ISSUER: "${HUAMEI_OIDC_ISSUER:?Set the enterprise OIDC issuer}"
+      HUAMEI_OIDC_AUDIENCE: "${HUAMEI_OIDC_AUDIENCE:?Set the OIDC audience}"
+      HUAMEI_OIDC_JWKS_URL: "${HUAMEI_OIDC_JWKS_URL:?Set the OIDC JWKS URL}"
+      HUAMEI_OIDC_ROLE_CLAIM: "${HUAMEI_OIDC_ROLE_CLAIM:-roles}"
+      HUAMEI_OIDC_TENANT_CLAIM: "${HUAMEI_OIDC_TENANT_CLAIM:-tenant_ids}"
+      HUAMEI_FIELD_ENCRYPTION_KEYRING_JSON: "${HUAMEI_FIELD_ENCRYPTION_KEYRING_JSON:?Set the production field-encryption keyring}"
+      HUAMEI_CONTACT_VAULT_KEYRING_JSON: "${HUAMEI_CONTACT_VAULT_KEYRING_JSON:?Set an independent production contact-vault keyring}"
+      PHYSICIAN_AVATAR_RUNTIME_ROOT: /data/physician-avatar
+      PHYSICIAN_AVATAR_REFERENCE_ROOT: /app/assets/physicians/references
+      MINIMAX_REAL_CALL_ENABLED: "${MINIMAX_REAL_CALL_ENABLED:-false}"
+    volumes:
+      - app_data:/data
+    expose:
+      - "4173"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 512
+    stop_grace_period: 45s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173/api/ready',{headers:{'X-API-Key':process.env.HUAMEI_API_KEY}}).then((response) => { if (!response.ok) process.exit(1); }).catch(() => process.exit(1));"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+          pids: 512
+        reservations:
+          cpus: "0.5"
+          memory: 1G
+    networks:
+      - backend
+      - proxy
+
+  release-preflight:
+    image: "${HUAMEI_APP_IMAGE:?Set the immutable application image reference ending in @sha256:<digest>}"
+    profiles: ["release-check"]
+    command: ["node", "scripts/production-release-preflight.mjs"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      graphrag:
+        condition: service_healthy
+      acquisition:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HUAMEI_RUNTIME_ENV: production
+      HUAMEI_EVIDENCE_ENVIRONMENT: "${HUAMEI_EVIDENCE_ENVIRONMENT:?Set the trusted formal-evidence environment to preproduction or production}"
+      HUAMEI_RELEASE_ID: "${HUAMEI_RELEASE_ID:?Set the immutable release identifier}"
+      HUAMEI_ACTIVE_KNOWLEDGE_RELEASE_ID: "${HUAMEI_ACTIVE_KNOWLEDGE_RELEASE_ID:?Set the formally approved active knowledge release id}"
+      HUAMEI_APP_IMAGE: "${HUAMEI_APP_IMAGE:?Set the immutable application image reference}"
+      HUAMEI_GRAPHRAG_IMAGE: "${HUAMEI_GRAPHRAG_IMAGE:?Set the immutable GraphRAG image reference}"
+      HUAMEI_POSTGRES_IMAGE: "${HUAMEI_POSTGRES_IMAGE:?Set the immutable PostgreSQL image reference}"
+      HUAMEI_REDIS_IMAGE: "${HUAMEI_REDIS_IMAGE:?Set the immutable Redis image reference}"
+      HUAMEI_CADDY_IMAGE: "${HUAMEI_CADDY_IMAGE:?Set the immutable Caddy image reference}"
+      HUAMEI_DATABASE_URL: "${HUAMEI_DATABASE_URL:?Set the runtime-role PostgreSQL URL}"
+      HUAMEI_MIGRATION_DATABASE_URL: "${HUAMEI_MIGRATION_DATABASE_URL:?Set the migration-role PostgreSQL URL}"
+      HUAMEI_REDIS_URL: "${HUAMEI_REDIS_URL:?Set the Redis URL}"
+      HUAMEI_API_KEY: "${HUAMEI_API_KEY:?Set the application API key for readiness probing}"
+      HUAMEI_ACQUISITION_CALLER_ID: "${HUAMEI_ACQUISITION_CALLER_ID:?Set the readiness caller id}"
+      HUAMEI_ACQUISITION_CALLER_SECRET: "${HUAMEI_ACQUISITION_CALLER_SECRET:?Set the readiness caller secret}"
+      HUAMEI_PUBLIC_TENANT_ID: "${HUAMEI_PUBLIC_TENANT_ID:-huamei-shanghai}"
+      HUAMEI_GRAPHRAG_SERVICE_KEY: "${HUAMEI_GRAPHRAG_SERVICE_KEY:?Set the GraphRAG readiness key}"
+      HUAMEI_IDENTITY_PEPPER: "${HUAMEI_IDENTITY_PEPPER:?Set the identity pepper for configuration validation}"
+      HUAMEI_PUBLIC_SESSION_SECRET: "${HUAMEI_PUBLIC_SESSION_SECRET:?Set the public-session secret for configuration validation}"
+      HUAMEI_PRIVACY_VERIFICATION_SECRET: "${HUAMEI_PRIVACY_VERIFICATION_SECRET:?Set the DSR identity-verification signing secret}"
+      HUAMEI_PRIVACY_CANCELLATION_SECRET: "${HUAMEI_PRIVACY_CANCELLATION_SECRET:?Set the separate DSR subject-withdrawal signing secret}"
+      HUAMEI_PRIVACY_COMPLETION_SECRET: "${HUAMEI_PRIVACY_COMPLETION_SECRET:?Set the separate DSR completion-attestation signing secret}"
+      HUAMEI_ACQUISITION_METRICS_TOKEN: "${HUAMEI_ACQUISITION_METRICS_TOKEN:?Set the acquisition metrics token}"
+      HUAMEI_OUTBOX_METRICS_TOKEN: "${HUAMEI_OUTBOX_METRICS_TOKEN:?Set the independent outbox metrics token}"
+      HUAMEI_CONVERSATION_RECOVERY_METRICS_TOKEN: "${HUAMEI_CONVERSATION_RECOVERY_METRICS_TOKEN:?Set the independent conversation-recovery metrics token}"
+      HUAMEI_CANARY_TOKEN: "${HUAMEI_CANARY_TOKEN:?Set the canary routing token}"
+      HUAMEI_RELEASE_TENANT_IDS: "${HUAMEI_RELEASE_TENANT_IDS:-huamei-shanghai}"
+      HUAMEI_GRAPHRAG_INDEX_VERSION: "${HUAMEI_GRAPHRAG_INDEX_VERSION:?Set the immutable approved GraphRAG index version}"
+      HUAMEI_RELEASE_GRAPHRAG_MANIFEST_SHA256: "${HUAMEI_RELEASE_GRAPHRAG_MANIFEST_SHA256:?Set the active GraphRAG manifest SHA-256}"
+      HUAMEI_GRAPHRAG_URL: http://graphrag:4191
+      HUAMEI_RELEASE_ACQUISITION_READY_URL: http://acquisition:4180/ready
+      HUAMEI_RELEASE_APP_READY_URL: http://app:4173/api/ready
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      HUAMEI_LLM_ENABLED: "true"
+      HUAMEI_LLM_PROVIDER: "${HUAMEI_LLM_PROVIDER:?Set the approved production LLM provider}"
+      HUAMEI_LLM_BASE_URL: "${HUAMEI_LLM_BASE_URL:?Set the approved HTTPS production LLM endpoint}"
+      HUAMEI_LLM_API_KEY: "${HUAMEI_LLM_API_KEY:?Set a dedicated production LLM key}"
+      HUAMEI_LLM_MODEL: "${HUAMEI_LLM_MODEL:?Set the approved production LLM model}"
+      GRAPHRAG_MODEL_PROVIDER: "${GRAPHRAG_MODEL_PROVIDER:?Set the approved GraphRAG model provider}"
+      GRAPHRAG_API_BASE: "${GRAPHRAG_API_BASE:?Set the approved HTTPS GraphRAG model endpoint}"
+      GRAPHRAG_API_KEY: "${GRAPHRAG_API_KEY:?Set a dedicated GraphRAG model key}"
+      GRAPHRAG_COMPLETION_MODEL: "${GRAPHRAG_COMPLETION_MODEL:?Set the approved GraphRAG completion model}"
+      GRAPHRAG_EMBEDDING_MODEL: "${GRAPHRAG_EMBEDDING_MODEL:?Set the approved GraphRAG embedding model}"
+      HUAMEI_LLM_DATA_EGRESS_APPROVED: "${HUAMEI_LLM_DATA_EGRESS_APPROVED:?Record explicit model data-egress approval}"
+      HUAMEI_LLM_DATA_EGRESS_APPROVAL_ID: "${HUAMEI_LLM_DATA_EGRESS_APPROVAL_ID:?Set the controlled egress approval id}"
+      HUAMEI_APPROVED_MODEL_EGRESS_HOSTS: "${HUAMEI_APPROVED_MODEL_EGRESS_HOSTS:?List the approved model endpoint hosts}"
+      HUAMEI_FIELD_ENCRYPTION_KEYRING_JSON: "${HUAMEI_FIELD_ENCRYPTION_KEYRING_JSON:?Set the production field-encryption keyring}"
+      HUAMEI_CONTACT_VAULT_KEYRING_JSON: "${HUAMEI_CONTACT_VAULT_KEYRING_JSON:?Set an independent production contact-vault keyring}"
+      HUAMEI_RELEASE_EVALUATION_REPORT_PATH: /release-evidence/evaluation.json
+      HUAMEI_RELEASE_EVALUATION_REPORT_SHA256: "${HUAMEI_RELEASE_EVALUATION_REPORT_SHA256:?Set the formal LLM-enabled evaluation report SHA-256}"
+      HUAMEI_RELEASE_CAPACITY_REPORT_PATH: /release-evidence/capacity.json
+      HUAMEI_RELEASE_CAPACITY_REPORT_SHA256: "${HUAMEI_RELEASE_CAPACITY_REPORT_SHA256:?Set the formal 20-user capacity report SHA-256}"
+      HUAMEI_FORMAL_BLIND_DATASET_PATH: /release-evidence/blind-dataset.json
+      HUAMEI_FORMAL_BLIND_DATASET_SHA256: "${HUAMEI_FORMAL_BLIND_DATASET_SHA256:?Set the signed blind dataset SHA-256}"
+      HUAMEI_FORMAL_EVALUATION_RAW_PATH: /release-evidence/evaluation-raw.json
+      HUAMEI_FORMAL_EVALUATION_RAW_SHA256: "${HUAMEI_FORMAL_EVALUATION_RAW_SHA256:?Set the signed raw evaluation SHA-256}"
+      HUAMEI_FORMAL_EVALUATION_SCORECARD_PATH: /release-evidence/evaluation-scorecard.json
+      HUAMEI_FORMAL_EVALUATION_SCORECARD_SHA256: "${HUAMEI_FORMAL_EVALUATION_SCORECARD_SHA256:?Set the signed evaluation scorecard SHA-256}"
+      HUAMEI_FORMAL_CAPACITY_RAW_PATH: /release-evidence/capacity-raw.json
+      HUAMEI_FORMAL_CAPACITY_RAW_SHA256: "${HUAMEI_FORMAL_CAPACITY_RAW_SHA256:?Set the signed raw capacity report SHA-256}"
+      HUAMEI_FORMAL_CAPACITY_PROMETHEUS_PATH: /release-evidence/capacity-prometheus-export.json
+      HUAMEI_FORMAL_CAPACITY_PROMETHEUS_SHA256: "${HUAMEI_FORMAL_CAPACITY_PROMETHEUS_SHA256:?Set the immutable Prometheus capacity export SHA-256}"
+      HUAMEI_FORMAL_CAPACITY_ATTESTATION_PATH: /release-evidence/capacity-attestation.json
+      HUAMEI_FORMAL_CAPACITY_ATTESTATION_SHA256: "${HUAMEI_FORMAL_CAPACITY_ATTESTATION_SHA256:?Set the signed capacity observability attestation SHA-256}"
+      HUAMEI_FORMAL_EVALUATION_ENDPOINT_REGISTRY_PATH: /release-target/evaluation-endpoints.json
+      HUAMEI_FORMAL_EVALUATION_ENDPOINT_REGISTRY_SHA256: "${HUAMEI_FORMAL_EVALUATION_ENDPOINT_REGISTRY_SHA256:?Set the controlled formal-evaluation endpoint registry SHA-256}"
+      HUAMEI_FORMAL_EVIDENCE_TRUSTED_SIGNERS_B64: "${HUAMEI_FORMAL_EVIDENCE_TRUSTED_SIGNERS_B64:?Set the externally controlled trusted evidence signer registry}"
+      HUAMEI_FORMAL_LOAD_TAXONOMY_MANIFEST_SHA256: "${HUAMEI_FORMAL_LOAD_TAXONOMY_MANIFEST_SHA256:?Set the signed formal-load taxonomy manifest SHA-256 used by the capacity evidence}"
+    volumes:
+      - "${HUAMEI_RELEASE_EVIDENCE_HOST_PATH:?Set the controlled release-evidence directory}:/release-evidence:ro"
+      - "${HUAMEI_FORMAL_EVALUATION_ENDPOINT_REGISTRY_HOST_PATH:?Set the controlled formal-evaluation endpoint registry file}:/release-target/evaluation-endpoints.json:ro"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    networks:
+      - backend
+
+  caddy:
+    image: "${HUAMEI_CADDY_IMAGE:?Set an immutable Caddy image reference ending in @sha256:<digest>}"
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      PUBLIC_SITE_ADDRESS: "${PUBLIC_SITE_ADDRESS:?Set a domain or :80 in deploy/.env}"
+      ADMIN_SITE_ADDRESS: "${ADMIN_SITE_ADDRESS:?Set a separate management domain in deploy/.env}"
+      HUAMEI_CANARY_TOKEN: "${HUAMEI_CANARY_TOKEN:?Set a random canary routing token of at least 32 characters}"
+    ports:
+      - "${HUAMEI_EDGE_BIND_ADDRESS:?Bind the edge to loopback or an approved private address}:${PUBLIC_HTTP_PORT:-80}:80"
+      - "${HUAMEI_EDGE_BIND_ADDRESS:?Bind the edge to loopback or an approved private address}:${PUBLIC_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./Caddyfile.stop-ai:/etc/caddy/Caddyfile.stop-ai:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "caddy", "validate", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    networks:
+      proxy:
+        ipv4_address: "${HUAMEI_CADDY_PROXY_IP:-172.31.254.2}"
+      frontend:
+
+networks:
+  backend:
+    internal: true
+  proxy:
+    internal: true
+    ipam:
+      config:
+        - subnet: "${HUAMEI_PROXY_SUBNET:-172.31.254.0/28}"
+  approved-egress:
+  frontend:
+
+volumes:
+  postgres_data:
+  redis_data:
+  app_data:
+  caddy_data:
+  caddy_config:

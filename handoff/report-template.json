@@ -1,0 +1,22 @@
+{
+  "role": "A",
+  "task_id": "dialogue-001",
+  "summary": "请填写",
+  "acceptance_steps": [
+    "请填写可复现操作、预期与实际结果"
+  ],
+  "tests": [
+    {
+      "command": "npm run team:verify",
+      "status": "not_run",
+      "evidence": "填写结果或日志相对路径"
+    }
+  ],
+  "shared_changes": [],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [],
+  "rollback": "请填写"
+}

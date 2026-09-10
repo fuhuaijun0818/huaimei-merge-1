@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+import {Readable} from 'node:stream';
+import {createAdminSessions,readLoginBody} from '../server/platform/admin-browser-session.mjs';
+let time=0;const store=createAdminSessions({now:()=>time,idleMs:100,absoluteMs:250});
+const req={headers:{},socket:{remoteAddress:'127.0.0.1'}};
+const signed=value=>({...req,headers:{cookie:`huamei_admin_session=${value}`}});
+const token=store.issue(req,null),first=signed(token);
+assert(store.read(first));assert.match(store.cookie(token),/HttpOnly; SameSite=Strict/);assert.match(store.cookie(token,true),/Secure/);
+const next=signed(store.issue(first,{subject:'test'}));assert.equal(store.read(first),null);assert.equal(store.read(next).principal.subject,'test');
+time=90;assert(store.read(next,{touch:false}));time=100;assert.equal(store.read(next),null);
+time=0;const absolute=signed(store.issue(req,null));for(time=80;time<250;time+=80)assert(store.read(absolute));time=251;assert.equal(store.read(absolute),null);
+const revoked=signed(store.issue(req,null));store.revoke(revoked);assert.equal(store.read(revoked),null);
+for(let i=0;i<15;i++)assert(store.allowLogin(req));assert.equal(store.allowLogin(req),false);time+=60_000;assert(store.allowLogin(req));
+console.log('PASS session rotation, revocation, idle/absolute expiry, cookie flags, rate limit');
+
+const loginBody=password=>Object.assign(Readable.from([JSON.stringify({username:'test-admin',password})]),{headers:{'content-type':'application/json'}});
+await assert.rejects(readLoginBody(loginBody('1234567')));
+assert.equal((await readLoginBody(loginBody('12345678'))).password.length,8);
+assert.equal((await readLoginBody(loginBody('longer-password-123'))).password,'longer-password-123');
+console.log('PASS minimum password length: reject 7, accept 8 and longer');

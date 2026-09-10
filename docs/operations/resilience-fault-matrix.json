@@ -1,0 +1,141 @@
+{
+  "schema_version": "huamei.resilience-fault-matrix.v1",
+  "scenarios": [
+    {
+      "id": "llm_timeout",
+      "component": "llm",
+      "fault": "timeout",
+      "expected": "deterministic_local_fallback",
+      "automation": "automated",
+      "test": "tests/resilience-fault-injection.mjs"
+    },
+    {
+      "id": "llm_rate_limited",
+      "component": "llm",
+      "fault": "http_429",
+      "expected": "deterministic_local_fallback",
+      "automation": "automated",
+      "test": "tests/resilience-fault-injection.mjs"
+    },
+    {
+      "id": "llm_invalid_json",
+      "component": "llm",
+      "fault": "invalid_provider_json",
+      "expected": "deterministic_local_fallback",
+      "automation": "automated",
+      "test": "tests/resilience-fault-injection.mjs"
+    },
+    {
+      "id": "llm_network_disconnected",
+      "component": "llm",
+      "fault": "network_unreachable",
+      "expected": "deterministic_local_fallback",
+      "automation": "automated",
+      "test": "tests/resilience-fault-injection.mjs"
+    },
+    {
+      "id": "graphrag_timeout",
+      "component": "graphrag",
+      "fault": "timeout",
+      "expected": "empty_remote_evidence",
+      "automation": "automated",
+      "test": "tests/resilience-fault-injection.mjs"
+    },
+    {
+      "id": "graphrag_5xx",
+      "component": "graphrag",
+      "fault": "http_5xx",
+      "expected": "empty_remote_evidence",
+      "automation": "automated",
+      "test": "tests/resilience-fault-injection.mjs"
+    },
+    {
+      "id": "graphrag_binding_mismatch",
+      "component": "graphrag",
+      "fault": "tenant_or_index_binding_mismatch",
+      "expected": "fail_closed_without_remote_evidence",
+      "automation": "automated",
+      "test": "tests/resilience-fault-injection.mjs"
+    },
+    {
+      "id": "acquisition_postgres_unavailable",
+      "component": "acquisition_service",
+      "fault": "postgres_unavailable",
+      "expected": "healthz_200_readyz_503",
+      "automation": "automated",
+      "test": "tests/resilience-fault-injection.mjs"
+    },
+    {
+      "id": "acquisition_redis_unavailable",
+      "component": "acquisition_service",
+      "fault": "redis_unavailable",
+      "expected": "healthz_200_readyz_503",
+      "automation": "automated",
+      "test": "tests/resilience-fault-injection.mjs"
+    },
+    {
+      "id": "outbox_retry",
+      "component": "outbox",
+      "fault": "retryable_delivery_failure",
+      "expected": "exponential_backoff_then_single_publish",
+      "automation": "automated",
+      "test": "tests/postgres-outbox-integration.mjs"
+    },
+    {
+      "id": "outbox_dead_letter",
+      "component": "outbox",
+      "fault": "permanent_or_attempt_exhausted",
+      "expected": "dead_letter_with_audit_state",
+      "automation": "automated",
+      "test": "tests/postgres-outbox-integration.mjs"
+    },
+    {
+      "id": "outbox_lease_recovery",
+      "component": "outbox",
+      "fault": "worker_crash_after_claim",
+      "expected": "lease_expiry_reclaim_without_duplicate_publish",
+      "automation": "automated",
+      "test": "tests/postgres-outbox-integration.mjs"
+    },
+    {
+      "id": "conversation_same_message_recovery",
+      "component": "conversation",
+      "fault": "interrupted_after_receipt_before_commit",
+      "expected": "same_message_id_resumes_exactly_once",
+      "automation": "automated",
+      "test": "tests/resilience-fault-injection.mjs; tests/postgres-session-consistency.mjs"
+    },
+    {
+      "id": "handover_ai_silent",
+      "component": "handover",
+      "fault": "new_inbound_while_human_active",
+      "expected": "empty_ai_output_and_no_model_call",
+      "automation": "automated",
+      "test": "tests/resilience-fault-injection.mjs; tests/acquisition-service.mjs"
+    },
+    {
+      "id": "preproduction_postgres_failover",
+      "component": "postgres",
+      "fault": "primary_loss_and_replica_promotion",
+      "expected": "bounded_recovery_no_cross_tenant_or_duplicate_commit",
+      "automation": "preproduction_manual",
+      "test": "docs/operations/RESILIENCE_RUNBOOK.md"
+    },
+    {
+      "id": "preproduction_redis_failover",
+      "component": "redis",
+      "fault": "primary_loss_and_failover",
+      "expected": "readyz_503_during_loss_then_shared_limits_recover",
+      "automation": "preproduction_manual",
+      "test": "docs/operations/RESILIENCE_RUNBOOK.md"
+    },
+    {
+      "id": "preproduction_model_quota",
+      "component": "llm",
+      "fault": "real_provider_quota_exhaustion",
+      "expected": "safe_fallback_and_quota_alert",
+      "automation": "preproduction_manual",
+      "test": "docs/operations/RESILIENCE_RUNBOOK.md"
+    }
+  ]
+}

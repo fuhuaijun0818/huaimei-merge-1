@@ -1,0 +1,96 @@
+import assert from 'node:assert/strict';
+import {randomBytes,randomUUID,generateKeyPairSync} from 'node:crypto';
+if(process.env.HUAMEI_PERSISTENCE_BACKEND!=='postgres')throw new Error('Real PostgreSQL required');
+process.env.HUAMEI_RUNTIME_ENV='development';
+process.env.HUAMEI_FIELD_ENCRYPTION_KEYRING_JSON=JSON.stringify({active_key_id:'kb-test',keys:{'kb-test':randomBytes(32).toString('base64')}});
+const {getPostgresClient,createPostgresClient,closePostgresClient}=await import('../server/platform/postgres.mjs');
+const kb=await import('../server/knowledge-intake-store.mjs');
+const pub=await import('../server/knowledge-publication.mjs');
+const accounts=await import('../server/platform/management-accounts.mjs');
+const {signEvidenceDocument}=await import('../scripts/formal-evidence-common.mjs');
+const policy=await import('../scripts/production-evaluation-policy.mjs');
+const tenant='kpub-'+randomUUID().slice(0,8),db=getPostgresClient();
+const operator=role=>({tenantId:tenant,subject:role,roles:[role],departmentIds:['整形外科']});
+const publisher=operator('发布与索引管理员'),quality=operator('质量与运营人员');
+const scope={tenant_id:tenant,actor:'内容专员',permitted_departments:['整形外科']};
+const now=Date.now(),future=new Date(now+86400000).toISOString();
+const source={...scope,idempotency_key:'source-create-001',source_filename:'流程.md',department:'整形外科',content_type:'服务流程',owner:'内容测试',customer_facing_candidate:true,public_scope:'public_full',text_content:'测试院区到院登记后请携带有效资料前往前台办理接待。登记时间不代表已锁定医生号源。',source_reference:'院方测试资料',applicable_campuses:['测试院区'],effective_at:new Date(now-1000).toISOString(),expires_at:future,tags:['到院登记']};
+const migrator=createPostgresClient({connectionString:process.env.HUAMEI_MIGRATION_DATABASE_URL});
+try{
+ const created=await Promise.all(Array.from({length:8},()=>kb.createKnowledgeIntakeDocument(source)));
+ assert.equal(new Set(created.map(r=>r.document.id)).size,1);assert.equal(created.filter(r=>!r.replayed).length,1);
+ const doc=created[0].document,target={...scope,document_id:doc.id,expected_version:1};
+ await assert.rejects(pub.createKnowledgePublication({document_ids:[doc.id],idempotency_key:'missing-confirm'},publisher),{code:'KNOWLEDGE_SOURCE_NOT_ELIGIBLE'});
+ await kb.recordKnowledgeIntakeConfirmation({...target,idempotency_key:'confirm-source-001',reference:'测试凭据-001',confirmed_by:'院方测试确认人',confirmed_at:new Date(now-1000).toISOString(),confirmation_expires_at:future});
+ await kb.submitKnowledgeIntakeDocument({...target,idempotency_key:'prepare-source-001'});
+ const raw=(await getPostgresClient().tenantQuery(tenant,'SELECT payload::text AS p FROM knowledge_intake_state WHERE tenant_id=$1',[tenant])).rows[0].p;
+ assert.ok(!raw.includes('测试院区'));
+ await assert.rejects(pub.createKnowledgePublication({document_ids:[doc.id],idempotency_key:'admin-must-deny'},operator('系统管理员')),{code:'PHASE_ONE_CAPABILITY_FORBIDDEN'});
+ const input={document_ids:[doc.id],idempotency_key:'build-package-001'};
+ const pkg=await pub.createKnowledgePublication(input,publisher);assert.equal(pkg.status,'awaiting_evaluation');
+ assert.equal((await pub.createKnowledgePublication(input,publisher)).id,pkg.id);
+ assert.equal((await pub.listKnowledgePublications({...publisher,departmentIds:['皮肤科']})).length,0);
+ await assert.rejects(getPostgresClient().tenantQuery(tenant,'UPDATE knowledge_publication_packages SET checksum=$2 WHERE tenant_id=$1',[tenant,'f'.repeat(64)]),{code:'42501'});
+ const act={expected_revision:0,confirmed:true,reason:'合成测试',idempotency_key:'activate-before-eval'};
+ await assert.rejects(pub.mutateKnowledgePublication(pkg.id,'activate',act,publisher),{code:'KNOWLEDGE_EVALUATION_REQUIRED'});
+ await assert.rejects(pub.mutateKnowledgePublication(pkg.id,'evaluate',{report:{},idempotency_key:'fake-report-denied'},quality),{code:'KNOWLEDGE_EVALUATION_REJECTED'});
+ const {privateKey,publicKey}=generateKeyPairSync('ed25519');
+ process.env.HUAMEI_FORMAL_EVIDENCE_TRUSTED_SIGNERS_B64=Buffer.from(JSON.stringify({'test-issuer':{authority_role:'formal_evidence_issuer',allowed_kinds:['evaluation_report'],public_key_spki_der_base64:publicKey.export({format:'der',type:'spki'}).toString('base64')}})).toString('base64');
+ // Synthetic signed evidence exercises gates; it is never production evidence.
+ const reportFor=pkg=>signEvidenceDocument({policy_version:policy.PRODUCTION_EVALUATION_POLICY_VERSION,package_checksum:pkg.checksum,text_index_version:pkg.text_index_version,graph_version:pkg.graph_version,expires_at:future,evaluation_families:Object.fromEntries(Object.keys(policy.REQUIRED_EVALUATION_FAMILIES).map(k=>[k,{dataset_id:k+'-test',evidence_ref:k+'-test-evidence',sample_count:2,deidentified:true,blind:true}])),production_metrics:Object.fromEntries(Object.entries(policy.PRODUCTION_METRIC_DEFINITIONS).map(([k,d])=>[k,{value:d.target,evidence_ref:k+'-test-evidence'}]))},{evidenceKind:'evaluation_report',signerId:'test-issuer',privateKey});
+ const report=reportFor(pkg);
+ await pub.mutateKnowledgePublication(pkg.id,'evaluate',{report,idempotency_key:'signed-report-001'},quality);
+ const active=await pub.mutateKnowledgePublication(pkg.id,'activate',{...act,idempotency_key:'activate-valid-001'},publisher);assert.equal(active.active,true);
+ assert.equal((await pub.loadActivePublication(tenant)).package.id,pkg.id);
+ const registry=process.env.HUAMEI_FORMAL_EVIDENCE_TRUSTED_SIGNERS_B64;delete process.env.HUAMEI_FORMAL_EVIDENCE_TRUSTED_SIGNERS_B64;assert.equal((await pub.loadActivePublication(tenant)).package,null,'revoked signer suspends customer retrieval');assert.equal((await pub.listKnowledgePublications(publisher)).find(p=>p.id===pkg.id).status,'suspended');process.env.HUAMEI_FORMAL_EVIDENCE_TRUSTED_SIGNERS_B64=registry;
+ const {retrieveHuameiKnowledge}=await import('../server/huamei-knowledge.mjs');
+ const activeContext=await pub.loadActivePublication(tenant);
+ const hits=pub.publicationRequestContext.run(activeContext,()=>retrieveHuameiKnowledge('到院登记',{tenantId:tenant,minimumScore:1}));
+ assert.ok(hits.some(h=>h.item.record_id.startsWith(doc.id)), 'active publication reaches customer retrieval');
+ const second=await pub.createKnowledgePublication({...input,idempotency_key:'build-second-package'},publisher);
+ await pub.mutateKnowledgePublication(second.id,'evaluate',{report:reportFor(second),idempotency_key:'evaluate-second'},quality);
+ await pub.mutateKnowledgePublication(second.id,'activate',{...act,expected_revision:1,idempotency_key:'activate-second'},publisher);
+ assert.equal((await pub.loadActivePublication(tenant)).package.id,second.id);
+ await pub.mutateKnowledgePublication(pkg.id,'rollback',{...act,expected_revision:2,idempotency_key:'rollback-first'},publisher);
+ assert.equal((await pub.loadActivePublication(tenant)).package.id,pkg.id);
+
+ await assert.rejects(pub.mutateKnowledgePublication(pkg.id,'withdraw',{...act,idempotency_key:'stale-withdrawal'},publisher),{code:'KNOWLEDGE_HEAD_CONFLICT'});
+ await pub.mutateKnowledgePublication(pkg.id,'withdraw',{...act,expected_revision:3,idempotency_key:'withdraw-valid-001'},publisher);
+ assert.equal((await pub.loadActivePublication(tenant)).package,null);
+ assert.deepEqual(pub.publicationRequestContext.run(await pub.loadActivePublication(tenant),()=>retrieveHuameiKnowledge('到院登记',{tenantId:tenant,minimumScore:1})),[], 'withdrawal invalidates cached public retrieval');
+ await assert.rejects(pub.mutateKnowledgePublication(pkg.id,'activate',{...act,expected_revision:4,idempotency_key:'reactivate-withdrawn'},publisher),{code:'KNOWLEDGE_PACKAGE_WITHDRAWN'});
+ await closePostgresClient();assert.equal((await kb.getKnowledgeIntakeDocument(target)).text_content,source.text_content);
+ const admin={...operator('系统管理员'),subject:'bootstrap-admin',departmentIds:['*']};
+ const a=await accounts.saveManagementAccount({account:'test-admin',display_name:'测试管理',role:'系统管理员',departments:['*'],password:'test-password-000000000'},admin);
+ const user=await accounts.saveManagementAccount({account:'test-content',display_name:'测试内容',role:'内容专员',departments:['整形外科'],password:'test-password-111111111'},admin);
+ await assert.rejects(accounts.saveManagementAccount({account:'duplicate-subject',oidc_subject:user.subject,display_name:'collision',role:'administrator',departments:['*'],password:'test-password-111111111'},admin),{code:'MANAGEMENT_ACCOUNT_EXISTS'});
+ const identity=await accounts.authenticateManagedBasic({headers:{authorization:'Basic '+Buffer.from('test-content:test-password-111111111').toString('base64')}},tenant);assert.equal(identity.phaseOneRole,'内容专员');
+ await accounts.saveManagementAccount({subject:user.subject,expected_version:1,display_name:'测试内容',role:'内容专员',departments:['整形外科'],enabled:false},admin);
+ await assert.rejects(accounts.applyManagementAccount(identity,tenant,{required:true}),{code:'MANAGEMENT_ACCOUNT_DISABLED'});
+ await assert.rejects(accounts.saveManagementAccount({subject:a.subject,expected_version:1,display_name:'测试管理',role:'系统管理员',departments:['*'],enabled:false},admin),{code:'LAST_ADMINISTRATOR_REQUIRED'});
+
+ const seller=await accounts.saveManagementAccount({account:'test-seller',display_name:'seller',role:'presales',departments:['*'],password:'test-password-222222222'},admin);
+ const receiver=await accounts.saveManagementAccount({account:'test-receiver',display_name:'receiver',role:'presales',departments:['*'],password:'test-password-333333333'},admin);
+ const {appointmentStateTransaction,readAppointmentStates}=await import('../server/persistence/appointment-state-store.mjs');
+ await appointmentStateTransaction({tenant_id:tenant,conversation_id:'transfer-test'},state=>{state.registrations.push({id:'apt-transfer-test',assignee:seller.subject,status:'registered',followup_status:'claimed'});state.followups.push({appointment_id:'apt-transfer-test',assignee:seller.subject});});
+ const {ensureConversationSession}=await import('../server/persistence/postgres-helpers.mjs');
+ const handover=await getPostgresClient().tenantTransaction(tenant,async c=>{
+  const session=await ensureConversationSession(c,{tenantId:tenant,sessionId:'transfer-session',channel:'web',externalConversationId:'transfer-test',state:{},expiresAt:new Date(Date.now()+3600000)});
+  const row=(await c.query("INSERT INTO handovers(tenant_id,handover_id,session_record_id,reason,team,assignee,status) VALUES($1,$2,$3,'fixture','fixture',$4,'claimed') RETURNING id",[tenant,'ho_'+randomUUID(),session.id,seller.subject])).rows[0];
+  await c.query("INSERT INTO tasks(tenant_id,task_id,handover_record_id,task_type,status,assignee) VALUES($1,$2,$3,'human_handover','in_progress',$4)",[tenant,'task-transfer-'+randomUUID(),row.id,seller.subject]);return row;
+ });
+ const change={subject:seller.subject,expected_version:1,display_name:'seller',role:'presales',departments:['*'],enabled:false};
+ await assert.rejects(accounts.saveManagementAccount(change,admin),{code:'MANAGEMENT_WORK_TRANSFER_REQUIRED'});
+ assert.equal((await accounts.listManagementAccounts(admin)).find(a=>a.subject===seller.subject).enabled,true,'blocked disable is atomic');
+ const moved=await accounts.saveManagementAccount({...change,transfer_to_subject:receiver.subject},admin);
+ assert.deepEqual(moved.transferred,{handovers:1,appointments:1});
+ assert.equal((await readAppointmentStates({tenant_id:tenant}))[0].registrations[0].assignee,receiver.subject);
+ assert.equal((await getPostgresClient().tenantQuery(tenant,'SELECT assignee FROM handovers WHERE tenant_id=$1 AND id=$2',[tenant,handover.id])).rows[0].assignee,receiver.subject);
+ assert.equal((await getPostgresClient().tenantQuery(tenant,'SELECT assignee FROM tasks WHERE tenant_id=$1 AND handover_record_id=$2',[tenant,handover.id])).rows[0].assignee,receiver.subject);
+ console.log('PASS: disabling staff requires atomic transfer of active handovers, tasks and appointment followups');
+ console.log('PASS: PostgreSQL encrypted intake, concurrent creation, immutable packages, role/scope denials, signed evaluation, activation, withdrawal, restart, account disable and last-admin guard');
+}finally{
+ await closePostgresClient();
+ // The isolated runner drops the entire temporary database; append-only audit must remain intact.
+ await migrator.close();
+}

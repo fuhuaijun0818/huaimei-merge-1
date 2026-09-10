@@ -1,0 +1,113 @@
+groups:
+  - name: huamei-service-availability
+    interval: 30s
+    rules:
+      - alert: HuameiServiceScrapeMissing
+        expr: up{job=~"huamei-(acquisition|outbox)"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "华美服务指标采集已中断"
+          description: "Prometheus 连续 2 分钟无法采集 {{ $labels.instance }}。"
+
+      - alert: HuameiDependencyNotReady
+        expr: huamei_dependency_ready == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "华美服务依赖未就绪"
+          description: "{{ $labels.service }} 的 {{ $labels.dependency }} 连续 2 分钟未就绪。"
+
+      - alert: HuameiHttpServerErrorRateHigh
+        expr: |
+          sum by (service) (rate(huamei_http_requests_total{outcome="server_error"}[5m]))
+          /
+          clamp_min(sum by (service) (rate(huamei_http_requests_total[5m])), 0.001)
+          > 0.05
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "华美服务 5xx 比例过高"
+          description: "{{ $labels.service }} 的 5 分钟服务端错误率超过 5%。"
+
+      - alert: HuameiHttpP95LatencyHigh
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (service, le) (rate(huamei_http_request_duration_seconds_bucket[5m]))
+          ) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "华美服务 P95 延迟过高"
+          description: "{{ $labels.service }} 的 HTTP P95 延迟连续 10 分钟超过 2 秒。"
+
+  - name: huamei-ai-and-handover
+    interval: 30s
+    rules:
+      - alert: HuameiModelErrorRateHigh
+        expr: |
+          sum by (service, provider, model) (rate(huamei_model_requests_total{outcome=~"error|timeout|overloaded"}[10m]))
+          /
+          clamp_min(sum by (service, provider, model) (rate(huamei_model_requests_total[10m])), 0.001)
+          > 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "模型调用失败率过高"
+          description: "{{ $labels.service }} / {{ $labels.model }} 的模型失败率超过 10%。"
+
+      - alert: HuameiGraphRagErrorRateHigh
+        expr: |
+          sum by (service) (rate(huamei_graphrag_queries_total{outcome!="success"}[10m]))
+          /
+          clamp_min(sum by (service) (rate(huamei_graphrag_queries_total[10m])), 0.001)
+          > 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "GraphRAG 检索失败率过高"
+          description: "{{ $labels.service }} 的 GraphRAG 非成功比例超过 10%。"
+
+      - alert: HuameiHandoverSlaBreached
+        expr: increase(huamei_handovers_total{event="sla_breached"}[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "人工接管 SLA 已超时"
+          description: "{{ $labels.service }} 最近 5 分钟出现人工接管 SLA 超时。"
+
+  - name: huamei-outbox
+    interval: 30s
+    rules:
+      - alert: HuameiOutboxDeadLetterCreated
+        expr: increase(huamei_outbox_deliveries_total{outcome="dead_letter"}[5m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "Outbox 出现死信"
+          description: "{{ $labels.service }} 最近 5 分钟产生新的死信事件。"
+
+      - alert: HuameiOutboxBacklogOld
+        expr: huamei_outbox_oldest_backlog_seconds > 120
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Outbox 积压时间过长"
+          description: "{{ $labels.service }} 最老未完成事件已超过 120 秒。"
+
+      - alert: HuameiOutboxExpiredLeases
+        expr: huamei_outbox_events{state="expired_lease"} > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Outbox 持续存在过期租约"
+          description: "{{ $labels.service }} 连续 2 分钟存在未恢复的过期租约。"

@@ -1,0 +1,11 @@
+{
+  "id": "huamei-team-20260910-v1",
+  "tag": "team-baseline-20260910-v1",
+  "integration_branch": "integration/huamei-vnext",
+  "source_branch": "refactor/langchain-langgraph",
+  "source_head": "d8242767d4dfcc6df12178222f619856516538a3",
+  "source_state": "working tree including uncommitted source at export; not equal to source_head",
+  "history_included": false,
+  "knowledge_scope": "924 existing public catalog records; development subset; no customer source records",
+  "interface_version_policy": "additive changes or explicit shared_changes migration notes"
+}

@@ -1,0 +1,31 @@
+{
+  "schema_version": "huamei.formal-load-taxonomy-catalog.v1",
+  "algorithm_version": "factoradic-token-permutation.v1",
+  "profiles": [
+    {
+      "id": "eye",
+      "journey_index": 0,
+      "terms": ["双眼皮", "眼部整形", "项目介绍", "自然", "手术方式", "恢复期", "医生", "擅长", "流程"]
+    },
+    {
+      "id": "breast",
+      "journey_index": 1,
+      "terms": ["丰胸", "胸部整形", "自体脂肪", "自然", "项目介绍", "恢复期", "医生", "擅长", "流程"]
+    },
+    {
+      "id": "birthmark",
+      "journey_index": 2,
+      "terms": ["胎记", "皮肤美容", "项目介绍", "流程", "医生", "擅长", "面部", "专业方向", "服务"]
+    },
+    {
+      "id": "rejuvenation",
+      "journey_index": 3,
+      "terms": ["面部年轻化", "热玛吉", "拉皮", "微拉美", "项目介绍", "恢复期", "医生", "擅长", "流程"]
+    },
+    {
+      "id": "photon",
+      "journey_index": 4,
+      "terms": ["光子嫩肤", "皮肤美容", "色斑", "项目介绍", "恢复期", "医生", "擅长", "流程", "服务"]
+    }
+  ]
+}

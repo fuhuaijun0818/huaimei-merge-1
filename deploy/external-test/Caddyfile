@@ -1,0 +1,25 @@
+{
+  admin 127.0.0.1:2019
+}
+
+{$HUAMEI_EXTERNAL_DOMAIN} {
+  encode zstd gzip
+  header {
+    -Server
+    X-Content-Type-Options nosniff
+    Referrer-Policy same-origin
+    X-Frame-Options SAMEORIGIN
+    Permissions-Policy "camera=(), microphone=(), geolocation=()"
+  }
+  # Resolve only the edge-network alias, so the connection always originates
+  # from the fixed proxy address that the application explicitly trusts.
+  reverse_proxy huamei-preview-web:4173 {
+    header_up X-Forwarded-For {http.request.remote.host}
+  }
+}
+
+# IP and unknown-host HTTP requests never present a Basic login prompt.
+# Fixed configured destination avoids a Host-header-controlled redirect.
+http:// {
+  redir https://{$HUAMEI_EXTERNAL_DOMAIN}{uri} 308
+}

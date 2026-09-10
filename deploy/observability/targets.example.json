@@ -1,0 +1,9 @@
+[
+  {
+    "targets": ["acquisition:4180"],
+    "labels": {
+      "service_group": "acquisition",
+      "environment": "production"
+    }
+  }
+]

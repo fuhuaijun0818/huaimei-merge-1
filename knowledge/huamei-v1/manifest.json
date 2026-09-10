@@ -1,0 +1,9 @@
+{
+  "version": "team-baseline-20260910.1",
+  "package_name": "华美三人协作开发公开知识子集",
+  "knowledge_unit_count": 924,
+  "knowledge_units_sha256": "19df24cb94c6569149cf6abef9f60198ef4fec30fd1a4ca6d5a58723d34840ff",
+  "package_checksum": "19df24cb94c6569149cf6abef9f60198ef4fec30fd1a4ca6d5a58723d34840ff",
+  "scope": "development_public_subset",
+  "note": "开发公开子集；剔除含手机号样式序列的1条记录；不包含正式发布状态，不是生产发布凭据。"
+}

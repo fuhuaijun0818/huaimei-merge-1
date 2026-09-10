@@ -1,0 +1,44 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    system: huamei-phase-1
+
+rule_files:
+  - /etc/prometheus/rules/huamei-alerts.yml
+
+scrape_configs:
+  - job_name: huamei-acquisition
+    metrics_path: /metrics
+    scheme: http
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/huamei_acquisition_metrics_token
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/huamei-acquisition.json
+        refresh_interval: 30s
+
+  - job_name: huamei-graphrag
+    metrics_path: /metrics
+    scheme: http
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/huamei_graphrag_metrics_token
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/huamei-graphrag.json
+        refresh_interval: 30s
+
+  # Enable only together with the external-events profile. It deliberately
+  # uses a different credential from acquisition.
+  - job_name: huamei-outbox
+    metrics_path: /metrics
+    scheme: http
+    authorization:
+      type: Bearer
+      credentials_file: /run/secrets/huamei_outbox_metrics_token
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/huamei-outbox.json
+        refresh_interval: 30s

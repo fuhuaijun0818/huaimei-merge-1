@@ -1,0 +1,146 @@
+{
+  "version": 1,
+  "roles": {
+    "A": {
+      "name": "智能体与前台对话",
+      "prefixes": [
+        "apps/acquisition-advisor/",
+        "server/acquisition-",
+        "server/agent-runtime.mjs",
+        "server/llm-client.mjs",
+        "server/chat-contact-capture.mjs",
+        "server/persistence/postgres-session-store.mjs",
+        "tests/acquisition-",
+        "tests/agent-runtime.mjs",
+        "tests/llm-",
+        "tests/natural-dialogue.mjs",
+        "tests/presales-journey.mjs",
+        "tests/chat-contact-capture.mjs"
+      ],
+      "goals": [
+        "统一理解与任务推进、多轮语义及纠正",
+        "前台流式回复、输入连续性与异常恢复",
+        "对话评测集回归和结果归档"
+      ],
+      "tests": [
+        "test:turn-planning",
+        "test:presales-dialogue"
+      ]
+    },
+    "B": {
+      "name": "客户与人工接待",
+      "prefixes": [
+        "server/lead-store.mjs",
+        "server/contact-vault.mjs",
+        "server/integrations/",
+        "server/appointment-",
+        "server/local-conversation-store.mjs",
+        "server/acquisition-operations-store.mjs",
+        "server/persistence/postgres-lead-store.mjs",
+        "server/persistence/postgres-operations-store.mjs",
+        "server/persistence/postgres-contact-vault-store.mjs",
+        "server/persistence/appointment-state-store.mjs",
+        "src/conversation-unread.js",
+        "src/customer-presentation.js",
+        "src/member-check-display.js",
+        "src/modules/reception/",
+        "src/modules/customers/",
+        "src/modules/appointments/",
+        "server/routes/reception.mjs",
+        "server/routes/customer.mjs",
+        "server/routes/appointment.mjs",
+        "tests/lead-store.mjs",
+        "tests/contact-",
+        "tests/member-",
+        "tests/appointment-",
+        "tests/conversation-unread.mjs",
+        "tests/local-conversation-sync.mjs",
+        "tests/customer-presentation.mjs",
+        "tests/management-handover-ui.mjs"
+      ],
+      "goals": [
+        "后台人工回复真正到达前台；接管后AI不抢答",
+        "多客户未读与消息重连",
+        "客户、会话、会员查询和预约关联"
+      ],
+      "tests": [
+        "test:member-check",
+        "test:acquisition-orchestration"
+      ]
+    },
+    "C": {
+      "name": "知识发布与岗位权限",
+      "prefixes": [
+        "server/knowledge-",
+        "server/huamei-knowledge.mjs",
+        "server/runtime-knowledge-index.mjs",
+        "server/graphrag-client.mjs",
+        "graphrag-service/",
+        "knowledge/",
+        "src/project-knowledge.js",
+        "src/knowledge-catalog-import.js",
+        "src/admin-session.js",
+        "src/role-catalog.js",
+        "assets/admin-login.",
+        "server/platform/management-accounts.mjs",
+        "server/platform/admin-browser-session.mjs",
+        "server/platform/phase-one-role-policy.mjs",
+        "server/platform/postgres-object-acl-policy.mjs",
+        "server/persistence/knowledge-",
+        "server/persistence/postgres-knowledge-",
+        "src/modules/knowledge/",
+        "src/modules/administration/",
+        "server/routes/knowledge.mjs",
+        "server/routes/administration.mjs",
+        "tests/knowledge-",
+        "tests/huamei-knowledge",
+        "tests/admin-browser-",
+        "tests/phase-one-role-policy.mjs",
+        "tests/management-role-navigation.mjs",
+        "tests/superadministrator-policy.mjs"
+      ],
+      "goals": [
+        "资料审核、发布生效、撤回与回滚闭环",
+        "知识引用版本和时效性",
+        "五岗位的菜单、接口、数据三层权限及登录登出"
+      ],
+      "tests": [
+        "test:admin-session",
+        "test:phase-one-boundary"
+      ]
+    }
+  },
+  "shared": [
+    "src/app.js",
+    "src/subpages.js",
+    "src/store.js",
+    "src/operations-client.js",
+    "src/management-runtime.js",
+    "styles.css",
+    "server/api-router.mjs",
+    "server.mjs",
+    "server/acquisition-service-server.mjs",
+    "server/acquisition-channel-adapters.mjs",
+    "server/acquisition-service-client.mjs",
+    "server/openapi.mjs",
+    "server/acquisition-service-openapi.mjs",
+    "server/platform/management-authorization.mjs",
+    "server/platform/tenant-context.mjs",
+    "server/platform/request-security.mjs",
+    "package.json",
+    "package-lock.json",
+    "db/migrations/",
+    "deploy/",
+    ".github/",
+    "contracts/",
+    "handoff/",
+    "scripts/team-",
+    "README.md",
+    "AGENTS.md",
+    ".gitignore",
+    ".env.example",
+    "BASELINE.json",
+    ".gitattributes"
+  ],
+  "rule": "shared first; then longest matching prefix; unknown paths require declaration; paths are review ownership, not a security sandbox"
+}

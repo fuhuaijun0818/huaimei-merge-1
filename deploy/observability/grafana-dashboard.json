@@ -1,0 +1,80 @@
+{
+  "title": "华美一期｜售前智能体运行总览",
+  "uid": "huamei-phase1-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "tags": ["huamei", "phase-1", "production"],
+  "templating": {
+    "list": [
+      {
+        "name": "service",
+        "type": "query",
+        "label": "服务",
+        "query": "label_values(huamei_build_info, service)",
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "请求量与服务端错误率",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (service) (rate(huamei_http_requests_total{service=~\"$service\"}[5m]))", "legendFormat": "{{service}} RPS" },
+        { "refId": "B", "expr": "sum by (service) (rate(huamei_http_requests_total{service=~\"$service\",outcome=\"server_error\"}[5m]))", "legendFormat": "{{service}} 5xx/s" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "HTTP P95 延迟",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.95, sum by (service, le) (rate(huamei_http_request_duration_seconds_bucket{service=~\"$service\"}[5m])))", "legendFormat": "{{service}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "模型与 GraphRAG 结果",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (service, outcome) (rate(huamei_model_requests_total{service=~\"$service\"}[5m]))", "legendFormat": "模型 {{service}} / {{outcome}}" },
+        { "refId": "B", "expr": "sum by (service, outcome) (rate(huamei_graphrag_queries_total{service=~\"$service\"}[5m]))", "legendFormat": "GraphRAG {{service}} / {{outcome}}" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "人工接管事件",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (service, event) (increase(huamei_handovers_total{service=~\"$service\"}[15m]))", "legendFormat": "{{service}} / {{event}}" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Outbox 积压与最老事件",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "targets": [
+        { "refId": "A", "expr": "sum by (service, state) (huamei_outbox_events{service=~\"$service\",state=~\"backlog|ready|dead_letter|expired_lease\"})", "legendFormat": "{{service}} / {{state}}" },
+        { "refId": "B", "expr": "huamei_outbox_oldest_backlog_seconds{service=~\"$service\"}", "legendFormat": "{{service}} oldest seconds" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "依赖就绪状态",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "targets": [
+        { "refId": "A", "expr": "min by (service, dependency) (huamei_dependency_ready{service=~\"$service\"})", "legendFormat": "{{service}} / {{dependency}}" }
+      ]
+    }
+  ]
+}

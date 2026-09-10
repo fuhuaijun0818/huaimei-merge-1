@@ -1,0 +1,9 @@
+[
+  {
+    "targets": ["graphrag:4191"],
+    "labels": {
+      "service_group": "graphrag",
+      "environment": "production"
+    }
+  }
+]

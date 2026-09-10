@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {ROLE_CATALOG} from '../src/role-catalog.js';
+import {PHASE_ONE_CAPABILITIES,phaseOneCapabilitiesFor,hasPhaseOneCapability} from '../server/platform/phase-one-role-policy.mjs';
+import {authorizeManagementPrincipal} from '../server/platform/management-authorization.mjs';
+const p={subject:'local-superadmin',roles:['超级管理员'],tenantIds:['huamei-shanghai'],departmentIds:['*']};
+for(const capability of Object.values(PHASE_ONE_CAPABILITIES)) assert.ok(hasPhaseOneCapability(p,capability),capability);
+for(const role of ROLE_CATALOG.filter(r=>r.key!=='superadministrator'))assert.equal(hasPhaseOneCapability([role.name],'superadmin:manage'),false);
+assert.equal(phaseOneCapabilitiesFor(['系统管理员']).includes('customers:read_all'),false);
+assert.throws(()=>authorizeManagementPrincipal(p,{tenantId:'unrelated-tenant',requiredCapabilities:['customers:read_all']}));
+assert.equal(authorizeManagementPrincipal(p,{tenantId:'huamei-shanghai',requiredCapabilities:['customers:read_all']}).tenantId,'huamei-shanghai');
+console.log('PASS: superadministrator has all institution capabilities; normal roles cannot elevate; tenant isolation remains');
