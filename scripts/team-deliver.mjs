@@ -22,12 +22,12 @@ const report=JSON.parse(readFileSync(reportRel));
 if(report.role!==role||report.task_id!==id||!report.summary||report.summary.includes('请填写')||!report.rollback||!Array.isArray(report.acceptance_steps)||!report.acceptance_steps.length)die('报告身份、说明、验收步骤或回退信息未填写。');
 for(const field of ['shared_changes','api_changes','migrations','dependency_changes','environment_variable_names','known_limitations','tests'])if(!Array.isArray(report[field]))die(`缺少报告数组：${field}`);
 if(!report.tests.length||report.tests.some(t=>!['pass','fail','blocked'].includes(t.status)||!t.command||!t.evidence))die('每项测试填写pass/fail/blocked及证据，不能留not_run。');
-const all=git('ls-tree','-r','--name-only',head).split('\n');
+const all=git('ls-tree','-r','--name-only','-z',head).split('\0').filter(Boolean);
 const forbidden=all.filter(p=>/(^|\/)(?:node_modules|\.local-data|\.git|dist)(\/|$)/.test(p)||/(^|\/)\.env(?:\..+)?$/.test(p)&&!p.endsWith('.env.example')||/\.(?:bundle|sqlite|pem|key)$/.test(p));
 if(forbidden.length)die('发现不允许交付的文件：'+forbidden.join(', '));
 const allowed=JSON.parse(git('show',`${base}:handoff/secret-fixture-hashes.json`)).sha256;
 for(const path of all){const blob=execFileSync('git',['show',`${head}:${path}`],{maxBuffer:64*1024*1024});if(blob.includes(0))continue;const found=secretFindings(blob.toString('utf8'),allowed);if(found.private_key||found.new_credentials)die('发现新的疑似凭据，请替换为环境变量或测试占位：'+path);}
-const changed=git('diff','--no-renames','--name-only',base,head).split('\n').filter(Boolean);
+const changed=git('diff','--no-renames','--name-only','-z',base,head).split('\0').filter(Boolean);
 const owner=p=>{if(policy.shared.some(x=>p===x||p.startsWith(x.endsWith('/')?x:x+'\0')||x.endsWith('-')&&p.startsWith(x)))return 'shared';const matches=Object.entries(policy.roles).flatMap(([r,v])=>v.prefixes.filter(x=>p.startsWith(x)).map(x=>({r,n:x.length}))).sort((a,b)=>b.n-a.n);return matches[0]?.r||'shared';};
 const declared=new Set(report.shared_changes.map(x=>typeof x==='string'?x:x.path));
 const undeclared=changed.filter(p=>p!==reportRel&&owner(p)!==role&&!declared.has(p));
