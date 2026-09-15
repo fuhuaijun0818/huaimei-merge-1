@@ -1,0 +1,193 @@
+{
+  "role": "B",
+  "task_id": "d01-conversation-reproduction",
+  "branch": "feature/B/d01-conversation-reproduction",
+  "summary": "B-D01 会话消息、实时同步与未读功能复现报告。真实环境与 Mock 预检分开记录；本次未修改业务源码。",
+  "status_vocabulary": ["pass", "fail", "blocked"],
+  "test_environments": [
+    {
+      "name": "真实本地应用",
+      "base_url": "http://127.0.0.1:4173",
+      "status": "pass",
+      "scope": "后台会话页、前台获客顾问页、Network 与 SSE 观察"
+    },
+    {
+      "name": "独立 Mock 合约预检",
+      "status": "pass",
+      "commands": ["npm run team:seed", "npm run team:test:mock"],
+      "result": "54/54 passed；该输出标明为 standalone Mock contract tests only，不替代真实业务/SSE 验收。"
+    }
+  ],
+  "acceptance_results": [
+    {
+      "story": "B-003",
+      "status": "pass",
+      "evidence": "测试执行人确认四项 AC 均通过；本地浏览器/截图证据未复制进仓库。",
+      "acs": [
+        {"id": "TC-B-003-AC1", "status": "pass", "note": "服务端可追溯 tenant、conversation、channel 标识。"},
+        {"id": "TC-B-003-AC2", "status": "pass", "note": "同一访客后续消息进入原会话。"},
+        {"id": "TC-B-003-AC3", "status": "pass", "note": "不同访客未串会话或客户档案。"},
+        {"id": "TC-B-003-AC4", "status": "pass", "note": "无需后台手动刷新或预留手机号即可显示会话。"}
+      ]
+    },
+    {
+      "story": "B-004",
+      "status": "fail",
+      "acs": [
+        {
+          "id": "TC-B-004-AC1",
+          "status": "fail",
+          "evidence": "管理端 acquisition-customers 快照中的 message 仅有 id、from、text、at；没有消息级 seq 与提交 status。",
+          "note": "会话级 status=进行中不能替代消息提交状态。"
+        },
+        {
+          "id": "TC-B-004-AC2",
+          "status": "pass",
+          "evidence": "同一 Idempotency-Key 与相同内容仅保留一组客户/AI 消息；相同 Key 但不同内容返回 HTTP 409 Conflict。"
+        },
+        {
+          "id": "TC-B-004-AC3",
+          "status": "fail",
+          "evidence": "当前前台、后台和持久化快照曾一致；重启服务并刷新前台后创建新访客/新会话，原会话消息未恢复。"
+        },
+        {
+          "id": "TC-B-004-AC4",
+          "status": "fail",
+          "evidence": "快照中没有稳定 cursor/seq；会话仅以 updatedAt 排序，无法证明分页或重连按稳定游标恢复。"
+        }
+      ]
+    },
+    {
+      "story": "B-005",
+      "status": "fail",
+      "acs": [
+        {
+          "id": "TC-B-005-AC1",
+          "status": "fail",
+          "evidence": "消息到达后 chat、列表、header 的 DOM 引用均变化，未达到仅更新受影响列表项和消息区域的要求。"
+        },
+        {
+          "id": "TC-B-005-AC2",
+          "status": "pass",
+          "evidence": "草稿文本、焦点、光标位置及滚动位置保持；虽 DOM 节点替换，但验收所需交互状态保持。"
+        },
+        {
+          "id": "TC-B-005-AC3",
+          "status": "pass",
+          "evidence": "底部场景自动跟随新消息；停留历史位置时保持位置，并以会话列表未读红点作为独立新消息提示。"
+        },
+        {
+          "id": "TC-B-005-AC4",
+          "status": "pass",
+          "evidence": "选中会话 A 时，访客 B 的新消息到达后仍保持 A 为当前会话。"
+        }
+      ]
+    },
+    {
+      "story": "B-006",
+      "status": "fail",
+      "acs": [
+        {
+          "id": "TC-B-006-AC1",
+          "status": "blocked",
+          "evidence": "真实后台观察到 conversation-events SSE 的 event: conversations / data: changed，同范围消息会同步；未登录直连接口返回 ADMIN_SESSION_REQUIRED。Mock 预检包含 events tenant scoped、tenant filtering、cross-tenant object denied。",
+          "blocker": "未确认发送方 C 的真实租户/授权范围，不能把“未看到 C 的消息”作为跨租户隔离的完整真实证据。"
+        },
+        {
+          "id": "TC-B-006-AC2",
+          "status": "fail",
+          "evidence": "SSE 断开期间的三条标记消息及 AI 回复在重连后均补齐，消息 ID 各不重复；接口/存储未提供持久化 cursor、seq 或 lastEventId 证据。",
+          "note": "补齐与去重现象通过；AC 要求的持久化游标未满足。"
+        },
+        {
+          "id": "TC-B-006-AC3",
+          "status": "fail",
+          "evidence": "阻断 /api/local/conversation-events 后，后台未自动收到新消息，也未观察到 acquisition-customers 的轮询兜底。"
+        },
+        {
+          "id": "TC-B-006-AC4",
+          "status": "blocked",
+          "evidence": "退出登录后跳转 login?reason=logged-out，/auth/session 返回 401，且未观察到继续的会话拉取。",
+          "blocker": "离开页面及权限撤回缺少第二个真实后台账号/可撤销权限的真实环境。"
+        }
+      ]
+    },
+    {
+      "story": "B-007",
+      "status": "blocked",
+      "acs": [
+        {
+          "id": "TC-B-007-AC1",
+          "status": "pass",
+          "evidence": "后台保持在会话 A 时，未打开的测试会话 B 收到一条客户消息和一条 AI 回复；接口有两个独立 message id，界面 B 红点为 2。"
+        },
+        {
+          "id": "TC-B-007-AC2",
+          "status": "pass",
+          "evidence": "测试会话停留历史位置时保留红点 2；滚动到最新消息后红点消失。"
+        },
+        {
+          "id": "TC-B-007-AC3",
+          "status": "blocked",
+          "evidence": "获客顾问 Web 仅允许复制回复草稿或登记已发生的人工沟通；未接入真实人工对客发送通道。",
+          "blocker": "不能生成真实 from: staff 的对客消息，无法完整验证自己的人工发送及重复同步不增加未读。"
+        },
+        {
+          "id": "TC-B-007-AC4",
+          "status": "blocked",
+          "evidence": "当前真实环境仅有一个后台账号，无法完成账号切换与跨租户真实验收。",
+          "blocker": "前端已读状态没有按接待账号和租户持久化隔离，无法证明重连、换号或跨租户不混用状态。"
+        }
+      ]
+    }
+  ],
+  "implementation_findings": [
+    {
+      "area": "消息顺序与状态",
+      "location": "server/local-conversation-store.mjs:16,18,30",
+      "finding": "消息写入和历史恢复仅构造 id/from/text/at，未定义或持久化消息级 seq 与 status。"
+    },
+    {
+      "area": "前台会话恢复",
+      "location": "apps/acquisition-advisor/src/App.jsx:302,372-383",
+      "finding": "前台会话 ID 在页面挂载时创建；初始化不恢复聊天 messages。"
+    },
+    {
+      "area": "局部更新",
+      "location": "src/app.js:2134",
+      "finding": "render 使用 #app.innerHTML 整页替换。"
+    },
+    {
+      "area": "推送故障兜底",
+      "location": "src/app.js:4207-4213",
+      "finding": "同步仅由 conversations SSE 事件触发；sync-error 只设置提示，未启动带退避的 acquisition-customers 轮询。"
+    },
+    {
+      "area": "未读隔离",
+      "location": "src/conversation-unread.js",
+      "finding": "未读 Map 仅以 conversationId 为键，未包含账号或租户，也未持久化 read_cursor。"
+    },
+    {
+      "area": "人工消息通道",
+      "location": "src/app.js:510,518,3250-3264",
+      "finding": "获客顾问 Web 不支持人工对客外发；仅允许草稿复制或已发生人工沟通登记。"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "src/app.js",
+      "reason": "在管理身份加载成功后，将 B 负责的未读状态模块绑定到当前 subject，避免刷新后丢失或跨账号共用已读状态。"
+    }
+  ],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "B-004 需要在消息持久化模型中增加会话内单调 seq、提交 status 与稳定 cursor，并在历史恢复、管理端快照和前端合并中透传。",
+    "B-005 需要将增量会话更新与全页 render 分离，避免替换无关 DOM。",
+    "B-006 需要在 SSE 不可用时启用有退避的轮询，增加持久化游标补偿，并提供多账号、多租户真实验收环境。",
+    "B-007 需要按 tenant + 接待账号 + conversation 维护并持久化 read_cursor；真实人工发送验收须待获批外部 IM 通道接入。"
+  ],
+  "rollback": "本报告仅更新交付记录，未修改业务代码；删除或恢复 handoff/report-B-d01-conversation-reproduction.json 即可回退。"
+}
