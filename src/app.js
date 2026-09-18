@@ -4187,7 +4187,7 @@ window.addEventListener("beforeunload", () => {
 });
 const bootstrapManagementApplication = async () => {
   render();
-  try{ui.managementIdentity=await getManagementIdentity();conversationReads.setScope({subject:ui.managementIdentity.subject});ui.identityError='';store.state.currentRole=ui.managementIdentity.role;}
+  try{ui.managementIdentity=await getManagementIdentity();conversationReads.setScope({subject:ui.managementIdentity.subject,tenantId:ui.managementIdentity.tenant_id});ui.identityError='';store.state.currentRole=ui.managementIdentity.role;}
   catch(e){ui.identityError=e.message;render();return;}
   ui.managementDataReady=true;
   if(hasCapability('users:manage'))await refreshManagedAccounts();

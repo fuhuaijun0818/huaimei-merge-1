@@ -88,6 +88,7 @@ export function createMemberRepeatCheckClient({
   const timeoutMs = Math.min(5_000, Math.max(100, Number(env.HUAMEI_MEMBER_CHECK_TIMEOUT_MS) || 2_000));
   const configuredCacheMs = Number(env.HUAMEI_MEMBER_CHECK_CACHE_MS ?? 60_000);
   const cacheMs = Math.min(300_000, Math.max(0, Number.isFinite(configuredCacheMs) ? configuredCacheMs : 60_000));
+  const maxAttempts = Math.min(5, Math.max(1, Number(env.HUAMEI_MEMBER_CHECK_MAX_ATTEMPTS) || 3));
   const tenantBinding = clean(env.HUAMEI_MEMBER_CHECK_TENANT_ID);
   const policyFingerprint = fingerprint([
     env.HUAMEI_MEMBER_CHECK_URL, tenantBinding, env.HUAMEI_MEMBER_CHECK_HOSPITAL_CODE,
@@ -129,6 +130,18 @@ export function createMemberRepeatCheckClient({
         is_repeat:previous.is_repeat,
         member_status:config.result_semantics === "membership" ? (previous.is_repeat ? "member" : "non_member") : "unknown",
         checked_at:previous.checked_at
+      });
+    }
+    const previousAttempts = Number(previous?.retry_count) || 0;
+    if (previous?.schema === SCHEMA && previous.provider === "huamei_repeatcheck"
+        && previous.status === "failed" && previousAttempts >= maxAttempts) {
+      return record("failed", "RETRY_EXHAUSTED", at, { retry_count:previousAttempts, next_retry_at:null });
+    }
+    const retryAt = Date.parse(previous?.next_retry_at || "");
+    if (previous?.schema === SCHEMA && previous.provider === "huamei_repeatcheck"
+        && previous.status === "failed" && Number.isFinite(retryAt) && retryAt > at) {
+      return record("failed", previous.reason_code || "PROVIDER_UNAVAILABLE", at, {
+        retry_count:previousAttempts, next_retry_at:previous.next_retry_at
       });
     }
     const key = `${tenantId}:${subjectReferenceHmac}`;
@@ -183,9 +196,15 @@ export function createMemberRepeatCheckClient({
     const pending = Promise.race([
       Promise.resolve().then(perform),
       new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(failure("TIMEOUT")); }, timeoutMs); })
-    ]).catch((error) => record("failed",
-      ["TIMEOUT", "SIGNATURE_UNAVAILABLE", "PROVIDER_UNAVAILABLE", "PROVIDER_REJECTED", "PROVIDER_SIGNATURE_REQUIRED", "INVALID_RESPONSE"].includes(error?.code) ? error.code : "PROVIDER_UNAVAILABLE", at
-    )).finally(() => { clearTimeout(timer); controller.abort(); inFlight.delete(key); });
+    ]).catch((error) => {
+      const reason = ["TIMEOUT", "SIGNATURE_UNAVAILABLE", "PROVIDER_UNAVAILABLE", "PROVIDER_REJECTED", "PROVIDER_SIGNATURE_REQUIRED", "INVALID_RESPONSE"].includes(error?.code) ? error.code : "PROVIDER_UNAVAILABLE";
+      const retryCount = previousAttempts + 1;
+      const delayMs = Math.min(60_000, 500 * (2 ** Math.max(0, retryCount - 1)));
+      return record("failed", reason, at, {
+        retry_count:retryCount,
+        next_retry_at:new Date(at + delayMs).toISOString()
+      });
+    }).finally(() => { clearTimeout(timer); controller.abort(); inFlight.delete(key); });
     inFlight.set(key, pending);
     return structuredClone(await pending);
   }

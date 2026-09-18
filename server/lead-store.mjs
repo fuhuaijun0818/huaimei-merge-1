@@ -203,7 +203,9 @@ export async function upsertAcquisitionLead(payload = {}, { memberCheckClient = 
     const interestScores = mergeInterestScores(existing?.customer?.interests, interests);
     const signals = inferCustomerSignals(messages, interests);
     const customerId = existing?.customer?.id || stableId("C-AI", identity, 10);
-    const name = cleanText(payload.name, 40) || existing?.customer?.name || `新客户${mobile.slice(-4)}`;
+    // An omitted name is valid lead data. Do not fabricate a customer name
+    // from the phone suffix; presentation layers may show a placeholder.
+    const name = cleanText(payload.name, 40) || existing?.customer?.name || "";
     const dataClassification = existing
       ? leadDataClassification(existing)
       : "production";

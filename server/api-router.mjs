@@ -649,7 +649,7 @@ export async function handleApiRequest(request, response) {
   }
   if (url.pathname === "/api/admin/identity" && request.method === "GET") {
     try { const p=await authorizeManagementRequest(request,{tenantId:PUBLIC_TENANT_ID});
-      sendJson(request,response,requestId,200,{data:{subject:p.subject,role:p.phaseOneRole,capabilities:p.phaseOneCapabilities,departments:p.departmentIds}});
+      sendJson(request,response,requestId,200,{data:{subject:p.subject,tenant_id:p.tenantId,role:p.phaseOneRole,capabilities:p.phaseOneCapabilities,departments:p.departmentIds}});
     } catch(e) {sendManagementAuthorizationError(request,response,requestId,e);}
     return true;
   }

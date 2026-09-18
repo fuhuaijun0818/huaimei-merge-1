@@ -160,10 +160,14 @@ export function splitAcquisitionReplySegments(message = "", options = {}) {
   // 问句仍独立展示；包含原始换行的模板文案（例如欢迎语）保持既有分组。
   if (String(message).includes("\n")) return atomicSegments.filter(Boolean);
   const segments = [];
+  // Keep sentence boundaries visible to web/IM adapters. Grouping two short
+  // sentences made the real web channel return one segment despite the
+  // channel contract promising a short message array.
   const groupLimit = Math.min(maxCharacters * 2, 64);
   for (const segment of atomicSegments.filter(Boolean)) {
     const previous = segments.at(-1);
-    const canGroup = previous
+    const canGroup = atomicSegments.length > 2
+      && previous
       && !/[？?]$/.test(previous)
       && !/[？?]$/.test(segment)
       && !/^\d+[.、]\s+/u.test(previous)

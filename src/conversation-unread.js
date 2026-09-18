@@ -10,7 +10,8 @@ const messageIds=conversation=>(conversation?.messages||[])
 
 const scopeKey=scope=>{
  const subject=typeof scope==='string'?scope:scope?.subject;
- return String(subject||'anonymous');
+ const tenant=typeof scope==='object' ? (scope?.tenantId ?? scope?.tenant_id) : '';
+ return `${String(tenant||'default')}:${String(subject||'anonymous')}`;
 };
 
 export function createConversationReadState({storage=browserStorage(),storagePrefix=STORAGE_PREFIX}={}){

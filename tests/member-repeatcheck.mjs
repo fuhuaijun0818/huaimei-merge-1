@@ -234,6 +234,28 @@ assert.equal(failureCapture.verification_status, "pending_manual");
 assert.equal(failureCapture.lead.customer.memberCheck.status, "failed");
 assert.equal(failureCapture.lead.customer.memberCheck.member_status, "unknown");
 
+let retryNow = 1_700_000_000_000;
+let retryCalls = 0;
+const retryClient = createMemberRepeatCheckClient({
+  env:{ ...signingEnv, HUAMEI_MEMBER_CHECK_MAX_ATTEMPTS:"2", HUAMEI_MEMBER_CHECK_CACHE_MS:"0" },
+  signRequest:signer,
+  now:() => retryNow,
+  fetchImpl:async () => { retryCalls += 1; throw new Error("provider down"); }
+});
+const retryRequest = request("retry-budget");
+const retryOne = await retryClient.check(retryRequest);
+assert.equal(retryOne.reason_code, "PROVIDER_UNAVAILABLE");
+assert.equal(retryOne.retry_count, 1);
+retryNow += 500;
+const retryTwo = await retryClient.check({ ...retryRequest, previous:retryOne });
+assert.equal(retryTwo.retry_count, 2);
+retryNow += 1_000;
+const retryThree = await retryClient.check({ ...retryRequest, previous:retryTwo });
+assert.equal(retryThree.reason_code, "RETRY_EXHAUSTED");
+assert.equal(retryThree.retry_count, 2);
+assert.equal(retryCalls, 2);
+assert.match(memberCheckPresentation(retryThree).label, /重试上限/);
+
 assert.match(memberCheckPresentation(first).label, /院方.*客户记录/);
 assert.match(memberCheckPresentation({ ...first, status:"failed", member_status:"non_member" }).label, /未完成/);
 assert.match(memberCheckPresentation({ ...first, checked_at:"<img onerror=alert(1)>" }).label, /未完成/);

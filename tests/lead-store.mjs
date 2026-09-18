@@ -66,6 +66,11 @@ const otherTenant = await upsertAcquisitionLead({
 assert.equal(otherTenant.is_existing, false, "相同手机号不得跨租户合并客户档案");
 assert.equal((await acquisitionCustomerSnapshot("huamei-second")).customers.length, 1);
 
+const unnamed = await upsertAcquisitionLead({
+  tenant_id:"huamei-unnamed", mobile:"13912345678", service_consent:true, session_id:"unnamed-lead"
+});
+assert.equal(unnamed.lead.customer.name, "", "空姓名必须保留为空，不得拼接手机号尾号");
+
 await assert.rejects(
   () => upsertAcquisitionLead({ mobile:"12345", service_consent:true }),
   (error) => error.code === "INVALID_MOBILE"
