@@ -44,12 +44,20 @@
       "reason": "保留 B-D02 客户资料与会员状态交付记录。"
     },
     {
+      "path": "handoff/report-B-d01-conversation-reproduction.json",
+      "reason": "保留历史 B-D01 会话复现记录，供负责人审阅差异和验收演进。"
+    },
+    {
       "path": "handoff/项目联合验收报告-2026-09-24.md",
       "reason": "记录本机、Mock、浏览器证据和生产发布限制。"
     },
     {
       "path": "server/acquisition-channel-adapters.mjs",
       "reason": "透传助手稳定消息标识给前台适配层。"
+    },
+    {
+      "path": "server/acquisition-conversation-style.mjs",
+      "reason": "获客对话样式与会话输出边界保持兼容，属于 A 侧跨角色改动。"
     },
     {
       "path": "server/acquisition-domain-service.mjs",
