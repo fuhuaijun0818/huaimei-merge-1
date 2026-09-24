@@ -1,0 +1,150 @@
+{
+  "role": "B",
+  "task_id": "first-batch-acceptance-001",
+  "summary": "B 首批客户会话、留资会员状态与人工接待闭环交付。包含稳定消息标识、游标补拉、SSE 断线兜底、未读隔离、客户资料版本化及人工接待送达的实现、测试与验收记录。",
+  "acceptance_steps": [
+    "使用两个本机模拟访客分别发送咨询及续聊；后台确认同一访客进入原会话、不同访客不串会话，并确认无需手机号或手动刷新即可出现会话。",
+    "在后台会话页断开 conversation-events 后从前台发送消息，恢复网络并确认 after_cursor 补拉仅合并缺失消息；阻断 handovers 后确认轮询由约 15 秒退避至约 30 秒、60 秒。",
+    "退出有权限账号，并登录无会话查看权限的内容专员账号；确认不再建立 conversation-events，且不继续请求 acquisition-customers。",
+    "在客户资料页验证手机号规范化、无 OTP 保存、版本冲突、禁止联系和会员状态展示；在人工接待页验证领取、送达、接管屏障与恢复 AI。"
+  ],
+  "tests": [
+    {
+      "command": "npm run team:build",
+      "status": "pass",
+      "evidence": "2026-09-24 实际执行：获客顾问 Vite 构建成功，29 个模块完成转换并生成 Sites 预览产物。"
+    },
+    {
+      "command": "npm run team:verify",
+      "status": "pass",
+      "evidence": "2026-09-24 实际执行：13/13 基线套件通过，覆盖对话、留资、会话、会员查重、未读、管理员会话、角色策略与开发安全边界。"
+    },
+    {
+      "command": "npm run team:test:http",
+      "status": "pass",
+      "evidence": "2026-09-24 实际执行：20/20 隔离真实 Node HTTP 检查通过；local_json、LLM/会员接口关闭，范围不包含浏览器或 PostgreSQL。"
+    },
+    {
+      "command": "npm run team:test:mock",
+      "status": "pass",
+      "evidence": "2026-09-24 实际执行：54/54 独立 Mock 合约检查通过；该结果明确不替代真实业务、SSE 或 PostgreSQL 验收。"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "apps/acquisition-advisor/AGENTS.md",
+      "reason": "补充获客顾问工作区的构建与验证约束。"
+    },
+    {
+      "path": "apps/acquisition-advisor/src/App.jsx",
+      "reason": "用服务端稳定助手消息 ID 合并前台消息，避免相同文案跨轮次错误替换。"
+    },
+    {
+      "path": "handoff/report-B-D02-phone-profile-001.json",
+      "reason": "保留 B-D02 客户资料与会员状态交付记录。"
+    },
+    {
+      "path": "handoff/项目联合验收报告-2026-09-24.md",
+      "reason": "记录本机、Mock、浏览器证据和生产发布限制。"
+    },
+    {
+      "path": "server/acquisition-channel-adapters.mjs",
+      "reason": "透传助手稳定消息标识给前台适配层。"
+    },
+    {
+      "path": "server/acquisition-domain-service.mjs",
+      "reason": "生成与持久化实现一致的助手稳定消息标识。"
+    },
+    {
+      "path": "server/acquisition-service-server.mjs",
+      "reason": "服务端响应兼容稳定助手消息标识。"
+    },
+    {
+      "path": "server/api-router.mjs",
+      "reason": "共享 API 入口增加安全游标上限、会话同步和客户资料消费能力。"
+    },
+    {
+      "path": "server/chat-contact-capture.mjs",
+      "reason": "与留资回执及联系人状态保持一致。"
+    },
+    {
+      "path": "server/management-domain-store.mjs",
+      "reason": "共享管理领域数据的客户资料状态适配。"
+    },
+    {
+      "path": "server/openapi.mjs",
+      "reason": "登记管理端客户资料更新和相关响应契约。"
+    },
+    {
+      "path": "server/persistence/postgres-session-store.mjs",
+      "reason": "会话持久化与稳定消息标识保持一致。"
+    },
+    {
+      "path": "server/platform/management-accounts.mjs",
+      "reason": "管理账号与岗位验收夹具支持。"
+    },
+    {
+      "path": "server/platform/management-authorization.mjs",
+      "reason": "共享管理端授权边界保持受控。"
+    },
+    {
+      "path": "src/app.js",
+      "reason": "会话增量同步、SSE 生命周期、退避轮询、游标编码和客户资料页面属于共享入口变更。"
+    },
+    {
+      "path": "src/operations-client.js",
+      "reason": "共享管理端客户资料更新客户端。"
+    },
+    {
+      "path": "src/role-catalog.js",
+      "reason": "管理岗位目录与会话查看能力消费一致。"
+    },
+    {
+      "path": "src/store.js",
+      "reason": "共享状态中增加稳定会话和资料字段的合并处理。"
+    },
+    {
+      "path": "src/ui.js",
+      "reason": "共享 UI 状态与会话同步提示适配。"
+    },
+    {
+      "path": "styles.css",
+      "reason": "共享管理端资料与会话页面样式调整。"
+    },
+    {
+      "path": "tests/acquisition-service.mjs",
+      "reason": "跨角色获客服务回归覆盖稳定回执。"
+    },
+    {
+      "path": "tests/b010-message-id-consistency.mjs",
+      "reason": "新增人工消息 ID 一致性回归。"
+    },
+    {
+      "path": "tests/b010-reply-authorization.mjs",
+      "reason": "新增人工回复授权边界回归。"
+    },
+    {
+      "path": "tests/management-domain-store.mjs",
+      "reason": "管理领域共享数据回归。"
+    },
+    {
+      "path": "tests/onboarding/application-http.mjs",
+      "reason": "共享真实 Node HTTP 联调覆盖稳定助手标识和游标补拉。"
+    }
+  ],
+  "api_changes": [
+    "公共获客响应增加 assistant_message_id；客户端仅以该稳定标识合并服务端助手消息。",
+    "管理端会话增量查询继续使用 after_cursor；客户端与服务端限制游标查询长度，避免请求头或查询串异常。",
+    "PATCH /api/admin/acquisition/customers/{customerId} 使用 expected_version 和 patch 更新客户资料，成功回传版本化资料及会员状态。"
+  ],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "B-019、B-020、B-021 的会员查重结论限模拟供应商；真实院方接口未在本轮调用。",
+    "本轮未执行隔离 PostgreSQL、RLS、字段加密或正式迁移验收。",
+    "真实模型、GraphRAG、正式知识发布、性能浸泡和生产发布门禁未在本任务中运行。",
+    "交付包供负责人先运行 team:inspect 和临时集成回归后再决定是否合入；不得直接部署。"
+  ],
+  "rollback": "由负责人在集成分支对本交付对应提交使用 git revert 回退；不得 reset 或覆盖共享入口。删除 .team-delivery/B-first-batch-acceptance-001 仅删除交付产物，不影响源码。"
+}
