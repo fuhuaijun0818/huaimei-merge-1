@@ -919,7 +919,7 @@ textarea.form-control { min-height: 88px; padding: 10px 11px; resize: vertical; 
   .avatar-video-modal .modal-foot { min-height: 64px; padding-top: 10px; padding-bottom: 10px; }
 }
 .toast-root { position: fixed; right: 22px; bottom: 22px; z-index: 120; display: grid; gap: 9px; pointer-events: none; }
-.toast { width: min(360px, calc(100vw - 44px)); padding: 12px 14px; border-radius: 13px; color: white; background: #2d292b; box-shadow: var(--shadow-md); display: flex; align-items: flex-start; gap: 9px; animation: toast-in .24s ease; pointer-events: auto; }
+.toast { width: min(360px, calc(100vw - 44px)); padding: 12px 14px; border-radius: 13px; color: white; background: #2d292b; box-shadow: var(--shadow-md); display: flex; align-items: flex-start; gap: 9px; animation: toast-in .24s ease; pointer-events: none; }
 .toast.success { background: #245f47; }
 .toast.warning { background: #8d551b; }
 .toast.danger { background: #8d2e3a; }

@@ -72,6 +72,42 @@ export async function listManagementHandovers({ status = "", limit = 100 } = {})
   return Array.isArray(body.data) ? body.data : [];
 }
 
+export async function sendManagementConversationReply(conversationId, text, { handoverVersion = "", idempotencyKey = "" } = {}) {
+  const id = String(conversationId || "").trim();
+  const requestKey = String(idempotencyKey || `reply-${id}-${crypto.randomUUID()}`).trim().slice(0, 128);
+  const body = await managementRequest(`/api/admin/acquisition/conversations/${encodeURIComponent(id)}/reply`, {
+    method:"POST",
+    headers:requestHeaders({ json:true, idempotencyKey:requestKey }),
+    body:JSON.stringify({
+      text:String(text || "").trim().slice(0, 4000),
+      handover_version:String(handoverVersion || "").trim()
+    })
+  });
+  return body.data;
+}
+
+export async function updateManagementCustomerProfile(customerId, { expectedVersion, patch } = {}) {
+  const id = String(customerId || "").trim();
+  if (!id) throw new Error("客户编号不能为空");
+  const body = await managementRequest(`/api/admin/acquisition/customers/${encodeURIComponent(id)}`, {
+    method:"PATCH",
+    headers:requestHeaders({ json:true, idempotencyKey:`customer-profile-${id}-${crypto.randomUUID()}`.slice(0, 128) }),
+    body:JSON.stringify({ expected_version:expectedVersion, patch:patch || {} })
+  });
+  return body.data;
+}
+
+export async function recheckManagementCustomerMemberCheck(customerId) {
+  const id = String(customerId || "").trim();
+  if (!id) throw new Error("客户编号不能为空");
+  const body = await managementRequest(`/api/admin/acquisition/customers/${encodeURIComponent(id)}/member-check`, {
+    method:"POST",
+    headers:requestHeaders({ json:true, idempotencyKey:`member-recheck-${id}-${crypto.randomUUID()}`.slice(0, 128) }),
+    body:JSON.stringify({})
+  });
+  return body.data;
+}
+
 export async function listManagementBadCases({ status = "", limit = 100 } = {}) {
   const query = new URLSearchParams();
   if (status) query.set("status", status);

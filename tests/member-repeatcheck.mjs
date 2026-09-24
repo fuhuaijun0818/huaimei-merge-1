@@ -256,6 +256,29 @@ assert.equal(retryThree.retry_count, 2);
 assert.equal(retryCalls, 2);
 assert.match(memberCheckPresentation(retryThree).label, /重试上限/);
 
+// A human-initiated recheck may bypass a cached success, but it must continue
+// to enforce the stored failure budget instead of starting over.
+let manualRetryNow = 1_700_100_000_000;
+let manualRetryCalls = 0;
+const manualRetryClient = createMemberRepeatCheckClient({
+  env:{ ...signingEnv, HUAMEI_MEMBER_CHECK_MAX_ATTEMPTS:"3", HUAMEI_MEMBER_CHECK_CACHE_MS:"60000" },
+  signRequest:signer,
+  now:() => manualRetryNow,
+  fetchImpl:async () => { manualRetryCalls += 1; throw new Error("provider down"); }
+});
+const manualRetryRequest = request("manual-retry-budget");
+const manualRetryOne = await manualRetryClient.check({ ...manualRetryRequest, forceRefresh:true });
+manualRetryNow += 500;
+const manualRetryTwo = await manualRetryClient.check({ ...manualRetryRequest, previous:manualRetryOne, forceRefresh:true });
+manualRetryNow += 1_000;
+const manualRetryThree = await manualRetryClient.check({ ...manualRetryRequest, previous:manualRetryTwo, forceRefresh:true });
+const manualRetryExhausted = await manualRetryClient.check({ ...manualRetryRequest, previous:manualRetryThree, forceRefresh:true });
+assert.equal(manualRetryThree.retry_count, 3);
+assert.equal(manualRetryExhausted.reason_code, "RETRY_EXHAUSTED");
+assert.equal(manualRetryExhausted.retry_count, 3);
+assert.equal(manualRetryExhausted.next_retry_at, null);
+assert.equal(manualRetryCalls, 3, "manual rechecks cannot restart the provider retry budget");
+
 assert.match(memberCheckPresentation(first).label, /院方.*客户记录/);
 assert.match(memberCheckPresentation({ ...first, status:"failed", member_status:"non_member" }).label, /未完成/);
 assert.match(memberCheckPresentation({ ...first, checked_at:"<img onerror=alert(1)>" }).label, /未完成/);

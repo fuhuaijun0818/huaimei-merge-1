@@ -10,9 +10,13 @@ const memoryEntries = new Map();
 const memoryRevealRequests = new Set();
 
 const memoryKey = (tenantId, sessionId) => `${tenantId}:${sessionId}`;
-const normalizedMobile = (value) => String(value || "")
-  .replace(/^\+?86/, "")
-  .replace(/[\s()-]/g, "");
+// Same accepted shapes as the lead store: "+86 138 0000 0001", "0086 138-0000-0001"
+// and "13800000001" must all normalize to the same eleven digits.
+const normalizedMobile = (value) => {
+  const digits = String(value ?? "").normalize("NFKC").replace(/\D/g, "");
+  if (/^1[3-9]\d{9}$/.test(digits)) return digits;
+  return digits.replace(/^(?:00)?86/, "");
+};
 const maskMobile = (mobile) => `${mobile.slice(0, 3)}****${mobile.slice(-4)}`;
 
 export function persistDevelopmentMemoryContact({
@@ -123,6 +127,16 @@ export function getContactVaultStatus() {
     plaintext_json:false,
     production_allowed:false
   };
+}
+
+// Server-internal read of the development vault entry, used by the audited
+// manual member re-check.  It must never be exposed over HTTP: it returns the
+// plaintext number of the current capture only, from process memory, and only in
+// the non-production backend.
+export function readDevelopmentContactCapture({ tenantId, sessionId } = {}) {
+  if (postgresPersistenceEnabled()) return null;
+  const entry = memoryEntries.get(memoryKey(String(tenantId || "").trim(), String(sessionId || "").trim()));
+  return entry ? { ...entry } : null;
 }
 
 export function resetDevelopmentContactVaultForTest() {

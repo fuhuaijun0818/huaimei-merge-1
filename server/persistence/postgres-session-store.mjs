@@ -639,6 +639,64 @@ export function createPostgresAcquisitionSessionStore(options = {}) {
     }));
   };
 
+  const listConversations = async ({ tenantId, limit = 500 } = {}) => {
+    if (!tenantId) {
+      const error = new Error("tenantId is required when listing conversations");
+      error.code = "POSTGRES_TENANT_CONTEXT_REQUIRED";
+      throw error;
+    }
+    const boundedLimit = Math.min(Math.max(Number(limit) || 500, 1), 500);
+    const result = await database.tenantQuery(tenantId, `
+      SELECT s.session_id, s.channel, s.external_conversation_id, s.status,
+             s.last_activity_at, m.message_id, m.role, m.direction, m.content,
+             m.metadata, m.occurred_at, m.turn_sequence, m.processing_state
+      FROM conversation_sessions s
+      LEFT JOIN conversation_messages m
+        ON m.tenant_id=s.tenant_id AND m.session_record_id=s.id
+      WHERE s.tenant_id=$1
+      ORDER BY s.last_activity_at DESC, m.turn_sequence NULLS LAST, m.created_at
+      LIMIT $2`, [tenantId, boundedLimit * 40]);
+    const grouped = new Map();
+    for (const row of result.rows) {
+      const key = `${row.channel}:${row.session_id}`;
+      let item = grouped.get(key);
+      if (!item) {
+        item = {
+          id:`pg_${row.session_id}`,
+          tenant:tenantId,
+          channel:row.channel,
+          externalId:row.external_conversation_id || row.session_id,
+          createdAt:row.last_activity_at,
+          updatedAt:row.last_activity_at,
+          messages:[],
+          nextSeq:0
+        };
+        grouped.set(key, item);
+      }
+      if (!row.message_id) continue;
+      const messageId = String(row.message_id);
+      const text = fieldEncryption.decryptText(row.content, messageContext({
+        tenantId, channel:row.channel, sessionId:row.session_id, messageId
+      }));
+      const metadata = jsonValue(row.metadata, {});
+      const from = row.role === "user" ? "customer" : row.role === "human_agent" ? "human" : row.role === "system" ? "system" : "ai";
+      const seq = Number(row.turn_sequence || item.nextSeq + 1);
+      item.nextSeq = Math.max(item.nextSeq, seq);
+      item.messages.push({
+        id:messageId,
+        seq,
+        status:row.processing_state || metadata.status || "committed",
+        from,
+        text:redactContactPii(text),
+        at:new Date(row.occurred_at || row.last_activity_at).toISOString()
+      });
+    }
+    return [...grouped.values()].slice(0, boundedLimit).map((item) => ({
+      ...item,
+      cursor:`${item.externalId}#${item.nextSeq}`
+    }));
+  };
+
   return {
     driver:"postgres",
     mutate,
@@ -647,6 +705,7 @@ export function createPostgresAcquisitionSessionStore(options = {}) {
     failStaleReceipts,
     get,
     listStates,
+    listConversations,
     status:() => ({
       driver:"postgres", durable:true, shared:true, configured:database.configured,
       field_encryption:fieldEncryption.enabled ? "aes-256-gcm" : "development-plaintext"

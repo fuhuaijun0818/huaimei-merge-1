@@ -359,6 +359,7 @@ export function formatChannelOutbound(channelValue, result = {}, options = {}) {
       tenant_id:result.tenant_id,
       request_id:result.request_id,
       run_id:result.run_id,
+      assistant_message_id:result.assistant_message_id || null,
       status:result.status,
       agent:result.agent,
       reply:result.reply?.text || "",

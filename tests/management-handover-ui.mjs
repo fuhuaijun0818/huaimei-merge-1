@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-const [app, store, client, leadStore] = await Promise.all([
+const [app, store, client, leadStore, router, operationsStore] = await Promise.all([
   readFile(new URL("../src/app.js", import.meta.url), "utf8"),
   readFile(new URL("../src/store.js", import.meta.url), "utf8"),
   readFile(new URL("../src/operations-client.js", import.meta.url), "utf8"),
-  readFile(new URL("../server/lead-store.mjs", import.meta.url), "utf8")
+  readFile(new URL("../server/lead-store.mjs", import.meta.url), "utf8"),
+  readFile(new URL("../server/api-router.mjs", import.meta.url), "utf8"),
+  readFile(new URL("../server/acquisition-operations-store.mjs", import.meta.url), "utf8")
 ]);
 
 assert.match(client, /credentials:"same-origin"/, "管理端必须支持服务端HttpOnly会话");
@@ -15,6 +17,25 @@ assert.match(client, /\/api\/admin\/acquisition\/human-work/);
 assert.doesNotMatch(client, /X-Service-Key/i, "浏览器代码不得包含内部服务密钥");
 assert.doesNotMatch(client, /sessionStorage|localStorage|Authorization/i, "管理端不得在浏览器存储或组装Bearer令牌");
 assert.match(client, /Idempotency-Key/, "人工写操作必须具备幂等键");
+assert.match(client, /handover_version:String\(handoverVersion \|\| ""\)\.trim\(\)/, "人工回复必须携带接管状态版本");
+assert.match(app, /const externalConversationId = conversation\.externalConversationId \|\| conversation\.id;/, "人工回复必须使用接管任务关联的前台会话编号");
+assert.match(app, /sendManagementConversationReply\(externalConversationId, text, \{ handoverVersion:handover\.updated_at, idempotencyKey \}\)/, "人工回复必须携带当前接管版本和可重试的稳定发送标识");
+assert.match(app, /const isCurrentHandoverAssignee = \(handover\)/, "界面必须根据当前登录顾问识别实际领取人");
+assert.match(app, /only current?领取人可发送|仅当前领取人可发送|only.*assignee/i, "非领取人必须在界面侧收到明确的发送限制说明");
+assert.match(app, /if \(!isCurrentHandoverAssignee\(handover\)\) return toast\("该会话已由其他顾问领取；只有当前领取人可以发送"/, "发送动作必须在客户端先阻止非领取人");
+assert.match(app, /"conversation-detail", "send-message"/, "售前动作白名单必须允许受服务端接管鉴权保护的发送动作");
+assert.match(app, /REPLY_DRAFT_STORAGE_PREFIX/, "人工回复草稿必须有明确的浏览器会话级存储命名空间");
+assert.match(app, /window\.sessionStorage/, "刷新后必须能恢复当前浏览器标签页中的未发送草稿");
+assert.match(app, /replyDraftStorageKey\(conversationId\)/, "草稿存储键必须按企业身份与会话隔离");
+assert.match(app, /saveReplyDraft\(event\.target\.dataset\.conversationId, event\.target\.value\)/, "输入时必须立即保存草稿");
+assert.match(app, /clearReplyDraft\(conversationId\)/, "发送成功后必须清除已发送草稿");
+assert.match(app, /prepareReplyDraftRetry\(conversationId, text\)/, "失败重试必须从草稿恢复稳定发送标识");
+assert.match(router, /IDEMPOTENCY_KEY_REQUIRED/, "服务端必须拒绝缺少人工回复发送标识的请求");
+assert.match(router, /X-Idempotent-Replay/, "服务端重试必须显式标注幂等回放");
+assert.match(leadStore, /idempotency_key/, "人工消息必须持久化发送标识，避免协调缓存重启后重复写入");
+assert.match(router, /assertHandoverReplyAuthorization/, "BFF必须在写入消息前校验当前接管权");
+assert.match(operationsStore, /HANDOVER_REPLY_ASSIGNEE_FORBIDDEN/);
+assert.match(operationsStore, /HANDOVER_REPLY_STATE_STALE/);
 assert.match(client, /\/api\/admin\/appointment-intakes/);
 assert.match(client, /\/api\/admin\/schedule-slots/);
 assert.match(client, /\/api\/admin\/knowledge\/intake\/documents/);
@@ -29,6 +50,10 @@ assert.match(store, /customer\.origin === "acquisition_advisor"/);
 assert.match(leadStore, /externalConversationId:sessionId/, "管理会话必须可与服务端接管任务关联");
 
 assert.match(app, /人工接管实时队列/);
+assert.match(app, /\["claimed", "active"\]\.includes\(task\?\.status\)/, "已接管任务的 active 状态必须进入人工接待分组");
+assert.match(app, /data-action="conversation-detail"/, "会话详情按钮必须触发明确的详情动作");
+assert.match(app, /case "conversation-detail": showConversationDetail\(id\);/, "会话详情动作必须打开只读详情视图");
+assert.match(app, /function showConversationDetail\(/, "会话详情必须展示接待归属和状态");
 assert.match(app, /listManagementBadCases/);
 assert.match(app, /reviewManagementBadCase/);
 assert.match(app, /showBadCaseModal/);

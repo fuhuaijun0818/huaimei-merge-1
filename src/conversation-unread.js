@@ -45,6 +45,12 @@ export function createConversationReadState({storage=browserStorage(),storagePre
   unread(conversation){
    const seen=read.get(conversation?.id)||new Set();
    return messageIds(conversation).filter(id=>!seen.has(id)).length;
+  },
+  lastReadMessageId(conversation){
+   const messages=messageIds(conversation);
+   const seen=read.get(conversation?.id)||new Set();
+   for(let index=messages.length-1;index>=0;index--)if(seen.has(messages[index]))return messages[index];
+   return null;
   }
  };
 }

@@ -5,6 +5,7 @@ import { publicationRequestContext, loadActivePublication } from "./knowledge-pu
 import { AGENT_DEFINITIONS, invokeAgentAsync } from "./agent-runtime.mjs";
 import { getAcquisitionConversationStyleStatus, leadCaptureDecision, splitAcquisitionReplySegments } from "./acquisition-conversation-style.mjs";
 import { getIntentEngineStatus } from "./acquisition-intent.mjs";
+import { createHash } from "node:crypto";
 import { getAcquisitionSession, getAcquisitionSessionMetrics, prepareAcquisitionSessionContext, recordAcquisitionSessionTurn } from "./acquisition-session.mjs";
 import { getHuameiKnowledgeStatus, loadHuameiKnowledge } from "./huamei-knowledge.mjs";
 import { getLlmStatus } from "./llm-client.mjs";
@@ -21,6 +22,12 @@ const CONVERSATION_SEQUENCE_WAIT_MS = Number.isFinite(configuredSequenceWaitMs)
   ? Math.min(30_000, Math.max(250, configuredSequenceWaitMs))
   : 10_000;
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+// The public browser and persisted history must share one stable assistant
+// message identity.  It intentionally mirrors the session-store key, which is
+// derived from the private, tenant-scoped session ID and inbound message ID.
+const assistantMessageIdFor = (sessionId, inboundMessageId) => `reply_${createHash("sha256")
+  .update(`${sessionId}\u0000${inboundMessageId}\u0000assistant`)
+  .digest("hex")}`;
 
 const recordTurnInReceiptOrder = async (sessionId, payload, metadata) => {
   const deadline = Date.now() + CONVERSATION_SEQUENCE_WAIT_MS;
@@ -91,10 +98,15 @@ export async function acquisitionHandoverDeliveryOverride(envelope, result = nul
 
 export async function processAcquisitionEnvelope(envelope, metadata = {}) {
   recordLocalConversation(envelope,{});
-  const publication=await loadActivePublication(envelope.tenant_id);
-  const response = await publicationRequestContext.run(publication,()=>processAcquisitionEnvelopeWithPublication(envelope,metadata));
-  recordLocalConversation(envelope,response);
-  return response;
+  try {
+    const publication=await loadActivePublication(envelope.tenant_id);
+    const response = await publicationRequestContext.run(publication,()=>processAcquisitionEnvelopeWithPublication(envelope,metadata));
+    recordLocalConversation(envelope,response);
+    return response;
+  } catch (error) {
+    recordLocalConversation(envelope,{messageStatus:'failed',error_code:error?.code || 'ACQUISITION_PROCESSING_FAILED'});
+    throw error;
+  }
 }
 async function processAcquisitionEnvelopeWithPublication(envelope, metadata = {}) {
   const tenantId = envelope.tenant_id;
@@ -180,6 +192,9 @@ async function processAcquisitionEnvelopeWithPublication(envelope, metadata = {}
     tenant_id:tenantId,
     request_id:result.request_id,
     run_id:result.run_id,
+    assistant_message_id:result.output.message
+      ? assistantMessageIdFor(internalSessionId, envelope.message.id)
+      : null,
     status:result.status,
     channel,
     conversation_id:externalConversationId,

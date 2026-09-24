@@ -19,8 +19,11 @@ import {
   revealManagementHandoverContact,
   revealManagementAppointmentContact,
   reviewManagementBadCase,
+  recheckManagementCustomerMemberCheck,
   resolveManagementAppointmentIntake,
   saveManagementDomainOverlay,
+  sendManagementConversationReply,
+  updateManagementCustomerProfile,
   uploadManagementKnowledgeIntakeAsset, getManagementKnowledgeIntakeDocument, mutateManagementKnowledgeIntakeDocument
 } from "./operations-client.js";
 import { stageSteps, riskWords } from "./data.js";
@@ -28,6 +31,7 @@ import { memberCheckPresentation } from "./member-check-display.js";
 import { icon } from "./icons.js";
 import {
   avatar, badge, button, card, closeModal, customerCell, empty, escapeHtml, formatDate, formField,
+  customerDisplayName,
   metric, navGroups, navItems, openModal, pageHead, physicianAvatar, relativeTime, toast
 } from "./ui.js";
 import { entityNavRoute, entityTitle, moduleNavConfig, moduleSubnav, renderEntityPage, renderSubpage } from "./subpages.js";
@@ -45,6 +49,7 @@ const ui = {
   conversationQuery: "",
   receptionTab: "phrases",
   replyDrafts: {},
+  replyDraftStates: {},
   journeyView: "list",
   journeyId: "J-01",
   journeyCanvasDrafts: {},
@@ -111,6 +116,115 @@ const ui = {
   managementPersistenceError: ""
 };
 
+// 人工回复草稿只保存在当前浏览器标签页的 sessionStorage：刷新或页面局部
+// 重绘时可恢复，但不会写入服务端、不会跨浏览器会话长期留存，也按企业身份隔离。
+// Keep the existing storage namespace so an unsent v1 plain-text draft is
+// migrated on read instead of being discarded during the AC4 upgrade.
+const REPLY_DRAFT_STORAGE_PREFIX = "huamei:management-reply-draft:v1";
+const replyDraftStorageKey = (conversationId) => {
+  const identity = ui.managementIdentity || {};
+  const tenantId = String(identity.scope === "platform" ? "platform" : identity.tenant_id || "unresolved");
+  const subject = String(identity.subject || "unresolved");
+  return `${REPLY_DRAFT_STORAGE_PREFIX}:${encodeURIComponent(tenantId)}:${encodeURIComponent(subject)}:${encodeURIComponent(String(conversationId || ""))}`;
+};
+const createReplyIdempotencyKey = () => `reply-${crypto.randomUUID()}`;
+const readReplyDraftState = (conversationId) => {
+  if (!conversationId) return { text:"", idempotencyKey:"", attemptedText:"" };
+  if (ui.replyDraftStates[conversationId]) return ui.replyDraftStates[conversationId];
+  try {
+    const value = window.sessionStorage.getItem(replyDraftStorageKey(conversationId));
+    if (!value) return { text:"", idempotencyKey:"", attemptedText:"" };
+    const parsed = JSON.parse(value);
+    const state = parsed && parsed.version === 2 && typeof parsed.text === "string"
+      ? { text:parsed.text.slice(0, 4000), idempotencyKey:String(parsed.idempotencyKey || "").slice(0, 128), attemptedText:String(parsed.attemptedText || "").slice(0, 4000) }
+      : { text:value.slice(0, 4000), idempotencyKey:"", attemptedText:"" };
+    ui.replyDraftStates[conversationId] = state;
+    ui.replyDrafts[conversationId] = state.text;
+    return state;
+  } catch {
+    return { text:"", idempotencyKey:"", attemptedText:"" };
+  }
+};
+const persistReplyDraftState = (conversationId, state) => {
+  ui.replyDraftStates[conversationId] = state;
+  ui.replyDrafts[conversationId] = state.text;
+  try { window.sessionStorage.setItem(replyDraftStorageKey(conversationId), JSON.stringify({ version:2, ...state })); }
+  catch { /* 当前页面内状态仍可用于安全重试。 */ }
+};
+const readReplyDraft = (conversationId) => readReplyDraftState(conversationId).text;
+const saveReplyDraft = (conversationId, value) => {
+  if (!conversationId) return;
+  const draft = String(value || "").slice(0, 4000);
+  if (!draft) return clearReplyDraft(conversationId);
+  const previous = readReplyDraftState(conversationId);
+  // A changed draft after an attempted send is a new business message and must
+  // not reuse the old key (that would correctly be rejected as a mismatch).
+  const editedAfterAttempt = Boolean(previous.attemptedText && previous.attemptedText !== draft);
+  persistReplyDraftState(conversationId, {
+    text:draft,
+    idempotencyKey:editedAfterAttempt || !previous.idempotencyKey ? createReplyIdempotencyKey() : previous.idempotencyKey,
+    attemptedText:editedAfterAttempt ? "" : previous.attemptedText
+  });
+};
+const prepareReplyDraftRetry = (conversationId, text) => {
+  saveReplyDraft(conversationId, text);
+  const previous = readReplyDraftState(conversationId);
+  const state = { ...previous, text, idempotencyKey:previous.idempotencyKey || createReplyIdempotencyKey(), attemptedText:text };
+  persistReplyDraftState(conversationId, state);
+  return state.idempotencyKey;
+};
+const clearReplyDraft = (conversationId) => {
+  delete ui.replyDrafts[conversationId];
+  delete ui.replyDraftStates[conversationId];
+  try { window.sessionStorage.removeItem(replyDraftStorageKey(conversationId)); }
+  catch { /* 无需处理。 */ }
+};
+
+// The acquisition cursor contains only opaque conversation IDs and server
+// sequence values. Keep it in this tab's sessionStorage, scoped to the
+// authenticated management identity, so reconnects and reloads can request a
+// delta without carrying customer content into browser storage.
+const ACQUISITION_CURSOR_STORAGE_PREFIX = "huamei:acquisition-sync-cursor:v1";
+// Keep the query well below common reverse-proxy/header limits.  A cursor
+// that cannot carry every conversation is still safe: the server treats an
+// omitted conversation cursor as a request for that conversation's snapshot.
+const ACQUISITION_CURSOR_QUERY_MAX_BYTES = 4 * 1024;
+const acquisitionCursorStorageKey = () => {
+  const identity = ui.managementIdentity || {};
+  const tenantId = String(identity.scope === "platform" ? "platform" : identity.tenant_id || "unresolved");
+  const subject = String(identity.subject || "unresolved");
+  return `${ACQUISITION_CURSOR_STORAGE_PREFIX}:${encodeURIComponent(tenantId)}:${encodeURIComponent(subject)}`;
+};
+const readAcquisitionCursors = () => {
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(acquisitionCursorStorageKey()) || "");
+    const cursors = parsed?.v === 1 && parsed?.c && typeof parsed.c === "object" && !Array.isArray(parsed.c) ? parsed.c : null;
+    if (!cursors || Object.keys(cursors).length > 500) return {};
+    return Object.fromEntries(Object.entries(cursors).filter(([key, value]) => key.length <= 320 && typeof value === "string" && value.length <= 280));
+  } catch { return {}; }
+};
+const persistAcquisitionCursors = (cursors) => {
+  if (!cursors || typeof cursors !== "object" || Array.isArray(cursors)) return;
+  const entries = Object.entries(cursors).filter(([key, value]) => key.length <= 320 && typeof value === "string" && value.length <= 280).slice(0, 500);
+  try { window.sessionStorage.setItem(acquisitionCursorStorageKey(), JSON.stringify({ v:1, c:Object.fromEntries(entries) })); }
+  catch { /* Delta sync safely falls back to a complete snapshot next time. */ }
+};
+const encodeAcquisitionCursors = (cursors) => {
+  const entries = Object.entries(cursors || {});
+  if (!entries.length) return "";
+  try {
+    const encode = (selected) => btoa(JSON.stringify({ v:1, c:Object.fromEntries(selected) }))
+      .replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+    const selected = [];
+    for (const entry of entries) {
+      const candidate = [...selected, entry];
+      if (encode(candidate).length > ACQUISITION_CURSOR_QUERY_MAX_BYTES) break;
+      selected.push(entry);
+    }
+    return selected.length ? encode(selected) : "";
+  } catch { return ""; }
+};
+
 // 一期后台当前只使用本系统已建档的数据。不要将旧演示大盘数字混入客户、
 // 任务和会话的实时视图，避免不同模块的统计口径相互矛盾。
 const managementOverviewMetrics = () => {
@@ -145,7 +259,8 @@ const presalesAllowedActions = new Set([
   "list-page", "modal-close", "modal-backdrop", "notifications", "refresh", "refresh-handovers",
   "refresh-appointments", "claim-handover", "complete-handover", "robot-takeover", "reveal-contact",
   "claim-appointment", "resolve-appointment", "reveal-appointment-contact", "select-conversation", "conversation-filter",
-  "open-phrase-library", "use-common-phrase", "customer-view", "timeline-filter", "reception-tab", "copy-reply-draft"
+  "open-phrase-library", "use-common-phrase", "customer-view", "timeline-filter", "reception-tab", "copy-reply-draft",
+  "conversation-detail", "send-message"
 ]);
 const presalesAllowedForms = new Set(["handover-complete-form", "appointment-resolve-form"]);
 
@@ -380,7 +495,7 @@ function customerTable(customers) {
 }
 
 function customerBoard(customers) {
-  return `<div class="card-body"><div class="board">${["售前","售中","售后"].map((stage) => { const stageCustomers = customers.filter((customer) => customer.macroStage === stage); return `<div class="board-column"><div class="board-head"><span class="board-title">${stage}</span>${badge(`${stageCustomers.length}人`, stage)}</div>${stageCustomers.map((customer) => `<article class="customer-board-card" data-customer="${customer.id}"><div class="row">${avatar(customer,"sm")}<div><strong>${customer.name}</strong><div class="customer-meta">${customer.microStage} · ${customer.owner}</div></div><span class="spacer"></span><strong class="score ${customer.score >= 80 ? "high" : "mid"}">${customer.score}</strong></div><div class="divider" style="margin:10px 0"></div><div class="caption">${customer.nextAction.title}</div><div class="row between" style="margin-top:8px">${badge((customer.interests[0]?.name || "项目待确认"),"brand")}<span class="caption ${customer.sla.includes("超时") ? "overdue" : ""}">${customer.sla}</span></div></article>`).join("") || `<div class="empty">暂无客户</div>`}</div>`; }).join("")}</div></div>`;
+  return `<div class="card-body"><div class="board">${["售前","售中","售后"].map((stage) => { const stageCustomers = customers.filter((customer) => customer.macroStage === stage); return `<div class="board-column"><div class="board-head"><span class="board-title">${stage}</span>${badge(`${stageCustomers.length}人`, stage)}</div>${stageCustomers.map((customer) => `<article class="customer-board-card" data-customer="${customer.id}"><div class="row">${avatar(customer,"sm")}<div><strong>${escapeHtml(customerDisplayName(customer))}</strong><div class="customer-meta">${customer.microStage} · ${customer.owner}</div></div><span class="spacer"></span><strong class="score ${customer.score >= 80 ? "high" : "mid"}">${customer.score}</strong></div><div class="divider" style="margin:10px 0"></div><div class="caption">${customer.nextAction.title}</div><div class="row between" style="margin-top:8px">${badge((customer.interests[0]?.name || "项目待确认"),"brand")}<span class="caption ${customer.sla.includes("超时") ? "overdue" : ""}">${customer.sla}</span></div></article>`).join("") || `<div class="empty">暂无客户</div>`}</div>`; }).join("")}</div></div>`;
 }
 
 function customer360Page(customerId) {
@@ -403,17 +518,57 @@ function customer360Page(customerId) {
     <section class="card lifecycle"><div class="lifecycle-top"><div><div class="card-title">客户生命周期</div><div class="card-subtitle">当前环节：${customer.microStage} · 进入于 ${formatDate(customer.stageEnteredAt)}</div></div><div class="row">${badge(customer.sla, customer.sla.includes("超时") ? "danger" : "success")}<button class="link" data-action="stage-history" data-id="${customer.id}">查看阶段历史</button></div></div><div class="stage-rail">${["售前","售中","售后"].map((stage, index) => `<div class="stage-block ${customer.macroStage === stage ? "active" : ""}" style="--progress:${customer.macroStage === stage ? ((stepIndex + 1) / Math.max(1, steps.length)) * 100 : index < ["售前","售中","售后"].indexOf(customer.macroStage) ? 100 : 0}%"><div class="stage-name">${index + 1}. ${stage}</div><div class="stage-detail">${customer.macroStage === stage ? `${customer.microStage} · ${stepIndex + 1}/${steps.length}` : stage === "售前" ? "咨询 → 预约" : stage === "售中" ? "到院 → 项目完成" : "随访 → 复购/转介绍"}</div></div>`).join("")}</div></section>
     <div class="grid cols-4 customer-kpis">${metric("意向评分", customer.score, `主要兴趣：${(customer.interests[0]?.name || "项目待确认")}`, "spark")}${metric("经营健康度", customer.health, customer.health >= 80 ? "关系稳定" : "需要关注", "shield")}${metric("阶段停留", Math.max(1, Math.round((Date.now() - new Date(customer.stageEnteredAt)) / 86400000)), "请关注服务时限", "clock", "天")}${metric("最近渠道", customer.latestChannel, relativeTime(customer.timeline[0]?.occurredAt), "message")}</div>
     <div class="grid customer360-grid">
-      <div class="stack">${profileCard(customer)}${interestCard(customer)}${pidCard(customer)}</div>
+      <div class="stack">${profileCard(customer)}${memberCheckCard(customer)}${interestCard(customer)}${pidCard(customer)}</div>
       <div class="stack">${nbaCard(customer)}${timelineCard(customer, timeline)}</div>
       <div class="stack">${responsibilityCard(customer)}${journeyCard(customer)}${riskConsentCard(customer)}</div>
     </div>
   </div>`;
 }
 
+// 院方核验状态与人工重查入口：未查询、查询中、超时、失败和已完成分别展示，
+// 重查走受权限与审计保护的管理端接口，并且只使用当前已保存的号码。
+function memberCheckCard(customer) {
+  const check = customer.memberCheck || null;
+  const presentation = memberCheckPresentation(check);
+  // 已保存手机号的客户始终可以手动重查：未查询/查询中/失败时是必需的恢复动作，
+  // 已有结果时也允许在怀疑院方记录变化时再查一次（每次都会写审计，接口侧限流与缓存仍然生效）。
+  const canRecheck = Boolean(customer.memberCheck) || Boolean(customer.phoneVerificationStatus);
+  const reasonLabels = {
+    PROVIDER_UNAVAILABLE:"院方接口暂不可用",
+    PROVIDER_REJECTED:"院方拒绝了本次查询",
+    PROVIDER_SIGNATURE_REQUIRED:"院方接口验签配置待确认",
+    TIMEOUT:"院方核验超时",
+    RETRY_EXHAUSTED:"已达重试上限，需人工重查",
+    INVALID_RESPONSE:"院方返回内容无法解析",
+    CONFIGURATION_REQUIRED:"院方接口未配置",
+    TENANT_NOT_CONFIGURED:"当前租户未绑定院方接口",
+    CAPTURE_REQUIRED:"缺少有效的手机号保存记录"
+  };
+  const retryCount = Number(check?.retry_count) || 0;
+  const detail = check
+    ? `${reasonLabels[check.reason_code] || (check.status === "checked" ? "查询已完成" : "—")}${retryCount ? ` · 已重试 ${retryCount} 次` : ""}`
+    : "该客户尚无院方查询记录";
+  const body = `<div class="profile-list">
+      <div class="profile-row"><span class="profile-key">已保存手机号</span><span class="profile-value">${escapeHtml(customer.mobile || "未留手机号")}</span></div>
+      <div class="profile-row"><span class="profile-key">院方查询状态</span><span class="profile-value">${escapeHtml(presentation.label)}</span></div>
+      <div class="profile-row"><span class="profile-key">原因 / 重试</span><span class="profile-value">${escapeHtml(detail)}</span></div>
+      <div class="profile-row"><span class="profile-key">最近查询时间</span><span class="profile-value">${escapeHtml(check?.checked_at ? formatDate(check.checked_at) : "未完成")}</span></div>
+    </div><div class="guardrail">${icon("shield",14)}院方“已有客户记录”只代表存在同号文档，既不代表手机号归属已验证，也不代表任何会员权益；重查仅使用当前已保存的号码，明文号码不会下发到浏览器。</div>`;
+  return card("院方身份核验", body, { action: canRecheck ? `<button class="btn small" data-action="recheck-member-check" data-id="${customer.id}">重新查询院方记录</button>` : "" });
+}
+
 function profileCard(customer) {
   const memberCheck = memberCheckPresentation(customer.memberCheck);
   const phoneVerification = customer.phoneVerificationStatus === "verified" ? "已人工核号" : "待人工核号";
-  return card("客户画像", `<div class="row between" style="margin-bottom:11px"><span class="caption">信息完整度 ${customer.profile.confidence}% · 新信息会自动补充</span>${badge("持续更新", "ai")}</div><div class="profile-list">${Object.entries({"预算区间":customer.profile.budget,"决策方式":customer.profile.decision,"联系偏好":customer.profile.contact,"沟通风格":customer.profile.style,"核心顾虑":customer.profile.concern}).map(([key,value]) => `<div class="profile-row"><span class="profile-key">${key}</span><span class="profile-value">${value}</span></div>`).join("")}</div><div class="divider"></div><div class="profile-row"><span class="profile-key">手机号状态</span><span class="profile-value">${escapeHtml(phoneVerification)}</span></div><div class="divider"></div><div class="profile-row"><span class="profile-key">院方身份核验</span><span class="profile-value">${escapeHtml(memberCheck.label)}${memberCheck.checkedAt ? `<br><span class="caption">查询时间：${escapeHtml(formatDate(memberCheck.checkedAt))}</span>` : ""}</span></div><div class="divider"></div><div class="tag-list">${customer.tags.map((tag) => badge(tag,"outline")).join("")}</div>`, { action: `<button class="link" data-action="edit-profile" data-id="${customer.id}">编辑</button>` });
+  const preferences = customer.contactPreferences || {};
+  const contactSummary = [
+    preferences.do_not_contact ? "禁止联系" : "",
+    preferences.preferred_time ? `时段：${preferences.preferred_time}` : "",
+    customer.profile.contact
+  ].filter(Boolean).join(" · ");
+  const fields = { "预算区间":customer.profile.budget, "决策方式":customer.profile.decision, "联系偏好":contactSummary,
+    "沟通风格":customer.profile.style, "核心顾虑":customer.profile.concern };
+  return card("客户画像", `<div class="row between" style="margin-bottom:11px"><span class="caption">信息完整度 ${customer.profile.confidence}% · 新信息会自动补充</span>${badge("持续更新", "ai")}</div><div class="profile-list">${Object.entries(fields).map(([key,value]) => `<div class="profile-row"><span class="profile-key">${escapeHtml(key)}</span><span class="profile-value">${escapeHtml(String(value || "待确认"))}</span></div>`).join("")}</div><div class="divider"></div><div class="profile-row"><span class="profile-key">手机号状态</span><span class="profile-value">${escapeHtml(phoneVerification)}</span></div><div class="divider"></div><div class="profile-row"><span class="profile-key">院方身份核验</span><span class="profile-value">${escapeHtml(memberCheck.label)}${memberCheck.checkedAt ? `<br><span class="caption">查询时间：${escapeHtml(formatDate(memberCheck.checkedAt))}</span>` : ""}</span></div><div class="divider"></div><div class="tag-list">${customer.tags.map((tag) => badge(tag,"outline")).join("")}</div>`, { action: `<button class="link" data-action="edit-profile" data-id="${customer.id}">编辑</button>` });
 }
 
 function interestCard(customer) {
@@ -453,6 +608,14 @@ const linkedHandoverForConversation = (conversation) => (store.state.handovers |
   handover.conversation_id === (conversation.externalConversationId || conversation.id)
   && ["pending", "claimed", "active"].includes(handover.status));
 
+// 页面是否能操作必须与服务端的“领取人”判断保持一致。界面上的已接管状态
+// 仅表示任务存在，不代表当前浏览器中的顾问已经取得了该任务的回复权。
+const isCurrentHandoverAssignee = (handover) => {
+  const assignee = String(handover?.assignee || "").trim();
+  const subject = String(ui.managementIdentity?.subject || "").trim();
+  return Boolean(assignee && subject && assignee === subject);
+};
+
 const commonPhraseRecords = () => (store.state.configurationRecords || [])
   .filter((item) => item.kind === "message_template"
     && item.status === "启用"
@@ -469,6 +632,35 @@ const handoverAssigneeDisplay = (handover) => {
   const staffId = operator?.staffId || operator?.account || identity || "待同步";
   return { title:nickname, detail:`ID：${staffId}` };
 };
+
+function showConversationDetail(conversationId) {
+  const conversation = store.conversation(conversationId);
+  if (!conversation) {
+    toast("未找到该会话，请返回收件箱刷新后重试", "warning");
+    return;
+  }
+  const customer = store.customer(conversation.customerId);
+  const handover = linkedHandoverForConversation(conversation);
+  const assignee = handoverAssigneeDisplay(handover);
+  const status = handover
+    ? handoverStatusLabel(handover.status)
+    : conversationStatusLabel(conversation.status);
+  const receivedAt = handover?.claimed_at || handover?.updated_at || conversation.updatedAt;
+  openModal({
+    title:"会话详情",
+    desc:"只读展示当前会话的接待归属和状态；不会披露联系方式，也不会改变接管状态。",
+    body:`<div class="profile-list">
+      <div class="profile-row"><span class="profile-key">客户</span><strong>${escapeHtml(customerDisplayName(customer || {}))}</strong></div>
+      <div class="profile-row"><span class="profile-key">会话编号</span><strong>${escapeHtml(conversation.externalConversationId || conversation.id)}</strong></div>
+      <div class="profile-row"><span class="profile-key">渠道</span><strong>${escapeHtml(conversation.channel || "待确认")}</strong></div>
+      <div class="profile-row"><span class="profile-key">接待状态</span><strong>${escapeHtml(status || "状态读取中")}</strong></div>
+      <div class="profile-row"><span class="profile-key">当前接待</span><strong>${escapeHtml(assignee.title)}</strong></div>
+      <div class="profile-row"><span class="profile-key">接待人标识</span><strong>${escapeHtml(assignee.detail.replace(/^ID：/, ""))}</strong></div>
+      <div class="profile-row"><span class="profile-key">最近状态变更</span><strong>${receivedAt ? escapeHtml(formatDate(receivedAt)) : "待同步"}</strong></div>
+    </div>`,
+    footer:'<button class="btn primary" data-action="modal-close">关闭</button>'
+  });
+}
 
 const channelStatusLabel = (channel = {}) => {
   if (channel.id === "web" && channel.status === "ready") return "已就绪";
@@ -496,6 +688,7 @@ function acquisitionConversationControls(conversation, customer) {
   const handover = linkedHandoverForConversation(conversation);
   if (!handover) return badge("无开放接管任务", "outline");
   if (handover.status === "pending") return `<button class="btn small primary" data-action="claim-handover" data-id="${handover.id}">人工接管</button>`;
+  if (!isCurrentHandoverAssignee(handover)) return badge("已由其他顾问接管", "outline");
   return `<button class="btn small" data-action="robot-takeover" data-id="${handover.id}">机器人接管</button><button class="btn small primary" data-action="complete-handover" data-id="${handover.id}">记录跟进 / 完结</button>`;
 }
 
@@ -514,14 +707,22 @@ function acquisitionConversationComposer(conversation, customer) {
     ? ""
     : handover.status === "pending"
       ? `<button class="btn small primary" data-action="claim-handover" data-id="${handover.id}">接管并停止AI对外发送</button>`
+      : !isCurrentHandoverAssignee(handover)
+        ? badge("已由其他顾问接管", "outline")
       : `<button class="btn small" data-action="robot-takeover" data-id="${handover.id}">机器人接管并登记</button>`;
-  return `<div class="chat-compose"><div class="compose-box"><label class="caption" for="message-input">回复草稿 · 不会自动发送</label><textarea id="message-input" maxlength="4000" placeholder="输入回复，或从右侧插入常用话术。复制后请在已批准渠道确认发送。"></textarea><div class="compose-actions"><span class="caption">仅在当前页面临时保存</span><span class="spacer"></span><button class="btn small primary" data-action="copy-reply-draft">复制回复</button></div></div><div class="risk-banner" style="width:100%;margin:8px 0 0">${icon("shield",15)}<div><strong>人工跟进使用电话或已批准的 IM 渠道</strong><br/><details><summary>渠道尚未开放直接发送 · 查看说明</summary>当前仅完成统一通道协议。企业微信、抖音、小红书在完成官方凭证、回调验签和发送验收前，不会把草稿或话术标记为“已发送”。</details></div><span class="spacer"></span>${action}</div></div>`;
+  const handoverIsActive = handover && ["claimed", "active"].includes(handover.status);
+  const canSend = handoverIsActive && isCurrentHandoverAssignee(handover);
+  const unavailableReason = handoverIsActive
+    ? `该会话已由${handoverAssigneeDisplay(handover).title}领取；仅当前领取人可发送`
+    : "请先从人工接管队列领取会话";
+  return `<div class="chat-compose"><div class="compose-box"><label class="caption" for="message-input">${canSend ? "人工回复" : "回复草稿 · 接管后可发送"}</label><textarea id="message-input" maxlength="4000" placeholder="输入回复，或从右侧插入常用话术。接管后点击发送。"></textarea><div class="compose-actions"><span class="caption">${canSend ? "发送后会同步到前台会话与超级管理员后台" : escapeHtml(unavailableReason)}</span><span class="spacer"></span><button class="btn small primary" data-action="send-message" data-id="${conversation.id}" ${canSend ? "" : "disabled"}>发送</button></div></div><div class="risk-banner" style="width:100%;margin:8px 0 0">${icon("shield",15)}<div><strong>人工回复受接管状态和渠道权限控制</strong><br/><details><summary>发送说明</summary>仅已实名接管的会话可发送；消息会写入统一会话记录并同步到前台。企业微信、抖音、小红书在完成官方凭证、回调验签和发送验收前，不会把草稿或话术标记为“已发送”。</details></div><span class="spacer"></span>${action}</div></div>`;
 }
 
 function conversationsPage() {
   const groupOf = item => {
     const task = linkedHandoverForConversation(item);
-    return /结束|关闭|完成/.test(item.status || '') ? '已结束' : task?.status === 'pending' || item.status === '待人工' ? '待人工' : task?.status === 'claimed' || item.mode === '人工' ? '人工接待' : '机器人';
+    const humanOwned = ["claimed", "active"].includes(task?.status) || task?.ai_suspended === true;
+    return /结束|关闭|完成/.test(item.status || '') ? '已结束' : task?.status === 'pending' || item.status === '待人工' ? '待人工' : humanOwned || item.mode === '人工' ? '人工接待' : '机器人';
   };
   const conversations = store.state.conversations.filter(item => ui.conversationFilter === "全部" || groupOf(item) === ui.conversationFilter || item.status.includes(ui.conversationFilter)).sort((a,b)=>Date.parse(b.updatedAt)-Date.parse(a.updatedAt));
   const current = store.conversation(ui.conversationId) || conversations[0] || store.state.conversations[0];
@@ -543,12 +744,12 @@ function conversationsPage() {
   const imChannels = phaseOneImChannels();
   return `<div class="page reception-page" style="padding-bottom:20px">${pageHead("客户沟通", "会话与接待", isPresalesWorkspace() ? "这里展示已进入聊天的客户会话。售前人员可实名接管、确认后将会话交回机器人，并调用已启用的常用话术；所有操作都会留下审计记录。" : "查看实时咨询、未读消息和接待状态；选择客户后处理对应会话。", isPresalesWorkspace() ? "" : `<button class="btn" data-action="conversation-stats">${icon("chart",15)}会话质量检查</button><button class="btn primary" data-action="new-conversation">${icon("plus",15)}发起会话</button>`)}
     <section class="card conversation-layout">
-      <aside class="conversation-list"><div class="conversation-filter"><strong>接待工作台</strong><div class="caption" role="status">${ui.conversationSyncError || "会话实时同步"}</div><div class="search-field" style="min-width:0;margin-top:12px">${icon("search",15)}<input id="reception-search" class="field" aria-label="搜索客户或会话" placeholder="搜索客户、渠道、会话内容" value="${escapeHtml(ui.conversationQuery)}"/></div><div class="reception-filters">${["全部","待人工","人工接待","机器人","已结束"].map(filter=>`<button class="tab-btn ${ui.conversationFilter===filter?'active':''}" data-action="conversation-filter" data-id="${filter}">${filter}<span>${store.state.conversations.filter(item=>filter==='全部'||groupOf(item)===filter).length}</span></button>`).join('')}</div></div><div class="conversation-items">${['待人工','人工接待','机器人','已结束'].map(group=>{const items=conversations.filter(item=>groupOf(item)===group);return items.length?`<details class="reception-group" open><summary>${group} <span>${items.length}</span></summary>${items.map(conversation=>{const itemCustomer=store.customer(conversation.customerId);if(!itemCustomer)return '';return `<button class="conversation-item ${conversation.id===current.id?'active':''}" data-search="${escapeHtml([itemCustomer.name,conversation.channel,conversation.lastMessage].join(' ').toLowerCase())}" data-action="select-conversation" data-id="${escapeHtml(conversation.id)}">${avatar(itemCustomer,'sm')}<div style="min-width:0"><div class="row"><span class="conversation-name">${escapeHtml(itemCustomer.name)}</span></div><div class="conversation-preview">${escapeHtml(conversation.lastMessage||'暂无消息')}</div><div class="customer-meta">${escapeHtml(conversation.channel)} · ${relativeTime(conversation.updatedAt)}</div></div>${conversationReads.unread(conversation)?`<span class="unread" aria-label="${conversationReads.unread(conversation)}条未读消息">${Math.min(conversationReads.unread(conversation),99)}${conversationReads.unread(conversation)>99?"+":""}</span>`:''}</button>`;}).join('')}</details>`:'';}).join('')}<p id="reception-empty" class="caption" hidden>没有匹配的会话，请调整搜索或分组。</p></div></aside>
-      <section class="chat"><header class="chat-head">${avatar(customer,"sm")}<div><strong>${customer.name}</strong><div class="customer-meta">${escapeHtml(current.channel)} · ${conversationStatusLabel(current.status)}</div></div><div class="caption" style="margin-left:6px;line-height:1.45"><strong style="color:var(--ink)">当前接待：${escapeHtml(assignee.title)}</strong><br/>${escapeHtml(assignee.detail)}</div><span class="spacer"></span><button class="btn small ghost" data-entity="conversation" data-id="${current.id}">详情</button>${acquisitionConversationControls(current, customer)}<button class="btn icon-only ghost" data-customer="${customer.id}" aria-label="客户360">${icon("users",17)}</button></header>
-        <div class="chat-body">${(current.messages || []).map((message) => `<div class="message ${message.from === "customer" ? "customer" : message.from === "system" ? "system" : ""}">${message.from !== "system" ? `<div class="avatar sm" style="display:grid;place-items:center;background:${message.from === "customer" ? "#f0d4db" : "#ebe5f4"};color:${message.from === "customer" ? "var(--brand)" : "#7651a8"};font-size:10px;font-weight:800">${escapeHtml(message.from === "customer" ? customer.name.slice(0,1) : message.from === "staff" ? String(assignee.title || customer.owner).slice(0,1) : "AI")}</div>` : ""}<div><div class="message-bubble">${escapeHtml(message.text)}</div><div class="message-time">${formatDate(message.at)}</div></div></div>`).join("")}</div>
+      <aside class="conversation-list"><div class="conversation-filter"><strong>接待工作台</strong><div class="caption" role="status">${ui.conversationSyncError || "会话实时同步"}</div><div class="search-field" style="min-width:0;margin-top:12px">${icon("search",15)}<input id="reception-search" class="field" aria-label="搜索客户或会话" placeholder="搜索客户、渠道、会话内容" value="${escapeHtml(ui.conversationQuery)}"/></div><div class="reception-filters">${["全部","待人工","人工接待","机器人","已结束"].map(filter=>`<button class="tab-btn ${ui.conversationFilter===filter?'active':''}" data-action="conversation-filter" data-id="${filter}">${filter}<span>${store.state.conversations.filter(item=>filter==='全部'||groupOf(item)===filter).length}</span></button>`).join('')}</div></div><div class="conversation-items">${['待人工','人工接待','机器人','已结束'].map(group=>{const items=conversations.filter(item=>groupOf(item)===group);return items.length?`<details class="reception-group" open><summary>${group} <span>${items.length}</span></summary>${items.map(conversation=>{const itemCustomer=store.customer(conversation.customerId);if(!itemCustomer)return '';return `<button class="conversation-item ${conversation.id===current.id?'active':''}" data-search="${escapeHtml([customerDisplayName(itemCustomer),conversation.channel,conversation.lastMessage].join(' ').toLowerCase())}" data-action="select-conversation" data-id="${escapeHtml(conversation.id)}">${avatar(itemCustomer,'sm')}<div style="min-width:0"><div class="row"><span class="conversation-name">${escapeHtml(customerDisplayName(itemCustomer))}</span></div><div class="conversation-preview">${escapeHtml(conversation.lastMessage||'暂无消息')}</div><div class="customer-meta">${escapeHtml(conversation.channel)} · ${relativeTime(conversation.updatedAt)}</div></div>${conversationReads.unread(conversation)?`<span class="unread" aria-label="${conversationReads.unread(conversation)}条未读消息">${Math.min(conversationReads.unread(conversation),99)}${conversationReads.unread(conversation)>99?"+":""}</span>`:''}</button>`;}).join('')}</details>`:'';}).join('')}<p id="reception-empty" class="caption" hidden>没有匹配的会话，请调整搜索或分组。</p></div></aside>
+      <section class="chat"><header class="chat-head">${avatar(customer,"sm")}<div><strong>${escapeHtml(customerDisplayName(customer))}</strong><div class="customer-meta">${escapeHtml(current.channel)} · ${handover ? handoverStatusLabel(handover.status) : conversationStatusLabel(current.status)}</div></div><div class="caption" style="margin-left:6px;line-height:1.45"><strong style="color:var(--ink)">当前接待：${escapeHtml(assignee.title)}</strong><br/>${escapeHtml(assignee.detail)}</div><span class="spacer"></span><button class="btn small ghost" data-action="conversation-detail" data-id="${current.id}">详情</button>${acquisitionConversationControls(current, customer)}<button class="btn icon-only ghost" data-customer="${customer.id}" aria-label="客户360">${icon("users",17)}</button></header>
+        <div class="chat-body">${(current.messages || []).length ? (current.messages || []).map((message) => `<div class="message ${message.from === "customer" ? "customer" : message.from === "system" ? "system" : ""}" data-message-id="${escapeHtml(message.id || `${message.from}:${message.at}`)}">${message.from !== "system" ? `<div class="avatar sm" style="display:grid;place-items:center;background:${message.from === "customer" ? "#f0d4db" : "#ebe5f4"};color:${message.from === "customer" ? "var(--brand)" : "#7651a8"};font-size:10px;font-weight:800">${escapeHtml(message.from === "customer" ? customer.name.slice(0,1) : message.from === "staff" ? String(assignee.title || customer.owner).slice(0,1) : "AI")}</div>` : ""}<div><div class="message-bubble">${escapeHtml(message.text)}</div><div class="message-time">${formatDate(message.at)}</div></div></div>`).join("") : `<div class="empty">该会话暂无消息记录：客户只提交了联系方式，可在右侧查看客户资料。</div>`}</div>
         ${acquisitionConversationComposer(current, customer)}
       </section>
-      <aside class="customer-sidebar reception-tools"><div class="reception-tabs" role="tablist" aria-label="接待辅助工具">${[['phrases','常用话术'],['customer','客户资料'],['channel','渠道状态']].map(([id,label])=>`<button role="tab" aria-selected="${ui.receptionTab===id}" class="tab-btn ${ui.receptionTab===id?'active':''}" data-action="reception-tab" data-id="${id}">${label}</button>`).join('')}</div><section data-reception-panel="customer" ${ui.receptionTab==='customer'?'':'hidden'}><div class="compact-customer">${avatar(customer,"lg")}<div class="compact-customer-name">${escapeHtml(customer.name)}</div><div class="compact-customer-meta">${escapeHtml(customer.macroStage)} · ${escapeHtml(customer.microStage)}</div><button class="btn small" style="margin-top:9px" data-customer="${customer.id}">打开客户资料</button></div>
+      <aside class="customer-sidebar reception-tools"><div class="reception-tabs" role="tablist" aria-label="接待辅助工具">${[['phrases','常用话术'],['customer','客户资料'],['channel','渠道状态']].map(([id,label])=>`<button role="tab" aria-selected="${ui.receptionTab===id}" class="tab-btn ${ui.receptionTab===id?'active':''}" data-action="reception-tab" data-id="${id}">${label}</button>`).join('')}</div><section data-reception-panel="customer" ${ui.receptionTab==='customer'?'':'hidden'}><div class="compact-customer">${avatar(customer,"lg")}<div class="compact-customer-name">${escapeHtml(customerDisplayName(customer))}</div><div class="compact-customer-meta">${escapeHtml(customer.macroStage)} · ${escapeHtml(customer.microStage)}</div><button class="btn small" style="margin-top:9px" data-customer="${customer.id}">打开客户资料</button></div>
         <div class="section-title">当前接待</div><div class="responsibility-row"><div class="responsibility-icon">${icon(handover?.ai_suspended ? "users" : "bot",16)}</div><div><div class="responsibility-name">${escapeHtml(assignee.title)}</div><div class="responsibility-role">${escapeHtml(assignee.detail)}</div></div></div>
         </section><section data-reception-panel="channel" ${ui.receptionTab==='channel'?'':'hidden'}>        <div class="divider"></div><div class="section-title">IM 接入状态</div><div class="tag-list">${imChannels.map((channel) => badge(`${channel.name} · ${channelStatusLabel(channel)}`, channel.status === "misconfigured" ? "warning" : channel.status === "configured" ? "brand" : "outline")).join("")}</div><div class="caption" style="margin-top:8px">通道状态以服务端配置为准；待连接或待验收时只能登记已发生的人工沟通，不能对外发送。</div>
 </section><section data-reception-panel="phrases" ${ui.receptionTab==='phrases'?'':'hidden'}><div class="row between"><strong>常用话术</strong><button class="link" data-action="open-phrase-library">管理话术</button></div><input class="field" id="reception-phrase-search" aria-label="搜索常用话术" placeholder="搜索话术标题或内容"/><div class="reception-phrases">${[...new Set(phrases.map(p=>p.category||p.group||'通用话术'))].map(group=>`<details open><summary>${escapeHtml(group)}</summary>${phrases.filter(p=>(p.category||p.group||'通用话术')===group).map(phrase=>`<article class="reception-phrase" data-phrase-search="${escapeHtml((phrase.name+' '+phrase.content).toLowerCase())}"><div class="row between"><strong>${escapeHtml(phrase.name)}</strong><button class="btn small ghost" data-action="use-common-phrase" data-id="${escapeHtml(phrase.id)}">插入</button></div><p>${escapeHtml(phrase.content)}</p></article>`).join('')}</details>`).join('')||'<p class="caption">暂无已启用话术，可到话术库维护。</p>'}</div><p id="reception-phrase-empty" class="caption" hidden>未找到匹配的话术。</p></section><section data-reception-panel="customer" ${ui.receptionTab==='customer'?'':'hidden'}>
@@ -2099,22 +2300,158 @@ async function cancelAvatarJob(generationJobId, reopenDetail = false) {
   finally { finishAvatarMutation(physicianId, scopeEpoch); }
 }
 
+function captureScrollAnchor(element) {
+  if (!element) return null;
+  const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
+  if (atBottom) return { mode: "bottom" };
+  const message = [...element.querySelectorAll("[data-message-id]")]
+    .find((node) => node.offsetTop + node.offsetHeight > element.scrollTop + 1);
+  return message
+    ? { mode: "anchor", id: message.dataset.messageId, offset: element.scrollTop - message.offsetTop }
+    : { mode: "top", top: element.scrollTop };
+}
+
+function restoreScrollAnchor(element, anchor) {
+  if (!element || !anchor) return;
+  if (anchor.mode === "bottom") {
+    element.scrollTop = element.scrollHeight;
+    return;
+  }
+  if (anchor.mode === "anchor") {
+    const message = [...element.querySelectorAll("[data-message-id]")]
+      .find((node) => node.dataset.messageId === anchor.id);
+    if (message) {
+      element.scrollTop = Math.max(0, message.offsetTop + (Number(anchor.offset) || 0));
+      return;
+    }
+  }
+  element.scrollTop = Math.max(0, Number(anchor.top) || 0);
+}
+
+function restoreReadCursorPosition(element, conversation) {
+  if (!element || !conversation) return;
+  const readId = conversationReads.lastReadMessageId(conversation);
+  if (!readId) {
+    element.scrollTop = element.scrollHeight;
+    return;
+  }
+  const message = [...element.querySelectorAll("[data-message-id]")]
+    .find((node) => node.dataset.messageId === readId);
+  if (message) element.scrollTop = Math.max(0, message.offsetTop - 8);
+}
+
+const receptionGroupKey = (group) => group?.querySelector('summary')?.childNodes?.[0]?.textContent?.trim() || '';
+
+function syncReceptionNodeAttributes(current, incoming) {
+  for (const attribute of [...current.attributes]) {
+    if (!incoming.hasAttribute(attribute.name)) current.removeAttribute(attribute.name);
+  }
+  for (const attribute of incoming.attributes) {
+    if (current.getAttribute(attribute.name) !== attribute.value) current.setAttribute(attribute.name, attribute.value);
+  }
+}
+
+function receptionItemNeedsContentUpdate(current, incoming) {
+  const text = (node, selector) => node.querySelector(selector)?.textContent || '';
+  return current.className !== incoming.className
+    || current.dataset.search !== incoming.dataset.search
+    || text(current, '.conversation-name') !== text(incoming, '.conversation-name')
+    || text(current, '.conversation-preview') !== text(incoming, '.conversation-preview')
+    || text(current, '.unread') !== text(incoming, '.unread');
+}
+
+// The reception inbox can contain hundreds of conversations. Rebuilding its
+// innerHTML turns every unaffected row into a new DOM node, which drops local
+// browser state and makes a single incoming message look like a full redraw.
+// Reconcile by conversation ID instead: only a changed/new row is patched or
+// moved, while the unaffected rows keep their node identity.
+function updateReceptionConversationItems(current, incoming) {
+  const existingItems = new Map([...current.querySelectorAll('.conversation-item')]
+    .map((item) => [item.dataset.id, item]));
+  const desiredItemIds = new Set();
+  const desiredGroupKeys = new Set();
+  const existingGroups = new Map([...current.querySelectorAll('.reception-group')]
+    .map((group) => [receptionGroupKey(group), group]));
+  let previousGroup = null;
+
+  for (const incomingGroup of incoming.querySelectorAll('.reception-group')) {
+    const key = receptionGroupKey(incomingGroup);
+    if (!key) continue;
+    desiredGroupKeys.add(key);
+    let group = existingGroups.get(key);
+    if (!group) {
+      group = incomingGroup.cloneNode(false);
+      const summary = incomingGroup.querySelector('summary');
+      if (summary) group.append(summary.cloneNode(true));
+    } else {
+      const wasOpen = group.open;
+      syncReceptionNodeAttributes(group, incomingGroup);
+      group.open = wasOpen;
+      const summary = group.querySelector('summary');
+      const incomingSummary = incomingGroup.querySelector('summary');
+      if (summary && incomingSummary && summary.innerHTML !== incomingSummary.innerHTML) summary.replaceChildren(...[...incomingSummary.childNodes].map((node) => node.cloneNode(true)));
+    }
+
+    if (previousGroup) {
+      if (previousGroup.nextElementSibling !== group) current.insertBefore(group, previousGroup.nextSibling);
+    } else if (current.firstElementChild !== group) {
+      current.insertBefore(group, current.firstChild);
+    }
+    previousGroup = group;
+
+    let previousItem = group.querySelector('summary');
+    for (const incomingItem of incomingGroup.querySelectorAll('.conversation-item')) {
+      const id = incomingItem.dataset.id;
+      if (!id) continue;
+      desiredItemIds.add(id);
+      let item = existingItems.get(id);
+      if (!item) {
+        item = incomingItem.cloneNode(true);
+        existingItems.set(id, item);
+      } else {
+        const contentChanged = receptionItemNeedsContentUpdate(item, incomingItem);
+        syncReceptionNodeAttributes(item, incomingItem);
+        if (contentChanged) item.replaceChildren(...[...incomingItem.childNodes].map((node) => node.cloneNode(true)));
+      }
+      if (item.parentElement !== group || previousItem?.nextElementSibling !== item) group.insertBefore(item, previousItem?.nextSibling || null);
+      previousItem = item;
+    }
+  }
+
+  for (const item of current.querySelectorAll('.conversation-item')) {
+    if (!desiredItemIds.has(item.dataset.id)) item.remove();
+  }
+  for (const group of current.querySelectorAll('.reception-group')) {
+    if (!desiredGroupKeys.has(receptionGroupKey(group))) group.remove();
+  }
+  const empty = current.querySelector('#reception-empty');
+  const incomingEmpty = incoming.querySelector('#reception-empty');
+  if (empty && incomingEmpty) syncReceptionNodeAttributes(empty, incomingEmpty);
+}
+
 function updateReceptionWindow() {
   const layout=document.querySelector('.reception-page .conversation-layout');
   if(!layout)return;
   const chat=layout.querySelector('.chat-body');
   const nearBottom=!chat || chat.scrollHeight-chat.scrollTop-chat.clientHeight<48;
+  const chatAnchor=captureScrollAnchor(chat);
   if(document.visibilityState==='visible' && nearBottom)conversationReads.markRead(store.conversation(ui.conversationId));
   const template=document.createElement('template');template.innerHTML=conversationsPage();
   const next=template.content;
-  for(const selector of ['.reception-filters','.conversation-items','.chat-head','.chat-body']) {
+  for(const selector of ['.reception-filters','.conversation-items','.chat-head','.chat-body','.reception-tools']) {
     const current=layout.querySelector(selector),incoming=next.querySelector(selector);
     if(!current||!incoming||current.innerHTML===incoming.innerHTML)continue;
+    if(selector==='.conversation-items') {
+      updateReceptionConversationItems(current,incoming);
+      continue;
+    }
     const scroll=current.scrollTop;
+    const anchor=selector==='.chat-body' ? chatAnchor : null;
     const groups=new Map([...current.querySelectorAll('details')].map(d=>[d.querySelector('summary')?.textContent,d.open]));
     current.replaceChildren(...incoming.childNodes);
     current.querySelectorAll('details').forEach(d=>{const state=groups.get(d.querySelector('summary')?.textContent);if(state!==undefined)d.open=state;});
-    current.scrollTop=selector==='.chat-body' && nearBottom ? current.scrollHeight : scroll;
+    if(selector==='.chat-body')restoreScrollAnchor(current,anchor);
+    else current.scrollTop=scroll;
   }
   filterReceptionList();
 }
@@ -2123,18 +2460,22 @@ function render(preserveScroll = false) {
   const focused = preserveScroll ? document.activeElement : null;
   const focusState = focused?.id && focused.closest("#app") ? {id:focused.id, start:focused.selectionStart, end:focused.selectionEnd} : null;
   const previousInput=document.querySelector('#message-input');
+  const previousList=document.querySelector('.conversation-items');
   const previousChat=document.querySelector('.chat-body');
-  const previousChatScroll=previousChat?.scrollTop;
-  const previousChatAtBottom=!previousChat || previousChat.scrollHeight-previousChat.scrollTop-previousChat.clientHeight<48;
+  const previousListScroll=previousList?.scrollTop;
+  const previousChatAnchor=captureScrollAnchor(previousChat);
   const previousConversationId=previousInput?.dataset.conversationId;
-  if(previousInput?.dataset.conversationId)ui.replyDrafts[previousInput.dataset.conversationId]=previousInput.value;
+  if (previousInput?.dataset.conversationId) saveReplyDraft(previousInput.dataset.conversationId, previousInput.value);
 
   if (!handoverOnlyMode) syncAvatarStudioScope();
   const y = preserveScroll ? window.scrollY : 0;
   document.querySelector("#app").innerHTML = shell(currentPage());
   hydrateListPagination();
   const replyInput=document.querySelector('#message-input');
-  if(replyInput){replyInput.dataset.conversationId=ui.conversationId;replyInput.value=ui.replyDrafts[ui.conversationId]||'';}
+  if (replyInput) {
+    replyInput.dataset.conversationId = ui.conversationId;
+    replyInput.value = readReplyDraft(ui.conversationId);
+  }
   if (focusState) {
     const target=document.getElementById(focusState.id);
     target?.focus({preventScroll:true});
@@ -2145,7 +2486,11 @@ function render(preserveScroll = false) {
   if (preserveScroll) window.scrollTo(0, y);
   else window.scrollTo(0, 0);
   requestAnimationFrame(() => {
-    document.querySelector(".chat-body")?.scrollTo(0, previousConversationId === ui.conversationId && previousChatScroll !== undefined && !previousChatAtBottom ? previousChatScroll : 999999);
+    const nextList=document.querySelector('.conversation-items');
+    if(nextList && previousListScroll !== undefined)nextList.scrollTop=previousListScroll;
+    const nextChat=document.querySelector(".chat-body");
+    if(nextChat && previousConversationId === ui.conversationId && previousChatAnchor)restoreScrollAnchor(nextChat,previousChatAnchor);
+    else if(nextChat)restoreReadCursorPosition(nextChat,store.conversation(ui.conversationId));
     if (!handoverOnlyMode) {
       if(hasCapability("platform:manage")) hydrateLlmRuntime();
       if (routeAvatarPhysician()) hydrateAvatarStudio();
@@ -2408,10 +2753,12 @@ function showUnavailableManagementAction(action, trigger) {
 
 function showProfileModal(customerId) {
   const customer = store.customer(customerId);
+  const preferences = customer.contactPreferences || {};
+  const isAcquisitionCustomer = customer.origin === "acquisition_advisor";
   openModal({
-    title: `编辑${customer.name}的客户画像`,
-    desc: "请根据已确认的客户信息进行修改，保存后会更新后续跟进建议。",
-    body: `<form id="profile-form" data-customer-id="${customer.id}"><div class="form-grid">${formField("预算区间","budget",customer.profile.budget)}${formField("决策方式","decision",customer.profile.decision)}${formField("联系偏好","contact",customer.profile.contact)}${formField("沟通风格","style",customer.profile.style)}${formField("核心顾虑","concern",customer.profile.concern,{full:true})}${formField("客户标签（顿号分隔）","tags",customer.tags.join("、"),{full:true})}${formField("修改依据","evidence","人工沟通确认",{type:"textarea",full:true,required:true})}</div></form>`,
+    title: `编辑${customerDisplayName(customer)}的客户画像`,
+    desc: isAcquisitionCustomer ? "仅保存客户已明确的信息；手机号变更会重新查询会员状态，保存冲突时请刷新后重试。" : "请根据已确认的客户信息进行修改，保存后会更新后续跟进建议。",
+    body: `<form id="profile-form" data-customer-id="${customer.id}" data-version="${Number(customer.profileVersion || 1)}"><div class="form-grid">${isAcquisitionCustomer ? `${formField("客户姓名","name",customer.name)}${formField("新手机号（不变则留空）","mobile","",{type:"tel"})}` : ""}${formField("预算区间","budget",customer.profile.budget)}${formField("决策方式","decision",customer.profile.decision)}${formField("联系偏好","contact",customer.profile.contact)}${isAcquisitionCustomer ? `${formField("方便联系时段","preferred_time",preferences.preferred_time || "")}${formField("禁止联系","do_not_contact",preferences.do_not_contact ? "是" : "否",{type:"select",items:["否","是"]})}` : ""}${formField("沟通风格","style",customer.profile.style)}${formField("核心顾虑","concern",customer.profile.concern,{full:true})}${formField("客户标签（顿号分隔）","tags",customer.tags.join("、"),{full:true})}${formField("修改依据","evidence","人工沟通确认",{type:"textarea",full:true,required:true})}</div></form>`,
     footer: `<button class="btn" data-action="modal-close">取消</button><button class="btn primary" type="submit" form="profile-form">保存并重算策略</button>`
   });
 }
@@ -2649,7 +2996,7 @@ async function copyApiCurl() {
 
 async function handleAction(action, id, target) {
   if (action === "reception-tab") { ui.receptionTab=id;render(true);return; }
-  if (action === "copy-reply-draft") { const text=document.querySelector('#message-input')?.value.trim();if(!text)return toast('请先输入回复内容','warning');try{await navigator.clipboard.writeText(text);toast('回复已复制，请在已批准渠道确认发送','success');}catch{toast('复制失败，请选中文本手动复制','warning');}return; }
+  if (action === "copy-reply-draft") { const text=document.querySelector('#message-input')?.value.trim();if(!text)return toast('请先输入回复内容','warning');try{await navigator.clipboard.writeText(text);toast('回复已复制','success');}catch{toast('复制失败，请选中文本手动复制','warning');}return; }
 
   if (action === "admin-logout") { try { target.disabled=true;await logoutAdminSession(); } catch(error){toast(error.message,"error");target.disabled=false;} return; }
   if (action === "list-page") {
@@ -2696,8 +3043,26 @@ async function handleAction(action, id, target) {
     case "reveal-appointment-contact": await revealHandoverContactFromUi(id, target, { appointment:true }); break;
     case "refresh-appointments": await syncAppointmentOperations(true); break;
     case "refresh-bad-cases": await syncBadCases(true); break;
+    case "recheck-member-check": {
+      try {
+        if (target) target.disabled = true;
+        const result = await recheckManagementCustomerMemberCheck(id);
+        await syncAcquisitionCustomers();
+        const status = result?.member_check_status;
+        toast(
+          status === "checked" ? "院方查询已完成" : `已发起重新查询（${status || "未完成"}），请稍后刷新查看结果`,
+          status === "checked" ? "success" : "warning"
+        );
+      } catch (error) {
+        toast(error.message || "院方重查失败，请稍后重试", "danger");
+      } finally {
+        if (target) target.disabled = false;
+      }
+      break;
+    }
     case "view-bad-case": showBadCaseModal(id); break;
     case "review-bad-case": await reviewBadCaseFromUi(id, target?.dataset.status, target); break;
+    case "conversation-detail": showConversationDetail(id); break;
     case "claim-handover": await claimHandoverFromUi(id, target); break;
     case "claim-appointment": await claimAppointmentFromUi(id, target); break;
     case "resolve-appointment": await showResolveAppointmentModal(id); break;
@@ -2758,7 +3123,7 @@ async function handleAction(action, id, target) {
       toast(id === "人工" ? "人工已接管，AI停止对外发送" : "已开启AI辅助，发送前仍由人工确认", "success");
       break;
     }
-    case "send-message": sendCurrentMessage(id); break;
+      case "send-message": await sendCurrentMessage(id); break;
     case "handover-conversation": {
       const conversation = store.conversation(id);
       const customer = conversation ? store.customer(conversation.customerId) : null;
@@ -2776,6 +3141,7 @@ async function handleAction(action, id, target) {
       const input = document.querySelector("#message-input");
       if (!template || !input) { toast("暂无已启用的话术模板", "warning"); break; }
       input.value = template.content;
+      saveReplyDraft(input.dataset.conversationId, input.value);
       input.focus();
       toast(`已插入话术模板：${template.name}`, "success");
       break;
@@ -2788,6 +3154,7 @@ async function handleAction(action, id, target) {
       const input = document.querySelector("#message-input");
       if (input) {
         input.value = input.value ? `${input.value}\n${template.content}` : template.content;
+        saveReplyDraft(input.dataset.conversationId, input.value);
         input.focus();
         toast(`已插入常用话术：${template.name}`, "success");
         break;
@@ -2805,6 +3172,7 @@ async function handleAction(action, id, target) {
       const input = document.querySelector("#message-input");
       if (!knowledge || !input) { toast("暂无可用于客户回答的已发布知识", "warning"); break; }
       input.value = `【已发布知识：${knowledge.title}】${knowledge.excerpt}`;
+      saveReplyDraft(input.dataset.conversationId, input.value);
       input.focus();
       toast(`已引用知识：${knowledge.title}`, "success");
       break;
@@ -3241,14 +3609,32 @@ async function showKnowledgeMaintenanceModal(id, action) {
   } catch (error) { toast(error.message || "资料读取失败", "danger"); }
 }
 
-function sendCurrentMessage(conversationId) {
+async function sendCurrentMessage(conversationId) {
   const input = document.querySelector("#message-input");
   const text = input?.value.trim();
   if (!text) return toast("请输入回复内容", "warning");
   const conversation = store.conversation(conversationId);
   const customer = conversation ? store.customer(conversation.customerId) : null;
   if (customer?.origin === "acquisition_advisor") {
-    return toast("本期尚未对接人工渠道发送；请使用电话或已批准渠道跟进", "warning");
+    const handover = conversation ? linkedHandoverForConversation(conversation) : null;
+    if (!handover || !["claimed", "active"].includes(handover.status)) return toast("请先从实名人工接管队列领取该会话", "warning");
+    if (!isCurrentHandoverAssignee(handover)) return toast("该会话已由其他顾问领取；只有当前领取人可以发送", "warning");
+    try {
+      // 接管任务按前台 session（ps_…）关联；conversation.id 是管理端投影
+      // 的内部 V-AI…标识，不能用于接管鉴权和真实回复写入。
+      const externalConversationId = conversation.externalConversationId || conversation.id;
+      const idempotencyKey = prepareReplyDraftRetry(conversationId, text);
+      const receipt = await sendManagementConversationReply(externalConversationId, text, { handoverVersion:handover.updated_at, idempotencyKey });
+      clearReplyDraft(conversationId);
+      if (input) input.value = "";
+      await syncAcquisitionCustomers();
+      toast(receipt?.delivery?.delivery_status === "delivered"
+        ? "消息已送达前台客户端"
+        : "消息已提交，等待前台客户端送达确认", "success");
+    } catch (error) {
+      toast(error.message || "消息发送失败，请稍后重试", "danger");
+    }
+    return;
   }
   if (conversation?.mode !== "人工") {
     return toast("请先切换为人工接管；当前阶段AI只能提供参考，不能对外发送消息", "warning");
@@ -3258,7 +3644,7 @@ function sendCurrentMessage(conversationId) {
     openModal({ title: "内容已被合规门禁拦截", desc: `命中高风险表达：“${hit}”`, body: `<div class="risk-banner">${icon("alert",16)}该内容涉及医疗边界、异常反应或效果承诺，不能由AI自动发送。请改为一般流程说明，或交由人工/医生处理。</div><div class="card padded"><div class="caption">原内容</div><p class="page-desc">${escapeHtml(text)}</p></div>`, footer: `<button class="btn" data-action="modal-close">返回修改</button><button class="btn danger" data-action="handover-conversation" data-id="${conversationId}">转人工处理</button>` });
     return;
   }
-  delete ui.replyDrafts[conversationId];
+  clearReplyDraft(conversationId);
   if(input)input.value="";
   store.sendMessage(conversationId, text, "人工");
   toast("人工沟通记录已保存；系统未向外部渠道发送消息", "success");
@@ -3308,6 +3694,9 @@ function filterReceptionList() {
   const empty=document.querySelector('#reception-empty');if(empty)empty.hidden=Boolean(visible);
 }
 document.addEventListener("input", (event) => {
+  if (event.target.id === "message-input") {
+    saveReplyDraft(event.target.dataset.conversationId, event.target.value);
+  }
   if(event.target.id==='reception-search'){ui.conversationQuery=event.target.value;filterReceptionList();}
   if(event.target.id==='reception-phrase-search'){let count=0;document.querySelectorAll('[data-phrase-search]').forEach(item=>{item.hidden=!item.dataset.phraseSearch.includes(event.target.value.trim().toLowerCase());if(!item.hidden)count++;});document.querySelectorAll('.reception-phrases details').forEach(group=>{group.hidden=![...group.querySelectorAll('[data-phrase-search]')].some(item=>!item.hidden);});const empty=document.querySelector('#reception-phrase-empty');if(empty)empty.hidden=Boolean(count);}
 
@@ -3741,6 +4130,24 @@ document.addEventListener("submit", async (event) => {
   }
   if (form.id === "profile-form") {
     const customer = store.customer(form.dataset.customerId);
+    if (customer?.origin === "acquisition_advisor") {
+      try {
+        const patch = {
+          name:data.name,
+          ...(String(data.mobile || "").trim() ? { mobile:data.mobile } : {}),
+          profile:{ budget:data.budget, decision:data.decision, contact:data.contact, style:data.style, concern:data.concern },
+          contact_preferences:{ preferred_time:data.preferred_time || "", do_not_contact:data.do_not_contact === "是", note:data.contact || "" },
+          tags:String(data.tags || "").split(/[、,，]/).map((item) => item.trim()).filter(Boolean)
+        };
+        await updateManagementCustomerProfile(customer.id, { expectedVersion:Number(form.dataset.version) || 1, patch });
+        closeModal();
+        await syncAcquisitionCustomers();
+        toast("客户资料已保存；电话变更将重新查询会员状态", "success");
+      } catch (error) {
+        toast(error.message || "客户资料保存失败，请刷新后重试", error.code === "PROFILE_VERSION_CONFLICT" ? "warning" : "danger");
+      }
+      return;
+    }
     store.updateCustomer(customer.id, { profile: { ...customer.profile, budget:data.budget, decision:data.decision, contact:data.contact, style:data.style, concern:data.concern, confidence:100 }, tags:data.tags.split(/[、,，]/).map((item) => item.trim()).filter(Boolean) }, { type:"profile", title:"客户画像由人工更新", detail:`${data.evidence}；系统已重新生成下一步建议。`, actor:"当前用户", channel:"系统", tone:"positive" }); closeModal(); toast("画像已更新，下一步建议已重新生成", "success");
   }
   if (form.id === "stage-form") {
@@ -3834,12 +4241,24 @@ let managementPersistQueued = false;
 
 const managementOverlaySignature = () => JSON.stringify(store.managementOverlay());
 
+// Management-domain hydration may run while the reception view is open (for
+// example after the tab regains focus).  That is a data refresh, not a route
+// change: retain the conversation rows, draft and scroll anchor by patching
+// the existing reception window instead of replacing #app.
+const refreshManagementView = () => {
+  if (document.querySelector('.reception-page .conversation-layout')) {
+    updateReceptionWindow();
+    return;
+  }
+  render(true);
+};
+
 const hydrateManagementDomain = async ({ announce = false } = {}) => {
   if (handoverOnlyMode) return null;
   ui.managementDataLoading = true;
   ui.managementDataError = "";
   ui.managementPersistenceState = "loading";
-  render(true);
+  refreshManagementView();
   try {
     const record = await getManagementDomainOverlay();
     if (!record) throw new Error("管理数据服务未返回有效记录");
@@ -3858,7 +4277,7 @@ const hydrateManagementDomain = async ({ announce = false } = {}) => {
     return null;
   } finally {
     ui.managementDataLoading = false;
-    render(true);
+    refreshManagementView();
   }
 };
 
@@ -3903,7 +4322,7 @@ const scheduleManagementOverlayPersist = () => {
 };
 
 store.addEventListener("change", (event) => {
-  if (["acquisition-sync","acquisition-operations-sync"].includes(event.detail?.source)) {
+  if (["management-hydrate", "acquisition-sync", "acquisition-operations-sync"].includes(event.detail?.source)) {
     if(document.querySelector('.reception-page .conversation-layout')){updateReceptionWindow();return;}
     if(!['conversations','customers','customer'].includes(routeInfo().route))return;
   }
@@ -3925,12 +4344,17 @@ const HANDOVER_POLL_BASE_MS = 15_000;
 const HANDOVER_POLL_MAX_BACKOFF_MS = 60_000;
 const syncAcquisitionCustomers = async () => {
   if (acquisitionSyncPromise) return acquisitionSyncPromise;
-  acquisitionSyncPromise = fetch("/api/local/acquisition-customers", { headers:{ Accept:"application/json" } })
+  const afterCursor = encodeAcquisitionCursors(readAcquisitionCursors());
+  const endpoint = afterCursor
+    ? `/api/local/acquisition-customers?after_cursor=${encodeURIComponent(afterCursor)}`
+    : "/api/local/acquisition-customers";
+  acquisitionSyncPromise = fetch(endpoint, { headers:{ Accept:"application/json" } })
     .then(async (response) => {
       if (!response.ok) throw new Error("获客客户同步失败");
       const body = await response.json();
       ui.conversationSyncError="";
       store.upsertAcquisitionSnapshot(body.data);
+      persistAcquisitionCursors(body.data?.meta?.cursor);
     })
     .catch(() => {ui.conversationSyncError="会话同步失败，请刷新重试";if(routeInfo().route==="conversations")render(true);})
     .finally(() => { acquisitionSyncPromise = null; });
@@ -3952,7 +4376,10 @@ const syncAcquisitionChannels = async () => {
     .finally(() => {
       ui.acquisitionChannelsLoading = false;
       acquisitionChannelsSyncPromise = null;
-      if (routeInfo().route === "conversations") render(true);
+      if (routeInfo().route === "conversations") {
+        if (document.querySelector('.reception-page .conversation-layout')) updateReceptionWindow();
+        else render(true);
+      }
     });
   return acquisitionChannelsSyncPromise;
 };
@@ -4054,7 +4481,10 @@ const syncAcquisitionHandovers = async (announce = false, { background = false }
     .finally(() => {
       if (!background) ui.operationsLoading = false;
       handoverSyncPromise = null;
-      if (!background && ["workbench", "conversations"].includes(routeInfo().route)) render(true);
+      if (!background && ["workbench", "conversations"].includes(routeInfo().route)) {
+        if (routeInfo().route === "conversations" && document.querySelector('.reception-page .conversation-layout')) updateReceptionWindow();
+        else render(true);
+      }
     });
   return handoverSyncPromise;
 };
@@ -4187,7 +4617,7 @@ window.addEventListener("beforeunload", () => {
 });
 const bootstrapManagementApplication = async () => {
   render();
-  try{ui.managementIdentity=await getManagementIdentity();conversationReads.setScope({subject:ui.managementIdentity.subject,tenantId:ui.managementIdentity.tenant_id});ui.identityError='';store.state.currentRole=ui.managementIdentity.role;}
+  try{ui.managementIdentity=await getManagementIdentity();conversationReads.setScope({subject:ui.managementIdentity.subject,tenantId:ui.managementIdentity.scope==='platform'?'*':ui.managementIdentity.tenant_id});ui.identityError='';store.state.currentRole=ui.managementIdentity.role;}
   catch(e){ui.identityError=e.message;render();return;}
   ui.managementDataReady=true;
   if(hasCapability('users:manage'))await refreshManagedAccounts();

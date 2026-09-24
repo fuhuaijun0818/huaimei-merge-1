@@ -141,7 +141,10 @@ const tenantRecord = (root, tenantId) => {
 
 const assertTenantId = (tenantId) => {
   const normalized = String(tenantId || "").trim();
-  if (!/^[a-z0-9][a-z0-9-]{1,62}$/i.test(normalized)) {
+  // Keep this tenant grammar aligned with the database/RLS and gateway
+  // validators, which permit underscores in development tenant IDs such as
+  // `team_alpha` and `team_beta`.
+  if (!/^[a-z0-9][a-z0-9_-]{1,62}$/i.test(normalized)) {
     throw operationError("MANAGEMENT_TENANT_INVALID", "租户标识不合法", 400);
   }
   return normalized;

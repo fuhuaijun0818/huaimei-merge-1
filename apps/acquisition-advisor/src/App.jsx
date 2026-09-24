@@ -7,6 +7,110 @@ const QUICK_QUESTIONS = [
 ];
 
 const emptyConversation = () => [];
+// 与服务端同一套规范化：+86 / 0086 / 空格 / 短横线都归一为 11 位，并且按整串
+// 处理，避免把 "0086…" 这类输入截成错误号码。只在离开输入框和提交时调用，
+// 输入过程中不做整体重写，否则粘贴/快速输入会被 React 的受控更新吃掉字符。
+const normalizeMobileInput = (value) => {
+  const digits = String(value || "").normalize("NFKC").replace(/\D/g, "");
+  const local = /^1[3-9]\d{9}$/.test(digits) ? digits : digits.replace(/^(?:00)?86/, "");
+  return local.slice(0, 11);
+};
+
+// 输入过程中只做轻量清洗：保留数字和开头的一个 +，其余分隔符由失焦时统一归一。
+// 输入框不能用 maxLength=11：粘贴 "0086 138-0000-0001" 会被浏览器先截成
+// "0086 138-00"，再归一就只剩 "13800"。
+const cleanMobileTyping = (value) => {
+  const text = String(value || "").normalize("NFKC");
+  const digits = text.replace(/\D/g, "");
+  return `${text.trim().startsWith("+") ? "+" : ""}${digits}`.slice(0, 20);
+};
+const restoreConversationMessages = (items) => collapseImmediateCustomerDuplicates(Array.isArray(items) ? [...items]
+  .sort((left, right) => (Number(left?.seq) || 0) - (Number(right?.seq) || 0))
+  .map((item) => {
+    const id = String(item?.id || `restored-${item?.seq || Math.random()}`);
+    const role = item?.from === "customer" ? "user" : item?.from === "staff" ? "staff" : "assistant";
+    const content = String(item?.text || "");
+    return {
+      id,
+      role,
+      content,
+      at:item?.at || undefined,
+      status:item?.status === "failed" ? "failed" : undefined,
+      isFinalSegment:item?.from !== "customer",
+      // The API persists one canonical AI reply while the public UI presents
+      // the same turn as short bubbles. Retain the canonical identity so a
+      // poll that wins the race against the POST can be replaced in-place.
+      ...(role === "assistant" ? { serverReplyId:id, serverReplyText:content } : {})
+    };
+  })
+  .filter((item) => item.content) : []);
+const duplicateCustomerWindowMs = 15_000;
+const customerMessageFingerprint = (message) => `${message?.role || ""}\u0000${String(message?.content || "").trim().replace(/\s+/g, " ")}`;
+const occurredAt = (message) => {
+  const value = Date.parse(message?.at || "");
+  return Number.isFinite(value) ? value : 0;
+};
+// A gateway retry can return the same customer turn with a different server
+// ID. Keep the first copy rendered when its content and timestamp prove it is
+// the same immediate submission; later, intentional repeated questions remain
+// separate turns.
+const collapseImmediateCustomerDuplicates = (items) => {
+  const seen = new Map();
+  return items.filter((message) => {
+    if (message?.role !== "user") return true;
+    const key = customerMessageFingerprint(message);
+    const previous = seen.get(key);
+    const currentAt = occurredAt(message);
+    if (previous && currentAt && Math.abs(currentAt - previous) <= duplicateCustomerWindowMs) return false;
+    seen.set(key, currentAt || Date.now());
+    return true;
+  });
+};
+const mergeConversationMessages = (current, incoming) => {
+  // Only locally-created presentation segments replace the server's canonical
+  // reply. A restored history row also carries serverReplyId for later
+  // reconciliation, but it is not itself a segment and must never filter out
+  // itself on the next history poll.
+  const byId = new Map(current.filter((message) => message?.id).map((message) => [message.id, message]));
+  const displayedServerReplyIds = new Set();
+  const displayedOptimisticCustomers = new Map();
+  for (const message of current) {
+    if (message?.groupId && message?.serverReplyId) displayedServerReplyIds.add(message.serverReplyId);
+    if (message?.optimistic && message?.role === "user") {
+      displayedOptimisticCustomers.set(customerMessageFingerprint(message), occurredAt(message));
+    }
+  }
+  for (const message of incoming) {
+    // A just-sent answer is displayed as short segments, while history stores
+    // the same answer as one canonical reply row. Keep the short segments and
+    // do not append that canonical row a second time on the next poll.
+    const isDisplayedReply = displayedServerReplyIds.has(message?.id);
+    const optimisticAt = displayedOptimisticCustomers.get(customerMessageFingerprint(message));
+    const isOptimisticCustomerReplay = message?.role === "user" && !message?.optimistic
+      && optimisticAt && occurredAt(message)
+      && Math.abs(occurredAt(message) - optimisticAt) <= duplicateCustomerWindowMs;
+    if (message?.id && !byId.has(message.id) && !isDisplayedReply && !isOptimisticCustomerReplay) byId.set(message.id, message);
+  }
+  return collapseImmediateCustomerDuplicates([...byId.values()])
+    .sort((left, right) => Date.parse(left.at || 0) - Date.parse(right.at || 0));
+};
+
+// A history poll can observe the server's canonical reply just before the
+// corresponding POST resolves in this tab. Replace that canonical row with
+// the presentation segments, rather than rendering both versions of one turn.
+const mergeReplySegments = (current, segments) => {
+  if (!segments.length) return current;
+  const serverReplyId = segments[0]?.serverReplyId;
+  const existingSegment = current.some((message) => message?.serverReplyId === serverReplyId && message?.groupId);
+  if (existingSegment) return current;
+  const canonicalIndex = current.findIndex((message) => message?.role === "assistant" && message.id === serverReplyId);
+  if (canonicalIndex < 0) return [...current, ...segments];
+  return [
+    ...current.slice(0, canonicalIndex),
+    ...segments,
+    ...current.slice(canonicalIndex + 1)
+  ];
+};
 const createSessionId = () => globalThis.crypto?.randomUUID?.() || `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const trimTrailingSlashes = (value = "") => String(value).replace(/\/+$/, "");
 const joinBaseUrl = (baseUrl, path) => {
@@ -159,7 +263,10 @@ function LeadCaptureCard({ prompt, status, error, result, onSubmit, handover }) 
   );
   const submit = (event) => {
     event.preventDefault();
-    onSubmit({ name:name.trim(), mobile:mobile.trim(), service_consent:serviceConsent });
+    // 提交前再归一一次，避免用户直接点提交（未触发失焦）时把 +86/0086 原样送出。
+    const normalizedMobile = normalizeMobileInput(mobile);
+    setMobile(normalizedMobile);
+    onSubmit({ name:name.trim(), mobile:normalizedMobile, service_consent:serviceConsent });
   };
   const urgent = handover?.reason === "medical_emergency";
   const requiresHandover = handover?.required === true;
@@ -177,7 +284,7 @@ function LeadCaptureCard({ prompt, status, error, result, onSubmit, handover }) 
       <p>{description}</p>
       <form className="lead-form" onSubmit={submit}>
         <label><span>怎么称呼您 <em>选填</em></span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={40} autoComplete="name" placeholder="您的称呼" /></label>
-        <label><span>手机号</span><input value={mobile} onChange={(event) => setMobile(event.target.value.replace(/\D/g, "").replace(/^86(?=1)/, "").slice(0, 11))} required minLength={11} maxLength={11} pattern="1[3-9][0-9]{9}" inputMode="tel" autoComplete="tel" placeholder="11位手机号" aria-invalid={Boolean(error)} /></label>
+        <label><span>手机号</span><input value={mobile} onChange={(event) => setMobile(cleanMobileTyping(event.target.value))} onBlur={() => setMobile(normalizeMobileInput(mobile))} required maxLength={20} pattern="(?:00)?(?:\+?86)?1[3-9][0-9]{9}" inputMode="tel" autoComplete="tel" placeholder="11位手机号，可粘贴 +86 或 0086" aria-invalid={Boolean(error)} /></label>
         <label className="lead-consent"><input type="checkbox" checked={serviceConsent} onChange={(event) => setServiceConsent(event.target.checked)} required /><span>{prompt.consent_text || "请阅读并同意本次咨询联系授权"}</span></label>
         {error && <div className="lead-error" role="alert">{error}</div>}
         <button className="lead-submit" type="submit" disabled={status === "submitting" || !serviceConsent}>{status === "submitting" ? submittingLabel : submitLabel}</button>
@@ -272,6 +379,12 @@ function ConversationFeedback({ feedback, onFeedback }) {
 
 function ChatMessage({ message, showLeadCapture, leadState, appointmentState, onLeadSubmit, onAppointmentSubmit, feedback, onFeedback, onPreview }) {
   if (message.role === "user") return <div className="user-message">{message.content}</div>;
+  if (message.role === "staff") return (
+    <article className="assistant-message human-agent-message">
+      <div className="assistant-label"><span className="assistant-avatar">顾</span><span>人工顾问</span></div>
+      <div className="assistant-copy">{message.content}</div>
+    </article>
+  );
   const medicalHandover = ["medical_emergency", "medical_safety", "medical_boundary"].includes(message.handover?.reason);
   return (
     <article className={`assistant-message ${message.isContinuation ? "continuation" : ""} ${message.status === "handover_required" ? "handover" : ""}`}>
@@ -298,18 +411,27 @@ export function App() {
   const [knowledgePreview, setKnowledgePreview] = useState(null);
   const inputRef = useRef(null);
   const questionInFlightRef = useRef(false);
-  const messageEndRef = useRef(null);
+  const messageScrollerRef = useRef(null);
+  const shouldStickToBottomRef = useRef(true);
   const sessionIdRef = useRef(createSessionId());
   const sessionTokenRef = useRef("");
   const sessionEpochRef = useRef(0);
+  const publicSessionReadyRef = useRef(false);
   const [restoringSession, setRestoringSession] = useState(true);
   const chatStarted = messages.length > 0 || isLoading || Boolean(appointmentState.intake);
 
   const statusText = useMemo(() => isLoading ? "正在为您整理相关项目信息…" : "", [isLoading]);
 
   useEffect(() => {
-    messageEndRef.current?.scrollIntoView({ block:"end", behavior:"smooth" });
+    if (!shouldStickToBottomRef.current) return;
+    const scroller = messageScrollerRef.current;
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
   }, [messages, isLoading]);
+
+  const updateScrollAnchor = (event) => {
+    const scroller = event.currentTarget;
+    shouldStickToBottomRef.current = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight <= 24;
+  };
 
   const resetConversation = async () => {
     const epoch = ++sessionEpochRef.current;
@@ -322,14 +444,17 @@ export function App() {
     setAppointmentState({ status:"idle", error:"", actionId:"", message:"" });
     setFeedbackByReply({});
     setKnowledgePreview(null);
+    shouldStickToBottomRef.current = true;
     sessionIdRef.current = createSessionId();
     sessionTokenRef.current = "";
+    publicSessionReadyRef.current = false;
     try {
       const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/appointment-intakes/current"), { method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ session_id:sessionIdRef.current }) });
       const body = await response.json();
       if (epoch !== sessionEpochRef.current) return;
       if (!response.ok) throw new Error(body?.error?.message || "新对话暂时无法建立，请重试。");
       updateSessionCredential(body);
+      publicSessionReadyRef.current = true;
     } catch (err) { if (epoch === sessionEpochRef.current) setError(err.message); }
     finally { if (epoch === sessionEpochRef.current) setRestoringSession(false); }
   };
@@ -372,15 +497,74 @@ export function App() {
   useEffect(() => {
     let cancelled = false;
     const epoch = sessionEpochRef.current;
-    fetch(joinBaseUrl(API_BASE_URL, "/api/public/appointment-intakes/current"), { method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" }, body:"{}" })
-      .then(async (response) => { if (!response.ok) throw new Error("无法恢复到院登记，请刷新重试。"); return response.json(); })
-      .then((body) => {
+    (async () => {
+      let appointmentRestoreError = null;
+      try {
+        const currentResponse = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/appointment-intakes/current"), { method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" }, body:"{}" });
+        const current = await currentResponse.json();
+        if (!currentResponse.ok) throw new Error(current?.error?.message || "无法恢复到院登记");
+        if (!cancelled && epoch === sessionEpochRef.current) {
+          updateSessionCredential(current);
+          publicSessionReadyRef.current = true;
+          if (current.intake) setAppointmentState({ status:"accepted", error:"", actionId:"", message:"", intake:current.intake });
+        }
+      } catch (err) {
+        appointmentRestoreError = err;
+      }
+      try {
+        const historyResponse = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-history"), { method:"GET", credentials:"include", headers:publicHeaders() });
+        const history = await historyResponse.json();
+        if (!historyResponse.ok) throw new Error(history?.error?.message || "无法恢复历史咨询，请刷新重试。");
         if (cancelled || epoch !== sessionEpochRef.current) return;
-        updateSessionCredential(body);
-        if (body.intake) setAppointmentState({ status:"accepted", error:"", actionId:"", message:"", intake:body.intake });
-      }).catch((err) => { if (!cancelled && epoch === sessionEpochRef.current) setError(err.message); })
-      .finally(() => { if (!cancelled) setRestoringSession(false); });
+        updateSessionCredential(history);
+        const restored = restoreConversationMessages(history.messages);
+        if (restored.length) setMessages(restored);
+      } catch (err) {
+        if (!cancelled && epoch === sessionEpochRef.current) setError(err.message || appointmentRestoreError?.message || "无法恢复当前会话，请刷新重试。");
+      } finally {
+        if (!cancelled && epoch === sessionEpochRef.current) setRestoringSession(false);
+      }
+    })();
     return () => { cancelled = true; };
+  }, []);
+
+  // The public client confirms delivery only after it has fetched the staff
+  // message through its session-scoped history endpoint. This is not a read
+  // receipt: the server keeps read_status as not_reported.
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      if (!publicSessionReadyRef.current) return;
+      try {
+        const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-history"), {
+          method:"GET", credentials:"include", headers:publicHeaders()
+        });
+        const history = await response.json();
+        if (!response.ok || cancelled) return;
+        updateSessionCredential(history);
+        const restored = restoreConversationMessages(history.messages);
+        if (restored.length) setMessages((current) => mergeConversationMessages(current, restored));
+        const pendingStaff = (history.messages || []).filter((message) =>
+          message?.from === "staff" && message?.delivery?.delivery_status !== "delivered"
+        );
+        await Promise.all(pendingStaff.map(async (message) => {
+          const deliveryResponse = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-deliveries"), {
+            method:"POST",
+            credentials:"include",
+            headers:publicHeaders(),
+            body:JSON.stringify({ message_id:message.id, session_id:sessionIdRef.current })
+          });
+          const delivery = await deliveryResponse.json();
+          if (deliveryResponse.ok) updateSessionCredential(delivery);
+        }));
+      } catch {
+        // Background delivery confirmation must never replace a usable chat UI
+        // with an error. The next poll safely retries the idempotent receipt.
+      }
+    };
+    const timer = window.setInterval(poll, 2_000);
+    void poll();
+    return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
 
   const changeAppointment = async (action, time) => {
@@ -465,8 +649,11 @@ export function App() {
     const question = input.trim();
     if (!question || isLoading || restoringSession || questionInFlightRef.current) return;
     questionInFlightRef.current = true;
+    const idempotencyKey = `chat-${globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`}`;
     inputRef.current?.focus({ preventScroll:true });
-    setMessages((current) => [...current, { id:`user-${Date.now()}`, role:"user", content:question, at:new Date().toISOString() }]);
+    // The server persists message_id verbatim. Reuse it locally so the history
+    // poll reconciles this optimistic message instead of rendering it twice.
+    setMessages((current) => [...current, { id:idempotencyKey, role:"user", content:question, at:new Date().toISOString(), optimistic:true }]);
     setInput("");
     setError("");
     setIsLoading(true);
@@ -476,8 +663,8 @@ export function App() {
       const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-chat"), {
         method:"POST",
         credentials:"include",
-        headers:publicHeaders(),
-        body:JSON.stringify({ message:question, session_id:sessionIdRef.current, ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {}) }),
+        headers:{ ...publicHeaders(), "Idempotency-Key":idempotencyKey },
+        body:JSON.stringify({ message:question, message_id:idempotencyKey, session_id:sessionIdRef.current, ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {}) }),
         signal:controller.signal
       });
       const body = await response.json();
@@ -489,12 +676,16 @@ export function App() {
         : [];
       const replySegments = segments.length ? segments : [String(body.reply || "").trim()].filter(Boolean);
       const replyGroupId = body.run_id || `assistant-${Date.now()}`;
+      const serverReplyId = String(body.assistant_message_id || `${idempotencyKey}:reply`);
+      const serverReplyText = String(body.reply || replySegments.join("\n")).trim();
       const replyAt = new Date().toISOString();
-      setMessages((current) => [...current, ...replySegments.map((content, index) => {
+      const presentationSegments = replySegments.map((content, index) => {
         const isFinalSegment = index === replySegments.length - 1;
         return {
           id:`${replyGroupId}-${index + 1}`,
           groupId:replyGroupId,
+          serverReplyId,
+          serverReplyText,
           role:"assistant",
           content,
           isContinuation:index > 0,
@@ -508,7 +699,8 @@ export function App() {
           orchestration:isFinalSegment ? body.orchestration : null,
           at:replyAt
         };
-      })]);
+      });
+      setMessages((current) => mergeReplySegments(current, presentationSegments));
     } catch (requestError) {
       const message = requestError.name === "AbortError" ? "本次咨询响应时间较长，请稍后重新提问。" : requestError.message;
       setError(message);
@@ -548,7 +740,7 @@ export function App() {
       )}
 
       <main className="advisor-workspace">
-        <div className="message-scroller" aria-live="polite">
+        <div className="message-scroller" aria-live="polite" ref={messageScrollerRef} onScroll={updateScrollAnchor}>
           {messages.map((message) => {
             const feedbackKey = message.groupId || message.id;
             return <ChatMessage key={message.id} message={message} showLeadCapture={message.id === leadPromptMessageId && !leadState.result} leadState={leadState} appointmentState={appointmentState} onLeadSubmit={submitLead} onAppointmentSubmit={submitAppointment} feedback={feedbackByReply[feedbackKey]} onFeedback={(rating) => submitFeedback(message, rating)} onPreview={setKnowledgePreview} />;
@@ -563,7 +755,6 @@ export function App() {
             </article>
           )}
           {error && <span className="sr-only">{error}</span>}
-          <div ref={messageEndRef} />
         </div>
         <Composer value={input} onChange={setInput} onSubmit={submitQuestion} disabled={isLoading || restoringSession} restoringSession={restoringSession} inputRef={inputRef} />
       </main>

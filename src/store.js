@@ -947,6 +947,7 @@ class Store extends EventTarget {
 
   upsertAcquisitionSnapshot(snapshot = {}) {
     const safeSnapshot = sanitizeDisplayData(snapshot);
+    const incremental = safeSnapshot.meta?.incremental === true;
     const rawCustomers = Array.isArray(safeSnapshot.customers) ? safeSnapshot.customers : [];
     const explicitTestCustomerIds = new Set(rawCustomers.filter(isExplicitAcquisitionTestCustomer).map((item) => item.id));
     const customers = rawCustomers.filter((item) => !explicitTestCustomerIds.has(item.id));
@@ -972,6 +973,20 @@ class Store extends EventTarget {
       const seen = new Set();
       return [...incoming, ...existing].filter((item) => item?.id && !seen.has(item.id) && seen.add(item.id));
     };
+    const mergeConversationMessages = (existing = [], incoming = []) => {
+      const byId = new Map();
+      const keyFor = (message = {}) => message.id || `${message.from || "unknown"}:${message.at || ""}:${message.text || ""}`;
+      for (const message of existing) byId.set(keyFor(message), message);
+      // Incoming rows are authoritative for delivery/status changes. Stable
+      // IDs make a replay safe when a reconnect overlaps the normal poll.
+      for (const message of incoming) byId.set(keyFor(message), message);
+      return [...byId.values()].sort((left, right) => {
+        const leftSequence = Number.isInteger(left?.seq) ? left.seq : null;
+        const rightSequence = Number.isInteger(right?.seq) ? right.seq : null;
+        if (leftSequence !== null && rightSequence !== null && leftSequence !== rightSequence) return leftSequence - rightSequence;
+        return Date.parse(left?.at || 0) - Date.parse(right?.at || 0);
+      });
+    };
     for (const incoming of customers) {
       const index = this.state.customers.findIndex((item) => item.id === incoming.id);
       if (index < 0) this.state.customers.unshift(incoming);
@@ -987,6 +1002,10 @@ class Store extends EventTarget {
         };
       }
     }
+    // 客户列表按“来的时间”排序：首次进入时间倒序。首次同步时新客户是逐个 unshift
+    // 进来的，会把接口给的最新在前顺序整体反转，这里统一按时间重排以保持稳定。
+    const arrivalTime = (item) => Date.parse(item?.stageEnteredAt || item?.createdAt || "") || 0;
+    this.state.customers.sort((left, right) => arrivalTime(right) - arrivalTime(left));
     const liveExternalIds=new Set(conversations.filter(c=>c.id?.startsWith('V-LIVE-')).map(c=>c.externalConversationId));
     this.state.conversations=this.state.conversations.filter(c=>!liveExternalIds.has(c.externalConversationId)||conversations.some(n=>n.id===c.id));
     const incomingIds=new Set(customers.map(c=>c.id));
@@ -994,7 +1013,14 @@ class Store extends EventTarget {
     for (const incoming of conversations) {
       const index = this.state.conversations.findIndex((item) => item.id === incoming.id);
       if (index < 0) this.state.conversations.unshift(incoming);
-      else this.state.conversations[index] = { ...this.state.conversations[index], ...incoming };
+      else {
+        const existing = this.state.conversations[index];
+        this.state.conversations[index] = {
+          ...existing,
+          ...incoming,
+          ...(incremental ? { messages:mergeConversationMessages(existing.messages, incoming.messages) } : {})
+        };
+      }
     }
     for (const incoming of tasks) {
       const index = this.state.tasks.findIndex((item) => item.id === incoming.id);

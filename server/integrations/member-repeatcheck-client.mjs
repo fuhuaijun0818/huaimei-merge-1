@@ -5,7 +5,11 @@ export const MEMBER_REPEATCHECK_METHOD = "meb.sync.client.repeatcheck";
 const SCHEMA = "huamei.member-repeatcheck.v1";
 const MAX_RESPONSE_BYTES = 16 * 1024;
 const PROVIDED_HEADERS_ENDPOINT = "https://scrm.shhmwz.cn/api/thirdApi/checkPhoneExists";
-const normalizeMobile = (value) => String(value || "").replace(/^\+?86/, "").replace(/[\s()-]/g, "");
+const normalizeMobile = (value) => {
+  const digits = String(value ?? "").normalize("NFKC").replace(/\D/g, "");
+  if (/^1[3-9]\d{9}$/.test(digits)) return digits;
+  return digits.replace(/^(?:00)?86/, "");
+};
 const clean = (value, limit = 100) => String(value || "").trim().slice(0, limit);
 const fingerprint = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const failure = (code) => Object.assign(new Error(code), { code });
@@ -105,7 +109,7 @@ export function createMemberRepeatCheckClient({
     reason_code:reason, policy_fingerprint:policyFingerprint, ...extra
   });
 
-  async function check({ tenantId, sessionId, mobile, subjectReferenceHmac, verification, name, previous } = {}) {
+  async function check({ tenantId, sessionId, mobile, subjectReferenceHmac, verification, name, previous, forceRefresh = false } = {}) {
     const at = now();
     const phone = normalizeMobile(mobile);
     try {
@@ -123,7 +127,7 @@ export function createMemberRepeatCheckClient({
     if (tenantId !== tenantBinding) return record("not_configured", "TENANT_NOT_CONFIGURED", at);
 
     const age = at - Date.parse(previous?.checked_at || "");
-    if (previous?.schema === SCHEMA && previous.provider === "huamei_repeatcheck"
+    if (!forceRefresh && previous?.schema === SCHEMA && previous.provider === "huamei_repeatcheck"
         && previous.status === "checked" && typeof previous.is_repeat === "boolean"
         && previous.policy_fingerprint === policyFingerprint && age >= 0 && age < cacheMs) {
       return record("checked", null, Date.parse(previous.attempted_at) || at, {

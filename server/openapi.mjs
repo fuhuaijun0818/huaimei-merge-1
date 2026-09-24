@@ -103,9 +103,30 @@ export function createOpenApiDocument(origin = "http://127.0.0.1:4173") {
       "/api/local/acquisition-customers": {
         get:{
           tags:["Acquisition"], summary:"查询租户内客户360快照", security:[{ OidcBearerAuth:[] }],
-          description:"生产环境要求customer:read角色。请求租户由OIDC tenant_ids授权，不能仅依赖查询参数。",
-          parameters:[{ $ref:"#/components/parameters/ManagementTenantId" }],
+          description:"生产环境要求customer:read角色。请求租户由OIDC tenant_ids授权，不能仅依赖查询参数。可选 after_cursor 为当前主体已确认的会话游标映射；有效时仅返回变更会话及其缺失消息，游标失效或缺失时安全降级为完整快照。",
+          parameters:[
+            { $ref:"#/components/parameters/ManagementTenantId" },
+            { name:"after_cursor", in:"query", required:false, schema:{ type:"string", maxLength:24576 }, description:"base64url 编码的 v1 会话游标映射；仅含不透明会话标识与服务端序列。" }
+          ],
           responses:{ "200":{ description:"已授权租户的客户快照" }, "401":{ $ref:"#/components/responses/OidcUnauthorized" }, "403":{ $ref:"#/components/responses/Forbidden" } }
+        }
+      },
+      "/api/admin/acquisition/customers/{customerId}": {
+        patch:{
+          tags:["Acquisition"], summary:"按版本更正客户资料与联系偏好", security:[{ OidcBearerAuth:[] }],
+          parameters:[{ name:"customerId", in:"path", required:true, schema:{ type:"string" } }],
+          requestBody:{ required:true, content:{ "application/json":{ schema:{ type:"object", additionalProperties:false,
+            required:["expected_version","patch"], properties:{ expected_version:{ type:"integer", minimum:1 }, patch:{ type:"object", additionalProperties:true } }
+          } } } },
+          responses:{ "200":{ description:"资料已保存；手机号变更时会员状态独立重查" }, "400":{ description:"字段或手机号格式无效" }, "401":{ $ref:"#/components/responses/OidcUnauthorized" }, "403":{ $ref:"#/components/responses/Forbidden" }, "409":{ description:"版本冲突或手机号已关联其他客户" } }
+        }
+      },
+      "/api/admin/acquisition/customers/{customerId}/member-check": {
+        post:{
+          tags:["Acquisition"], summary:"按权限主动重查院方已有客户记录", security:[{ OidcBearerAuth:[] }],
+          description:"需要客户读取权限；服务端只使用当前已保存手机号的capture读联系人保险库，明文号码不返回浏览器；每次重查写入审计事件，旧号码的结果不会覆盖已变更号码的状态。",
+          parameters:[{ name:"customerId", in:"path", required:true, schema:{ type:"string" } }],
+          responses:{ "200":{ description:"返回当前客户的院方查询状态与原因码" }, "400":{ description:"请求无效" }, "401":{ $ref:"#/components/responses/OidcUnauthorized" }, "403":{ $ref:"#/components/responses/Forbidden" }, "404":{ description:"未找到客户档案" }, "409":{ description:"手机号已变更或没有可用的联系人保险库记录" } }
         }
       },
       "/api/admin/acquisition/handovers": {

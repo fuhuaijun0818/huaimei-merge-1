@@ -23,4 +23,6 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 - Composer continuity: sending must retain input focus and allow drafting the next message while a reply is pending; disable only submission during an in-flight request. Reply completion must not steal focus from other controls. Preserve Chinese IME composition.
 
+- Reply reconciliation: a server-history reply and its local short presentation segments are the same assistant turn. During polling, replace the canonical row with the segments; never flash or retain both representations.
+
 - Direct chat contact submission: when the visitor sends their mobile number (alone or introduced as their phone/contact), save after format validation without OTP or a second form. Show a receipt only after durable save; failures must say it was not saved. This is for the current service, never marketing permission. Do not treat examples, denied contact requests, or unrelated long numeric identifiers as contact submissions.

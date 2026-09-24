@@ -452,6 +452,52 @@ export function getHandover(handoverId, tenantId) {
   return clone(store.load().handovers.find((item) => item.id === handoverId && item.tenant_id === tenant) || null);
 }
 
+export function getHandoverForConversation({ tenant_id, conversation_id } = {}) {
+  const tenantId = normalizeTenantId(tenant_id);
+  const conversationId = safeText(conversation_id, 160);
+  if (!conversationId) return null;
+  if (postgresPersistenceEnabled()) {
+    return getPostgresOperationsStore().getHandoverForConversation({ tenantId, conversationId });
+  }
+  return clone(store.reload().handovers.find((item) => item.tenant_id === tenantId
+    && item.conversation_id === conversationId) || null);
+}
+
+const replyAuthorizationError = (code, message, status) => Object.assign(new Error(message), { code, status });
+
+// Do not trust the browser's view of a conversation.  This is deliberately a
+// server-side read immediately before the message write: a copied conversation
+// ID must not let a different advisor, or an advisor holding a stale tab,
+// continue a handover.
+export async function assertHandoverReplyAuthorization({
+  tenant_id,
+  conversation_id,
+  actor,
+  expected_handover_version
+} = {}) {
+  const tenantId = normalizeTenantId(tenant_id);
+  const conversationId = safeText(conversation_id, 160);
+  const advisor = safeText(actor, 120);
+  if (!conversationId || !advisor) {
+    throw replyAuthorizationError("HANDOVER_REPLY_IDENTITY_REQUIRED", "会话和当前顾问身份不能为空", 400);
+  }
+  const handover = await getHandoverForConversation({ tenant_id:tenantId, conversation_id:conversationId });
+  if (!handover || !["active", "claimed"].includes(handover.status) || handover.ai_suspended !== true) {
+    throw replyAuthorizationError("HANDOVER_REPLY_STATE_STALE", "该会话当前未处于有效人工接管状态，请刷新后重试", 409);
+  }
+  if (handover.assignee !== advisor) {
+    throw replyAuthorizationError("HANDOVER_REPLY_ASSIGNEE_FORBIDDEN", "只有当前接管顾问可以发送人工消息", 403);
+  }
+  const expectedVersion = String(expected_handover_version || "").trim();
+  if (!expectedVersion) {
+    throw replyAuthorizationError("HANDOVER_REPLY_VERSION_REQUIRED", "缺少接管状态版本，请刷新会话后重试", 400);
+  }
+  if (!handover.updated_at || expectedVersion !== handover.updated_at) {
+    throw replyAuthorizationError("HANDOVER_REPLY_STATE_STALE", "接管状态已变更，请刷新后重试", 409);
+  }
+  return handover;
+}
+
 export function listOperationTasks({ tenant_id, status = "", limit = 100 } = {}) {
   const tenantId = normalizeTenantId(tenant_id);
   if (postgresPersistenceEnabled()) {

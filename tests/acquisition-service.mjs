@@ -39,8 +39,14 @@ const oidcVerifier = {
       error.status = 401;
       throw error;
     }
-    const subject = token === "advisor-other" ? "advisor-other" : "advisor-test";
-    return { subject, roles:token === "quality-test" ? ["quality"] : ["operations.agent"], tenantIds:[requirements.tenantId], issuer:"https://identity.test" };
+    const subject = token === "advisor-other" ? "advisor-other" : token === "advisor-restricted" ? "advisor-restricted" : "advisor-test";
+    return {
+      subject,
+      roles:token === "quality-test" ? ["quality"] : ["operations.agent"],
+      tenantIds:[requirements.tenantId],
+      departmentIds:token === "advisor-restricted" ? ["无权验收科室"] : ["*"],
+      issuer:"https://identity.test"
+    };
   }
 };
 const server = createAcquisitionServiceServer({ host:"127.0.0.1", oidcVerifier });
@@ -280,6 +286,11 @@ try {
     method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ tenant_id:"tenant-test" })
   });
   assert.equal(anonymousClaim.status, 401, "人工接管必须绑定企业实名身份");
+  const outOfDepartmentClaim = await fetch(`${baseUrl}/v1/handovers/${handoverBody.handover.id}/claim`, {
+    method:"POST", headers:{ "Content-Type":"application/json", Authorization:"Bearer advisor-restricted" }, body:JSON.stringify({ tenant_id:"tenant-test" })
+  });
+  assert.equal(outOfDepartmentClaim.status, 403, "无权科室篡改handoverId不得领取任务");
+  assert.equal((await outOfDepartmentClaim.json()).error.code, "HANDOVER_DEPARTMENT_FORBIDDEN");
   const claimed = await fetch(`${baseUrl}/v1/handovers/${handoverBody.handover.id}/claim`, {
     method:"POST", headers:{ "Content-Type":"application/json", Authorization:"Bearer advisor-test" }, body:JSON.stringify({ tenant_id:"tenant-test" })
   });
