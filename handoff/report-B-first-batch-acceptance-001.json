@@ -140,6 +140,22 @@
       "reason": "共享真实 Node HTTP 联调覆盖稳定助手标识和游标补拉。"
     }
   ],
+  "acceptance_results": [
+    {"story":"B-003","environment":"本机/浏览器","overall_status":"pass","acs":[{"id":"TC-B-003-AC1","status":"pass"},{"id":"TC-B-003-AC2","status":"pass"},{"id":"TC-B-003-AC3","status":"pass"},{"id":"TC-B-003-AC4","status":"pass"}]},
+    {"story":"B-004","environment":"本机 HTTP、回归","overall_status":"pass","acs":[{"id":"TC-B-004-AC1","status":"pass"},{"id":"TC-B-004-AC2","status":"pass"},{"id":"TC-B-004-AC3","status":"pass"},{"id":"TC-B-004-AC4","status":"pass"}]},
+    {"story":"B-005","environment":"本机/浏览器","overall_status":"pass","acs":[{"id":"TC-B-005-AC1","status":"pass"},{"id":"TC-B-005-AC2","status":"pass"},{"id":"TC-B-005-AC3","status":"pass"},{"id":"TC-B-005-AC4","status":"pass"}]},
+    {"story":"B-006","environment":"本机/浏览器","overall_status":"pass","acs":[{"id":"TC-B-006-AC1","status":"pass"},{"id":"TC-B-006-AC2","status":"pass"},{"id":"TC-B-006-AC3","status":"pass"},{"id":"TC-B-006-AC4","status":"pass"}]},
+    {"story":"B-007","environment":"本机/浏览器、回归","overall_status":"pass","acs":[{"id":"TC-B-007-AC1","status":"pass"},{"id":"TC-B-007-AC2","status":"pass"},{"id":"TC-B-007-AC3","status":"pass"},{"id":"TC-B-007-AC4","status":"pass"}]},
+    {"story":"B-009","environment":"本机、Mock","overall_status":"pass","acs":[{"id":"TC-B-009-AC1","status":"pass"},{"id":"TC-B-009-AC2","status":"pass"},{"id":"TC-B-009-AC3","status":"pass"},{"id":"TC-B-009-AC4","status":"pass"}]},
+    {"story":"B-010","environment":"本机、Mock、回归","overall_status":"pass","acs":[{"id":"TC-B-010-AC1","status":"pass"},{"id":"TC-B-010-AC2","status":"pass"},{"id":"TC-B-010-AC3","status":"pass"},{"id":"TC-B-010-AC4","status":"pass"}]},
+    {"story":"B-011","environment":"本机、Mock、回归","overall_status":"pass","acs":[{"id":"TC-B-011-AC1","status":"pass"},{"id":"TC-B-011-AC2","status":"pass"},{"id":"TC-B-011-AC3","status":"pass"},{"id":"TC-B-011-AC4","status":"pass"}]},
+    {"story":"B-012","environment":"本机、Mock、回归","overall_status":"pass","acs":[{"id":"TC-B-012-AC1","status":"pass"},{"id":"TC-B-012-AC2","status":"pass"},{"id":"TC-B-012-AC3","status":"pass"},{"id":"TC-B-012-AC4","status":"pass"}]},
+    {"story":"B-015","environment":"本机 HTTP、回归","overall_status":"pass","acs":[{"id":"TC-B-015-AC1","status":"pass"},{"id":"TC-B-015-AC2","status":"pass"},{"id":"TC-B-015-AC3","status":"pass"},{"id":"TC-B-015-AC4","status":"pass"}]},
+    {"story":"B-017","environment":"本机、回归","overall_status":"pass","acs":[{"id":"TC-B-017-AC1","status":"pass"},{"id":"TC-B-017-AC2","status":"pass"},{"id":"TC-B-017-AC3","status":"pass"},{"id":"TC-B-017-AC4","status":"pass"}]},
+    {"story":"B-019","environment":"Mock","overall_status":"pass_mock","acs":[{"id":"TC-B-019-AC1","status":"pass_mock"},{"id":"TC-B-019-AC2","status":"pass_mock"},{"id":"TC-B-019-AC3","status":"pass_mock"},{"id":"TC-B-019-AC4","status":"pass_mock"}]},
+    {"story":"B-020","environment":"Mock","overall_status":"pass_mock","acs":[{"id":"TC-B-020-AC1","status":"pass_mock"},{"id":"TC-B-020-AC2","status":"pass_mock"},{"id":"TC-B-020-AC3","status":"pass_mock"},{"id":"TC-B-020-AC4","status":"pass_mock"}]},
+    {"story":"B-021","environment":"Mock","overall_status":"pass_mock","acs":[{"id":"TC-B-021-AC1","status":"pass_mock"},{"id":"TC-B-021-AC2","status":"pass_mock"},{"id":"TC-B-021-AC3","status":"pass_mock"},{"id":"TC-B-021-AC4","status":"pass_mock"}]}
+  ],
   "api_changes": [
     "公共获客响应增加 assistant_message_id；客户端仅以该稳定标识合并服务端助手消息。",
     "管理端会话增量查询继续使用 after_cursor；客户端与服务端限制游标查询长度，避免请求头或查询串异常。",
