@@ -8,6 +8,7 @@ const [app, styles] = await Promise.all([
 
 assert.match(app, /function hydrateListPagination\(\)/, "管理端需要在每次页面渲染后统一挂载列表分页");
 assert.match(app, /function listPaginationState\(key, total\)/, "分页状态需要根据筛选后的总数自动校正页码");
+assert.match(app, /if \(!items\.length\) \{[\s\S]*?existingPager\?\.remove\(\)/, "筛选结果为空时必须移除旧分页器，不能保留过期总数和页码");
 assert.match(app, /data-action="list-page"/, "分页器需要提供页码切换操作");
 assert.match(app, /data-pagination-size/, "分页器需要允许维护每页条数");
 assert.match(app, /data-paginated-list="journeys"/, "旅程卡片列表需要纳入统一分页");

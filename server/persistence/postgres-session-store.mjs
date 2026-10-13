@@ -679,7 +679,7 @@ export function createPostgresAcquisitionSessionStore(options = {}) {
         tenantId, channel:row.channel, sessionId:row.session_id, messageId
       }));
       const metadata = jsonValue(row.metadata, {});
-      const from = row.role === "user" ? "customer" : row.role === "human_agent" ? "human" : row.role === "system" ? "system" : "ai";
+      const from = row.role === "user" ? "customer" : row.role === "human_agent" ? "staff" : row.role === "system" ? "system" : "ai";
       const seq = Number(row.turn_sequence || item.nextSeq + 1);
       item.nextSeq = Math.max(item.nextSeq, seq);
       item.messages.push({
@@ -688,13 +688,101 @@ export function createPostgresAcquisitionSessionStore(options = {}) {
         status:row.processing_state || metadata.status || "committed",
         from,
         text:redactContactPii(text),
-        at:new Date(row.occurred_at || row.last_activity_at).toISOString()
+        at:new Date(row.occurred_at || row.last_activity_at).toISOString(),
+        ...(metadata.actor ? { actor:String(metadata.actor) } : {}),
+        ...(metadata.idempotency_key ? { idempotency_key:String(metadata.idempotency_key) } : {}),
+        ...(metadata.delivery ? { delivery:clone(metadata.delivery) } : {})
       });
     }
     return [...grouped.values()].slice(0, boundedLimit).map((item) => ({
       ...item,
       cursor:`${item.externalId}#${item.nextSeq}`
     }));
+  };
+
+  const appendHumanReply = async ({ tenantId, externalConversationId, message } = {}) => {
+    const safeConversationId = String(externalConversationId || "").trim();
+    const messageId = messageIdFor(message?.id);
+    const text = sanitizeConversationMessageForPersistence(message?.text);
+    const actor = String(message?.actor || "当前售前顾问").trim().slice(0, 120) || "当前售前顾问";
+    const idempotencyKey = String(message?.idempotency_key || "").trim().slice(0, 128);
+    if (!tenantId || !safeConversationId || !text) return null;
+    return database.tenantTransaction(tenantId, async (client) => {
+      const sessionResult = await client.query(
+        `SELECT id, session_id, channel
+         FROM conversation_sessions
+         WHERE tenant_id=$1 AND external_conversation_id=$2
+         ORDER BY last_activity_at DESC LIMIT 1 FOR UPDATE`,
+        [tenantId, safeConversationId]
+      );
+      const session = sessionResult.rows[0];
+      if (!session) return null;
+      await lockConversationIdentity(client, { tenantId, channel:session.channel, sessionId:session.session_id, externalConversationId:safeConversationId });
+      const existingResult = await client.query(
+        `SELECT message_id, content, metadata, occurred_at
+         FROM conversation_messages
+         WHERE tenant_id=$1 AND session_record_id=$2 AND role='human_agent'
+           AND (($3<>'' AND metadata->>'idempotency_key'=$3) OR message_id=$4)
+         ORDER BY created_at DESC LIMIT 1`,
+        [tenantId, session.id, idempotencyKey, messageId]
+      );
+      const existing = existingResult.rows[0];
+      if (existing) {
+        const metadata = jsonValue(existing.metadata, {});
+        const existingText = fieldEncryption.decryptText(existing.content, messageContext({ tenantId, channel:session.channel, sessionId:session.session_id, messageId:existing.message_id }));
+        if (existingText !== text || String(metadata.actor || "") !== actor) {
+          const error = new Error("同一发送标识不能用于不同的人工回复内容");
+          error.code = "IDEMPOTENCY_PAYLOAD_MISMATCH";
+          error.status = 409;
+          throw error;
+        }
+        return { message:{ id:existing.message_id, from:"staff", text:redactContactPii(existingText), at:new Date(existing.occurred_at).toISOString(), actor, idempotency_key:idempotencyKey || null, delivery:clone(metadata.delivery || message.delivery || {}) }, replayed:true };
+      }
+      const occurredAt = new Date().toISOString();
+      const metadata = { status:"submitted", actor, idempotency_key:idempotencyKey || null, delivery:clone(message.delivery || {}) };
+      await client.query(
+        `INSERT INTO conversation_messages
+          (tenant_id, session_record_id, message_id, role, direction, content, metadata, occurred_at)
+         VALUES ($1,$2,$3,'human_agent','outbound',$4,$5::jsonb,$6)`,
+        [tenantId, session.id, messageId,
+          fieldEncryption.encryptText(text, messageContext({ tenantId, channel:session.channel, sessionId:session.session_id, messageId })),
+          JSON.stringify(metadata), occurredAt]
+      );
+      await client.query(
+        `UPDATE conversation_sessions SET last_activity_at=$3 WHERE tenant_id=$1 AND id=$2`,
+        [tenantId, session.id, occurredAt]
+      );
+      await appendAuditEvent(client, { tenantId, action:"conversation.reply_sent", resourceType:"conversation", resourceId:safeConversationId, actorType:"human", actorId:actor, details:{ channel:session.channel, message_id:messageId } });
+      await appendOutboxEvent(client, { tenantId, aggregateType:"conversation_session", aggregateId:session.session_id, eventType:"conversation.human_reply_submitted", payload:{ session_id:session.session_id, conversation_id:safeConversationId, message_id:messageId } });
+      return { message:{ id:messageId, from:"staff", text:redactContactPii(text), at:occurredAt, actor, idempotency_key:idempotencyKey || null, delivery:clone(message.delivery || {}) }, replayed:false };
+    });
+  };
+
+  const recordHumanReplyDelivery = async ({ tenantId, externalConversationId, messageId } = {}) => {
+    const safeConversationId = String(externalConversationId || "").trim();
+    const safeMessageId = String(messageId || "").trim();
+    if (!tenantId || !safeConversationId || !safeMessageId) return null;
+    return database.tenantTransaction(tenantId, async (client) => {
+      const result = await client.query(
+        `SELECT s.id, s.session_id, s.channel, m.content, m.metadata, m.occurred_at
+         FROM conversation_sessions s JOIN conversation_messages m
+           ON m.tenant_id=s.tenant_id AND m.session_record_id=s.id
+         WHERE s.tenant_id=$1 AND s.external_conversation_id=$2 AND m.message_id=$3
+           AND m.role='human_agent' LIMIT 1 FOR UPDATE`,
+        [tenantId, safeConversationId, safeMessageId]
+      );
+      const row = result.rows[0];
+      if (!row) return null;
+      const metadata = jsonValue(row.metadata, {});const delivery = metadata.delivery || {};const delivered = delivery.delivery_status === "delivered";
+      const deliveredAt = delivery.delivered_at || new Date().toISOString();
+      const nextMetadata = { ...metadata, delivery:{ ...delivery, submission_status:"submitted", delivery_status:"delivered", delivered_at:deliveredAt, read_status:"not_reported", channel:"web" } };
+      if (!delivered) await client.query(
+        `UPDATE conversation_messages SET metadata=$4::jsonb WHERE tenant_id=$1 AND session_record_id=$2 AND message_id=$3`,
+        [tenantId, row.id, safeMessageId, JSON.stringify(nextMetadata)]
+      );
+      const text = fieldEncryption.decryptText(row.content, messageContext({ tenantId, channel:row.channel, sessionId:row.session_id, messageId:safeMessageId }));
+      return { message:{ id:safeMessageId, from:"staff", text:redactContactPii(text), at:new Date(row.occurred_at).toISOString(), actor:String(nextMetadata.actor || "当前售前顾问"), idempotency_key:nextMetadata.idempotency_key || null, delivery:clone(nextMetadata.delivery) }, replayed:delivered };
+    });
   };
 
   return {
@@ -706,6 +794,8 @@ export function createPostgresAcquisitionSessionStore(options = {}) {
     get,
     listStates,
     listConversations,
+    appendHumanReply,
+    recordHumanReplyDelivery,
     status:() => ({
       driver:"postgres", durable:true, shared:true, configured:database.configured,
       field_encryption:fieldEncryption.enabled ? "aes-256-gcm" : "development-plaintext"

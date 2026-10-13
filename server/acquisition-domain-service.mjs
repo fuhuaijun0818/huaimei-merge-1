@@ -11,7 +11,7 @@ import { getHuameiKnowledgeStatus, loadHuameiKnowledge } from "./huamei-knowledg
 import { getLlmStatus } from "./llm-client.mjs";
 import { getGraphRagStatus } from "./graphrag-client.mjs";
 import { attachPublicKnowledgeMediaPreviews, getPublicKnowledgeMediaStatus, selectPublicKnowledgeMedia } from "./knowledge-media.mjs";
-import { buildAcquisitionOrchestration } from "./acquisition-orchestration.mjs";
+import { buildAcquisitionOrchestration, buildHandoverAppointmentProposal } from "./acquisition-orchestration.mjs";
 import { ensureHandoverTask, findOpenHandover, getOperationsStoreStatus, recordInboundDuringHandover } from "./acquisition-operations-store.mjs";
 import { ensureKnowledgeReleasePolicyFresh } from "./knowledge-release-policy.mjs";
 import { getTenantContextStatus, normalizeTenantId, tenantScopedKey } from "./platform/tenant-context.mjs";
@@ -68,8 +68,18 @@ const knownProjectsFrom = (result) => [...new Set([
 function handoverResponse(envelope, openHandover, metadata = {}) {
   const tenantId = envelope.tenant_id, channel = envelope.channel;
   const externalConversationId = envelope.conversation_id, message = envelope.message.text;
-    const claimed = openHandover.ai_suspended === true || openHandover.status === "active";
-    return {
+  const claimed = openHandover.ai_suspended === true || openHandover.status === "active";
+  // This is a deterministic, customer-confirmed intake affordance, not an AI
+  // response. It intentionally remains available after an explicit lead
+  // capture has opened the human handover, so a later booking request is not
+  // stranded behind the AI-suspension boundary.
+  const appointmentProposal = buildHandoverAppointmentProposal({
+    tenantId,
+    conversationId:externalConversationId,
+    messageId:envelope.message.id,
+    message
+  });
+  return {
       schema_version:"1.1", service:"huamei-acquisition-agent", tenant_id:tenantId,
       request_id:metadata.requestId, run_id:null, status:claimed ? "human_active" : "handover_pending",
       channel, conversation_id:externalConversationId, message_id:envelope.message.id,
@@ -82,6 +92,7 @@ function handoverResponse(envelope, openHandover, metadata = {}) {
       handover:{ required:true, id:openHandover.id, task_id:openHandover.task_id, status:openHandover.status, to_team:openHandover.team, reason:openHandover.reason, assignee:openHandover.assignee, sla_due_at:openHandover.sla_due_at },
       delivery:{ suppress_ai:claimed, mode:claimed ? "human_only" : "handover_notice" },
       profile_signals:{ projects:openHandover.projects || [], known_slots:openHandover.known_slots || {}, conversation_summary:openHandover.summary, turn_count:null, session_id:externalConversationId, intent:"human_handover" },
+      orchestration:{ version:"1.0.0", action_proposal:appointmentProposal },
       lead_capture:{ should_prompt:false },
       guardrails:{ medical_diagnosis_allowed:false, suitability_judgement_allowed:false, llm_used:false, compliance_gate_version:"4.2.0", knowledge_version:null },
       usage:{ provider:"handover_orchestrator", model:null, input_characters:message.length, output_characters:claimed ? 0 : 17 }

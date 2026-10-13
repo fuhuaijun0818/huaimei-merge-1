@@ -2,6 +2,7 @@ import { applyManagementAccount, listManagementAccounts, saveManagementAccount }
 import { listKnowledgePublications, createKnowledgePublication, mutateKnowledgePublication } from "./knowledge-publication.mjs";
 import { memberRepeatCheckConfiguration } from "./integrations/member-repeatcheck-client.mjs";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { safeHandoverObjectError } from "./platform/object-authorization-response.mjs";
 import { AGENT_DEFINITIONS, getRun, invokeAgentAsync, listRuns, routeAgent, validateInvocation } from "./agent-runtime.mjs";
 import { callAcquisitionAdminOperation, callAcquisitionChannel, callAcquisitionLegacyInvocation, getAcquisitionServiceRun, getAcquisitionServiceStatus, listAcquisitionServiceChannels, listAcquisitionServiceRuns, submitAcquisitionConversationFeedback } from "./acquisition-service-client.mjs";
 import {
@@ -10,7 +11,8 @@ import {
   recheckAcquisitionCustomerMember, updateAcquisitionCustomer, upsertAcquisitionLead
 } from "./lead-store.mjs";
 import { assertHandoverReplyAuthorization, ensureHandoverTask } from "./acquisition-operations-store.mjs";
-import { readPersistedConversations } from "./local-conversation-store.mjs";
+import { readPersistedConversations, readLocalConversationReadReceipts, writeLocalConversationReadReceipt } from "./local-conversation-store.mjs";
+import { conversationSyncSignaturePayload, messagesChangedSinceCursor } from "./acquisition-sync-cursor.mjs";
 import { revealContactForClaimedAppointment } from "./contact-vault.mjs";
 import { appointmentDateRecommendations } from "./appointment-time.mjs";
 import {
@@ -45,7 +47,7 @@ import {
 } from "./platform/request-security.mjs";
 import { getPostgresClient } from "./platform/postgres.mjs";
 import { createProductionReadiness } from "./platform/production-readiness.mjs";
-import { appendAuditEvent } from "./persistence/postgres-helpers.mjs";
+import { appendAuditEvent, postgresPersistenceEnabled } from "./persistence/postgres-helpers.mjs";
 import {
   authorizeManagementPrincipal,
   createManagementAuthorizer,
@@ -270,7 +272,11 @@ const authorizeManagementRequest = async (request, requirements = {}) => {
         displayName:subject,
         roles:["development:admin", configuredRole, ...phaseOneTechnicalRolesFor(configuredRole)],
         phaseOneRole:configuredRole,
-        tenantIds:[requirements.tenantId ? normalizeTenantId(requirements.tenantId) : PUBLIC_TENANT_ID],
+        // A local development identity is server-owned and single-tenant.
+        // `requirements.tenantId` can originate from a browser query string;
+        // using it here would let a caller construct a new tenant scope before
+        // authorizeManagementPrincipal has a chance to validate that scope.
+        tenantIds:[PUBLIC_TENANT_ID],
         departmentIds:["*"],
         issuer:"urn:huamei:local-management"
       }, requirements),
@@ -327,6 +333,10 @@ const acquisitionAggregate = async (principal) => {
       total:snapshots.reduce((sum, snapshot) => sum + Number(snapshot.meta?.total || 0), 0),
       source_total:snapshots.reduce((sum, snapshot) => sum + Number(snapshot.meta?.source_total || 0), 0),
       operational_only:true,
+      // This endpoint is the authoritative full snapshot for the current
+      // management identity.  The browser must remove records absent from it
+      // instead of retaining an old process's in-memory acquisition queue.
+      authoritative:true,
       scope:"platform_superadministrator"
     }
   };
@@ -367,18 +377,9 @@ const conversationSyncCursor = (conversation = {}) => {
   // Staff delivery state does not always advance the session sequence. Include
   // message identity/state in the opaque suffix so it is never skipped during
   // a reconnect while the numeric cursor still drives customer/AI backfill.
-  const signature = createHash("sha256").update(JSON.stringify({
-    cursor:durableCursor,
-    updatedAt:conversation.updatedAt || "",
-    status:conversation.status || "",
-    mode:conversation.mode || "",
-    messages:(conversation.messages || []).map((message) => ({
-      id:message?.id || "",
-      seq:Number(message?.seq) || 0,
-      status:message?.status || "",
-      delivery:message?.delivery?.delivery_status || ""
-    }))
-  })).digest("base64url").slice(0, 20);
+  const signature = createHash("sha256")
+    .update(JSON.stringify(conversationSyncSignaturePayload(conversation, durableCursor)))
+    .digest("base64url").slice(0, 20);
   return `${durableCursor}#${signature}`;
 };
 const acquisitionAggregateSinceCursor = (snapshot, cursors) => {
@@ -396,10 +397,13 @@ const acquisitionAggregateSinceCursor = (snapshot, cursors) => {
     return [{
       ...conversation,
       sync_cursor:syncCursor,
-      // Session messages use a durable sequence.  Staff messages that live in
-      // the lead archive have no sequence, so include them on a changed
-      // conversation and let the client merge by stable message ID.
-      messages:(conversation.messages || []).filter((message) => !Number.isInteger(message?.seq) || message.seq > afterSequence)
+      // An inbound customer message and the resulting AI reply deliberately
+      // share one durable turn sequence.  A reconnect can therefore have
+      // already seen the inbound row at sequence N while the reply is
+      // committed later at that same N.  Retain non-customer messages at the
+      // cursor boundary; the client merges them by stable message ID.  This
+      // also keeps unsequenced staff replies from the lead archive visible.
+      messages:messagesChangedSinceCursor(conversation.messages, afterSequence)
     }];
   });
   return {
@@ -423,7 +427,10 @@ const recordManagementAccess = async ({
   resourceId = "",
   outcome = "success"
 }) => {
-  if (!productionRuntime) return;
+  // Local JSON deliberately has no audit table.  An isolated PostgreSQL
+  // environment does, and must exercise the same actor/request/outcome audit
+  // path as production rather than silently omitting authorization evidence.
+  if (!postgresPersistenceEnabled()) return;
   const database = getPostgresClient({ env:process.env });
   try {
     await database.tenantTransaction(principal.tenantId, (client) => appendAuditEvent(client, {
@@ -1093,7 +1100,7 @@ export async function handleApiRequest(request, response) {
     }
     try {
       if (listAppointments) {
-        sendJson(request, response, requestId, 200, { data:await listAppointmentIntakes({ tenant_id:principal.tenantId, actor:principal.subject, assigned_only:!hasPhaseOneCapability(principal, PHASE_ONE_CAPABILITIES.appointmentsManage), status:url.searchParams.get("status") || "", limit:url.searchParams.get("limit") }), request_id:requestId });
+        sendJson(request, response, requestId, 200, { data:await listAppointmentIntakes({ tenant_id:principal.tenantId, actor:principal.subject, assigned_only:!hasPhaseOneCapability(principal, PHASE_ONE_CAPABILITIES.appointmentsManage), status:url.searchParams.get("status") || "", followup_status:url.searchParams.get("followup_status") || "", preferred_date:url.searchParams.get("preferred_date") || "", assignee:url.searchParams.get("assignee") || "", limit:url.searchParams.get("limit") }), request_id:requestId });
         return true;
       }
       if (appointmentDetail) {
@@ -1225,6 +1232,45 @@ export async function handleApiRequest(request, response) {
         try { await idempotencyStore.release(replyScope, claim.token); } catch {}
       }
       sendError(request, response, requestId, error.status || 400, error.code || "CONVERSATION_REPLY_FAILED", error.message);
+    }
+    return true;
+  }
+
+  const acquisitionReadReceiptMatch = request.method === "POST"
+    ? url.pathname.match(/^\/api\/admin\/acquisition\/conversations\/([^/]+)\/read-receipt$/i)
+    : null;
+  const acquisitionReadReceiptList = request.method === "GET"
+    && url.pathname === "/api/admin/acquisition/conversation-read-receipts";
+  if (acquisitionReadReceiptMatch || acquisitionReadReceiptList) {
+    let principal;
+    try {
+      principal = await authorizeManagementRequest(request, {
+        requiredRoles:[MANAGEMENT_ROLES.customerRead],
+        requiredAnyCapabilities:[PHASE_ONE_CAPABILITIES.customersReadAll, PHASE_ONE_CAPABILITIES.customersReadAssigned],
+        tenantId:PUBLIC_TENANT_ID,
+        tenantField:"token.tenant_ids"
+      });
+      if (acquisitionReadReceiptMatch) {
+        const payload = await readJsonBody(request, 64 * 1024);
+        const conversationId = decodeURIComponent(acquisitionReadReceiptMatch[1]);
+        const receipt = writeLocalConversationReadReceipt({
+          tenant_id:principal.tenantId,
+          subject:principal.subject,
+          conversation_id:conversationId,
+          message_ids:payload?.message_ids
+        });
+        sendJson(request, response, requestId, 200, { data:receipt, request_id:requestId });
+      } else {
+        sendJson(request, response, requestId, 200, {
+          data:readLocalConversationReadReceipts({tenant_id:principal.tenantId,subject:principal.subject}),
+          request_id:requestId
+        });
+      }
+    } catch (error) {
+      const status = Number(error.status) || (error.code === "BODY_TOO_LARGE" ? 413 : 400);
+      if (error.code === "INVALID_CONVERSATION_READ_RECEIPT" || error.code === "BODY_TOO_LARGE") {
+        sendError(request, response, requestId, status, error.code, error.message);
+      } else sendManagementAuthorizationError(request, response, requestId, error);
     }
     return true;
   }
@@ -1409,23 +1455,6 @@ export async function handleApiRequest(request, response) {
         tenantField:"token.tenant_ids"
       });
       if((listBadCasesRoute||badCaseReviewMatch)&&!principal.departmentIds.includes("*"))throw Object.assign(new Error("未归属科室的反馈仅向机构范围质检开放"),{status:403,code:"FEEDBACK_DEPARTMENT_SCOPE_REQUIRED"});
-      await recordManagementAccess({
-        principal,
-        requestId,
-        request,
-        action:contactRevealMatch
-          ? "management.contact.reveal_authorized"
-          : listBadCasesRoute
-            ? "management.conversation_feedback.read"
-            : badCaseReviewMatch
-              ? "management.conversation_feedback.write"
-          : request.method === "GET"
-            ? "management.handover.read"
-            : "management.handover.write",
-        resourceType:humanWorkRoute ? "human_work" : (listBadCasesRoute || badCaseReviewMatch ? "conversation_feedback" : "handover"),
-        resourceId:detailMatch?.[1] || claimMatch?.[1] || completeMatch?.[1] || contactRevealMatch?.[1] || badCaseReviewMatch?.[1] || "",
-        outcome:contactRevealMatch ? "authorized" : "success"
-      });
     } catch (error) {
       sendManagementAuthorizationError(request, response, requestId, error);
       return true;
@@ -1446,6 +1475,24 @@ export async function handleApiRequest(request, response) {
               : badCaseReviewMatch
                 ? "feedback.bad-cases.review"
                 : "human-work.create";
+    const handoverObjectId = detailMatch?.[1] || claimMatch?.[1] || completeMatch?.[1] || contactRevealMatch?.[1] || "";
+    const recordHandoverOperation = (outcome) => recordManagementAccess({
+      principal,
+      requestId,
+      request,
+      action:contactRevealMatch
+        ? "management.contact.reveal_authorized"
+        : listBadCasesRoute
+          ? "management.conversation_feedback.read"
+          : badCaseReviewMatch
+            ? "management.conversation_feedback.write"
+        : request.method === "GET"
+          ? "management.handover.read"
+          : "management.handover.write",
+      resourceType:humanWorkRoute ? "human_work" : (listBadCasesRoute || badCaseReviewMatch ? "conversation_feedback" : "handover"),
+      resourceId:handoverObjectId || badCaseReviewMatch?.[1] || "",
+      outcome
+    });
     try {
       const operationTenants = listRoute && hasPhaseOneCapability(principal, PHASE_ONE_CAPABILITIES.superadminManage)
         ? managementReadTenants(principal) : [principal.tenantId];
@@ -1473,6 +1520,7 @@ export async function handleApiRequest(request, response) {
         sla_due_at:item.sla_due_at||null
       }); if(result.meta)result.meta={total:result.data.length};}
       if(detailMatch && result.data && !hasPhaseOneCapability(principal, PHASE_ONE_CAPABILITIES.conversationsReadAll) && (result.data.assignee!==principal.subject || !(principal.departmentIds.includes("*")||principal.departmentIds.includes(result.data.department))))throw Object.assign(new Error("会话不属于当前接待人或科室"),{status:403,code:"HANDOVER_ASSIGNMENT_FORBIDDEN"});
+      await recordHandoverOperation(contactRevealMatch ? "authorized" : "success");
       sendJson(
         request,
         response,
@@ -1482,6 +1530,21 @@ export async function handleApiRequest(request, response) {
         contactRevealMatch ? { Pragma:"no-cache", Expires:"0" } : {}
       );
     } catch (error) {
+      const safeError = handoverObjectId ? safeHandoverObjectError(error) : null;
+      try {
+        // audit_events permits success/denied/failure/unknown.  A hidden
+        // object lookup is deliberately recorded as denied, whether the ID
+        // existed or not, so the audit record cannot reintroduce an existence
+        // oracle through an unsupported outcome value.
+        await recordHandoverOperation(safeError ? "denied" : "failure");
+      } catch (auditError) {
+        sendManagementAuthorizationError(request, response, requestId, auditError);
+        return true;
+      }
+      if (safeError) {
+        sendError(request, response, requestId, safeError.status, safeError.code, safeError.message);
+        return true;
+      }
       const status = Number(error.status) || (/CONFLICT|ALREADY|MISMATCH|NOT_CLAIMED/.test(String(error.code || "")) ? 409 : 502);
       sendError(
         request,
@@ -1872,7 +1935,7 @@ export async function handleApiRequest(request, response) {
           idempotency_key:request.headers["idempotency-key"] });
         if (!result) sendError(request, response, requestId, 404, "APPOINTMENT_NOT_FOUND", "未找到当前咨询的到院登记。", [], rateHeaders);
         else sendJson(request, response, requestId, 200, { intake:customerView(result.intake), replayed:result.replayed,
-          message:change[2] === "cancel" ? "到院登记已取消。" : `已更新您希望到院的时间：${result.intake.time_preference}。` }, rateHeaders);
+          message:result.intake.status === "cancelled" ? "到院登记已取消。" : `已更新您希望到院的时间：${result.intake.time_preference}。` }, rateHeaders);
         return true;
       }
       const capturedLead = await getCapturedLeadReferenceForSession({ tenant_id:tenantId, session_id:session.sessionId });
@@ -2026,12 +2089,20 @@ export async function handleApiRequest(request, response) {
     let managementPrincipal;
     try {
       managementPrincipal = await authorizeManagementRequest(request, {
-        requiredRoles:[MANAGEMENT_ROLES.customerRead],
-        requiredAnyCapabilities:[PHASE_ONE_CAPABILITIES.customersReadAll, PHASE_ONE_CAPABILITIES.customersReadAssigned],
+        requiredAnyCapabilities:[
+          PHASE_ONE_CAPABILITIES.customersReadAll,
+          PHASE_ONE_CAPABILITIES.customersReadAssigned,
+          PHASE_ONE_CAPABILITIES.conversationsReadRedacted
+        ],
         tenantId:url.searchParams.get("tenant_id") || "",
         tenantField:"query.tenant_id"
       });
-      await recordManagementAccess({ principal:managementPrincipal, requestId, request, action:"management.customer.read", resourceType:"customer_snapshot" });
+      await recordManagementAccess({ principal:managementPrincipal, requestId, request,
+        action:hasPhaseOneCapability(managementPrincipal, PHASE_ONE_CAPABILITIES.conversationsReadRedacted)
+          && !hasPhaseOneCapability(managementPrincipal, PHASE_ONE_CAPABILITIES.customersReadAll)
+          && !hasPhaseOneCapability(managementPrincipal, PHASE_ONE_CAPABILITIES.customersReadAssigned)
+          ? "management.conversation.read_redacted" : "management.customer.read",
+        resourceType:"customer_snapshot" });
     } catch (error) {
       sendManagementAuthorizationError(request, response, requestId, error);
       return true;

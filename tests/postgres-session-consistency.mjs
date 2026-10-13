@@ -14,6 +14,7 @@ process.env.HUAMEI_LLM_ENABLED = "false";
 const { createPostgresClient, closePostgresClient } = await import("../server/platform/postgres.mjs");
 const { getPostgresAcquisitionSessionStore } = await import("../server/persistence/postgres-session-store.mjs");
 const { createPostgresOperationsStore } = await import("../server/persistence/postgres-operations-store.mjs");
+const { acquisitionCustomerSnapshot } = await import("../server/lead-store.mjs");
 const { runConversationReceiptRecoveryPass } = await import("../server/workers/conversation-receipt-recovery-worker.mjs");
 const {
   getAcquisitionSession,
@@ -326,7 +327,52 @@ try {
   );
   assert.deepEqual(handoverReplayEvidence.rows[0], { messages:1, audits:1, outbox_events:1 });
 
-  console.log(`✓ PostgreSQL渠道收件幂等、确定序号、并发重放、超时恢复与人工接管入站单写通过（${tenantId}）`);
+  // PostgreSQL intentionally exposes a claimed handover as API status `active`.
+  // A freshly loaded management snapshot must still project that session into
+  // the manual-reception queue rather than silently treating it as an AI turn.
+  const refreshedSnapshot = await acquisitionCustomerSnapshot(tenantId, {
+    includeLiveConversations:true,
+    principal:{ subject:"恢复测试顾问", phaseOneRole:"售前顾问", departmentIds:["*"] }
+  });
+  const refreshedHandover = refreshedSnapshot.conversations
+    .find((item) => item.externalConversationId === handoverConversationId);
+  assert.ok(refreshedHandover, "刷新后的快照不得丢失已领取的人工接待会话");
+  assert.equal(refreshedHandover.status, "人工接待");
+  assert.equal(refreshedHandover.mode, "人工");
+
+  const humanReply = {
+    id:"handover-human-outbound-1",
+    text:"您好，已由人工顾问接待。",
+    actor:"恢复测试顾问",
+    idempotency_key:"handover-human-outbound-retry-key",
+    delivery:{ submission_status:"submitted", delivery_status:"pending", delivered_at:null, read_status:"not_reported", channel:"web" }
+  };
+  const humanReplyWritten = await recoveryStore.appendHumanReply({
+    tenantId,
+    externalConversationId:handoverConversationId,
+    message:humanReply
+  });
+  assert.equal(humanReplyWritten.replayed, false);
+  assert.equal(humanReplyWritten.message.from, "staff");
+  const humanReplyReplay = await recoveryStore.appendHumanReply({
+    tenantId,
+    externalConversationId:handoverConversationId,
+    message:{ ...humanReply, id:"handover-human-outbound-retry-id" }
+  });
+  assert.equal(humanReplyReplay.replayed, true, "同一人工发送标识必须只写入一条消息");
+  assert.equal(humanReplyReplay.message.id, humanReply.id);
+  const humanReplyDelivered = await recoveryStore.recordHumanReplyDelivery({
+    tenantId,
+    externalConversationId:handoverConversationId,
+    messageId:humanReply.id
+  });
+  assert.equal(humanReplyDelivered.message.delivery.delivery_status, "delivered");
+  const handoverConversation = (await recoveryStore.listConversations({ tenantId }))
+    .find((item) => item.externalId === handoverConversationId);
+  assert.equal(handoverConversation.messages.filter((item) => item.id === humanReply.id).length, 1);
+  assert.equal(handoverConversation.messages.find((item) => item.id === humanReply.id)?.delivery?.delivery_status, "delivered");
+
+  console.log(`✓ PostgreSQL渠道收件幂等、确定序号、并发重放、超时恢复、人工接管入站与人工回复单写通过（${tenantId}）`);
 } finally {
   await Promise.allSettled([database.close(), closePostgresClient()]);
 }

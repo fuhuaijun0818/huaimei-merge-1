@@ -68,6 +68,23 @@ const actionProposalFor = ({ message, tenantId, conversationId, messageId, inten
   };
 };
 
+// 人工接管期间不能恢复模型生成，但客户仍可在本轮明确提出到院登记。
+// 这里仅生成需要客户再次确认的本地登记动作；不会创建真实号源、排班或
+// 任何外部预约。动作标识仍绑定租户、会话和这条客户消息，保留可审计的
+// 动作来源。
+export const buildHandoverAppointmentProposal = ({ tenantId, conversationId, messageId, message } = {}) => {
+  const proposal = actionProposalFor({
+    tenantId:String(tenantId || ""),
+    conversationId:String(conversationId || ""),
+    messageId:String(messageId || ""),
+    message:String(message || ""),
+    intent:"appointment_request",
+    salesPlan:null,
+    turnPlan:null
+  });
+  return proposal?.type === "appointment_request" ? proposal : null;
+};
+
 const taskPlanFor = ({ routing, result, actionProposal, externalSearchRequired }) => {
   const strategy = routing?.retrieval_strategy || "none";
   const graphUsed = result?.guardrails?.graphrag_used === true;

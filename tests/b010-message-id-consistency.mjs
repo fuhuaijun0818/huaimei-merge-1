@@ -114,7 +114,41 @@ try {
   assert.equal(frontendMessage.from, "staff");
   assert.equal(frontendMessage.text, marker);
 
-  console.log("✓ B010 AC2 消息 ID 一致，AC3 送达状态与 AC4 稳定重试去重正确区分");
+  const visitorOnlyConversationId = "ps-b010-ac2-visitor-only";
+  const visitorOnlyMarker = "B010AC2-未留资访客也可收到人工回复。";
+  recordLocalConversation({
+    tenant_id:tenantId,
+    channel:"web",
+    conversation_id:visitorOnlyConversationId,
+    message:{ id:"b010-ac2-visitor-inbound", text:"请人工顾问接待", timestamp:new Date().toISOString() }
+  }, { reply:{ text:"已转人工顾问。" } });
+  const visitorOnlyReply = await appendAcquisitionConversationReply({
+    tenant_id:tenantId,
+    conversation_id:visitorOnlyConversationId,
+    text:visitorOnlyMarker,
+    actor:"advisor-b010",
+    idempotency_key:"b010-visitor-only-retry-key"
+  });
+  assert.equal(visitorOnlyReply.message.from, "staff", "未留资访客也必须写入统一会话记录");
+  assert.equal(visitorOnlyReply.message.text, visitorOnlyMarker);
+  const visitorOnlyReplay = await appendAcquisitionConversationReply({
+    tenant_id:tenantId,
+    conversation_id:visitorOnlyConversationId,
+    text:visitorOnlyMarker,
+    actor:"advisor-b010",
+    idempotency_key:"b010-visitor-only-retry-key"
+  });
+  assert.equal(visitorOnlyReplay.replayed, true, "未留资访客的人工回复也必须幂等");
+  const visitorOnlyDelivered = await recordAcquisitionConversationDelivery({
+    tenant_id:tenantId,
+    conversation_id:visitorOnlyConversationId,
+    message_id:visitorOnlyReply.message.id
+  });
+  assert.equal(visitorOnlyDelivered.message.delivery.delivery_status, "delivered");
+  const visitorOnlyPublic = await getAcquisitionConversationStaffMessages({ tenant_id:tenantId, conversation_id:visitorOnlyConversationId });
+  assert.equal(visitorOnlyPublic.find((message) => message.id === visitorOnlyReply.message.id)?.delivery?.delivery_status, "delivered");
+
+  console.log("✓ B010 AC2 消息 ID 一致，未留资访客回复、AC3 送达状态与 AC4 稳定重试去重正确区分");
 } finally {
   if (previousBackend === undefined) delete process.env.HUAMEI_PERSISTENCE_BACKEND;
   else process.env.HUAMEI_PERSISTENCE_BACKEND = previousBackend;

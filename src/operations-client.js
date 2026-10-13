@@ -86,6 +86,22 @@ export async function sendManagementConversationReply(conversationId, text, { ha
   return body.data;
 }
 
+export async function getManagementConversationReadReceipts() {
+  const body = await managementRequest("/api/admin/acquisition/conversation-read-receipts", { headers:requestHeaders() });
+  return body.data || {};
+}
+
+export async function saveManagementConversationReadReceipt(conversationId, messageIds) {
+  const id = String(conversationId || "").trim();
+  if (!id) return null;
+  const body = await managementRequest(`/api/admin/acquisition/conversations/${encodeURIComponent(id)}/read-receipt`, {
+    method:"POST",
+    headers:requestHeaders({ json:true }),
+    body:JSON.stringify({ message_ids:Array.isArray(messageIds) ? messageIds.slice(-200) : [] })
+  });
+  return body.data || null;
+}
+
 export async function updateManagementCustomerProfile(customerId, { expectedVersion, patch } = {}) {
   const id = String(customerId || "").trim();
   if (!id) throw new Error("客户编号不能为空");
@@ -306,9 +322,12 @@ export async function uploadManagementKnowledgeIntakeAsset({ file, ...metadata }
   return { document:completed.data, replayed:completed.meta?.replayed === true, duplicate:completed.meta?.duplicate === true };
 }
 
-export async function listManagementAppointmentIntakes({ status = "", limit = 100 } = {}) {
+export async function listManagementAppointmentIntakes({ status = "", followupStatus = "", preferredDate = "", assignee = "", limit = 100 } = {}) {
   const query = new URLSearchParams();
   if (status) query.set("status", status);
+  if (followupStatus) query.set("followup_status", followupStatus);
+  if (preferredDate) query.set("preferred_date", preferredDate);
+  if (assignee) query.set("assignee", assignee);
   query.set("limit", String(Math.min(Math.max(Number(limit) || 100, 1), 500)));
   const body = await managementRequest(`/api/admin/appointment-intakes?${query}`, { headers:requestHeaders() });
   return Array.isArray(body.data) ? body.data : [];
@@ -324,11 +343,11 @@ export async function claimManagementAppointmentIntake(intakeId) {
   return body.data;
 }
 
-export async function resolveManagementAppointmentIntake(intakeId, { status, note = "" }) {
+export async function resolveManagementAppointmentIntake(intakeId, { status, note = "", nextFollowupAt = "" }) {
   const body = await managementRequest(`/api/admin/appointment-intakes/${encodeURIComponent(intakeId)}/resolve`, {
     method:"POST",
     headers:requestHeaders({ json:true, idempotencyKey:idempotencyKey("appointment-resolve", intakeId) }),
-    body:JSON.stringify({ status, note:String(note || "").slice(0, 500) })
+    body:JSON.stringify({ status, note:String(note || "").slice(0, 500), next_followup_at:nextFollowupAt || "" })
   });
   acknowledgeOperation("appointment-resolve", intakeId);
   return { intake:body.data, replayed:body.meta?.replayed === true };

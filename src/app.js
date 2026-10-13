@@ -1,5 +1,6 @@
 import { customerPresentation } from "./customer-presentation.js";
 import { createConversationReadState } from "./conversation-unread.js";
+import { templateVariableReminder } from "./modules/reception/template-variable-validation.js";
 const conversationReads = createConversationReadState();
 import { logoutAdminSession } from "./admin-session.js";
 import { ROLE_CATALOG, roleCatalogEntry } from "./role-catalog.js";
@@ -10,6 +11,7 @@ import {
   claimManagementHandover,
   completeManagementHandoverWithWork,
   getManagementKnowledgeGovernance,
+  getManagementConversationReadReceipts,
   getManagementDomainOverlay,
   listManagementAcquisitionChannels,
   listManagementAppointmentIntakes,
@@ -22,6 +24,7 @@ import {
   recheckManagementCustomerMemberCheck,
   resolveManagementAppointmentIntake,
   saveManagementDomainOverlay,
+  saveManagementConversationReadReceipt,
   sendManagementConversationReply,
   updateManagementCustomerProfile,
   uploadManagementKnowledgeIntakeAsset, getManagementKnowledgeIntakeDocument, mutateManagementKnowledgeIntakeDocument
@@ -48,6 +51,7 @@ const ui = {
   conversationFilter: "全部",
   conversationQuery: "",
   receptionTab: "phrases",
+  receptionHistoryWindows: {},
   replyDrafts: {},
   replyDraftStates: {},
   journeyView: "list",
@@ -97,11 +101,18 @@ const ui = {
   analyticsRange: "近30天",
   operationsLoading: false,
   operationsError: "",
+  conversationSyncLoading: false,
   conversationSyncError: "",
+  // The store deliberately keeps acquisition conversations in memory only.
+  // A new page therefore has no baseline to which a persisted cursor delta
+  // could be applied; its first request must be a complete snapshot.
+  acquisitionSnapshotHydrated: false,
   acquisitionChannelStatuses: [],
   acquisitionChannelsLoading: false,
   acquisitionChannelsError: "",
   appointmentIntakes: [],
+  appointmentAssignees: [],
+  appointmentFilters: { status:"pending", preferredDate:"", assignee:"" },
   scheduleSlots: [],
   appointmentsLoading: false,
   appointmentsError: "",
@@ -179,11 +190,26 @@ const clearReplyDraft = (conversationId) => {
   try { window.sessionStorage.removeItem(replyDraftStorageKey(conversationId)); }
   catch { /* 无需处理。 */ }
 };
+const clearReplyDraftsOnSessionEnd = () => {
+  // Do not leave customer-facing drafts available after logout, expiration,
+  // or a logout broadcast from another tab.  Clear every identity-scoped
+  // reply draft in this tab instead of trusting the identity at teardown.
+  try {
+    for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = window.sessionStorage.key(index);
+      if (key?.startsWith(`${REPLY_DRAFT_STORAGE_PREFIX}:`)) window.sessionStorage.removeItem(key);
+    }
+  } catch { /* 内存中的状态仍会在下方清除。 */ }
+  ui.replyDrafts = {};
+  ui.replyDraftStates = {};
+};
+window.addEventListener("huamei:management-session-ending", clearReplyDraftsOnSessionEnd);
 
 // The acquisition cursor contains only opaque conversation IDs and server
 // sequence values. Keep it in this tab's sessionStorage, scoped to the
-// authenticated management identity, so reconnects and reloads can request a
-// delta without carrying customer content into browser storage.
+// authenticated management identity. It is only used after this page has
+// received a complete baseline, so it never makes a refreshed page render an
+// incomplete delta as its whole conversation list.
 const ACQUISITION_CURSOR_STORAGE_PREFIX = "huamei:acquisition-sync-cursor:v1";
 // Keep the query well below common reverse-proxy/header limits.  A cursor
 // that cannot carry every conversation is still safe: the server treats an
@@ -257,12 +283,12 @@ const presalesSubrouteAllowlist = Object.freeze({
 });
 const presalesAllowedActions = new Set([
   "list-page", "modal-close", "modal-backdrop", "notifications", "refresh", "refresh-handovers",
-  "refresh-appointments", "claim-handover", "complete-handover", "robot-takeover", "reveal-contact",
+  "refresh-appointments", "refresh-conversations", "claim-handover", "complete-handover", "robot-takeover", "reveal-contact",
   "claim-appointment", "resolve-appointment", "reveal-appointment-contact", "select-conversation", "conversation-filter",
   "open-phrase-library", "use-common-phrase", "customer-view", "timeline-filter", "reception-tab", "copy-reply-draft",
-  "conversation-detail", "send-message"
+  "conversation-detail", "send-message", "load-earlier-messages", "add-customer-note"
 ]);
-const presalesAllowedForms = new Set(["handover-complete-form", "appointment-resolve-form"]);
+const presalesAllowedForms = new Set(["handover-complete-form", "appointment-resolve-form", "customer-note-form"]);
 
 const routeInfo = () => {
   const raw = location.hash.replace(/^#\/?/, "") || "workbench";
@@ -359,7 +385,7 @@ function workbenchPage() {
             ? `<div class="task-list">${openHandovers.map(handoverRow).join("")}</div>`
             : empty("当前没有待接管会话", "新的强制转人工任务会自动出现在这里")}
       </section>
-      ${appointmentQueuePanel(openAppointments)}
+      ${appointmentQueuePanel(appointmentIntakes)}
       <div class="guardrail" style="margin-top:16px">${icon("shield",14)}客户确认后直接保存到院登记；手机号待人工回电核号。此记录不锁定指定医生或接诊名额，顾问领取后记录跟进结果。</div>
     </div>`;
   }
@@ -381,7 +407,7 @@ function workbenchPage() {
           ? `<div class="task-list">${openHandovers.map(handoverRow).join("")}</div>`
           : empty("当前没有待接管会话", "新的强制转人工任务会自动出现在这里")}
     </section>
-    ${appointmentQueuePanel(openAppointments)}
+    ${appointmentQueuePanel(appointmentIntakes)}
     <div class="grid dashboard-layout">
       <div class="stack">
         <section class="card"><div class="card-head"><div><div class="card-title">今日优先任务</div><div class="card-subtitle">按客户、待解决问题和预期结果安排跟进</div></div>
@@ -445,16 +471,35 @@ function handoverRow(handover) {
 
 const appointmentStatusLabel = (status = "") => ({ registered:"已登记", pending:"待跟进", claimed:"跟进中", needs_customer_info:"待补充信息", completed:"跟进完成", cancelled:"已取消" }[status] || status);
 
-function appointmentQueuePanel(openAppointments = []) {
+const appointmentFilterQuery = (filters = {}) => {
+  const status = filters.status || "pending";
+  const states = {
+    all:{},
+    pending:{ status:"registered", followupStatus:"pending" },
+    claimed:{ status:"registered", followupStatus:"claimed" },
+    needs_customer_info:{ status:"registered", followupStatus:"needs_customer_info" },
+    completed:{ status:"registered", followupStatus:"completed" },
+    cancelled:{ status:"cancelled" }
+  };
+  return { ...(states[status] || states.pending), preferredDate:filters.preferredDate || "", assignee:filters.assignee || "" };
+};
+
+function appointmentQueuePanel(appointments = []) {
+  const filters = ui.appointmentFilters;
+  const assignees = [...new Set(ui.appointmentAssignees || [])].sort((left, right) => left.localeCompare(right, "zh-CN"));
+  const options = [["all", "全部状态"], ["pending", "待跟进"], ["claimed", "跟进中"], ["needs_customer_info", "待补充信息"], ["completed", "跟进完成"], ["cancelled", "已取消"]];
+  const filtersMarkup = `<div class="toolbar" style="margin:12px 0"><select class="select" id="appointment-status" aria-label="按状态筛选">${options.map(([value, label]) => `<option value="${value}" ${filters.status === value ? "selected" : ""}>${label}</option>`).join("")}</select><input class="field" id="appointment-date" aria-label="按期望到院日期筛选" type="date" value="${escapeHtml(filters.preferredDate)}"><select class="select" id="appointment-assignee" aria-label="按负责人筛选"><option value="" ${!filters.assignee ? "selected" : ""}>全部负责人</option><option value="__unassigned__" ${filters.assignee === "__unassigned__" ? "selected" : ""}>未领取</option>${assignees.map((assignee) => `<option value="${escapeHtml(assignee)}" ${filters.assignee === assignee ? "selected" : ""}>${escapeHtml(assignee)}</option>`).join("")}</select><button class="btn small" data-action="clear-appointment-filters">清除筛选</button>${badge(`当前 ${appointments.length} 条`)}</div>`;
   return `<section class="card" style="margin-top:16px" aria-live="polite"><div class="card-head"><div><div class="card-title">到院登记待跟进</div><div class="card-subtitle">展示最近200条登记中的待跟进事项；顾问领取后回电核号并记录跟进结果。</div></div><button class="btn small" data-action="refresh-appointments" ${ui.appointmentsLoading ? "disabled" : ""}>${icon("refresh",14)}${ui.appointmentsLoading ? "正在同步" : "刷新"}</button></div>
-    ${ui.appointmentsError ? `<div class="risk-banner">${icon("alert",15)}<div><strong>登记队列暂时无法读取</strong><br/>请稍后刷新。</div></div>` : openAppointments.length ? `<div class="task-list">${openAppointments.map(appointmentRow).join("")}</div>` : empty("当前没有待跟进的到院登记", "客户新登记或改期后将自动进入跟进队列")}
+    ${filtersMarkup}${ui.appointmentsError ? `<div class="risk-banner">${icon("alert",15)}<div><strong>登记队列暂时无法读取</strong><br/>请稍后刷新。</div></div>` : appointments.length ? `<div class="task-list">${appointments.map(appointmentRow).join("")}</div>` : empty("没有匹配的到院登记", "请调整状态、日期或负责人筛选条件")}
   </section>`;
 }
 
 function appointmentRow(intake) {
   const project = (intake.projects || []).join("、") || "项目待补充";
-  const action = intake.assignee ? `<button class="btn small primary" data-action="resolve-appointment" data-id="${intake.id}">记录跟进</button><button class="btn small" data-action="reveal-appointment-contact" data-id="${intake.id}">查看回拨号码</button>` : `<button class="btn small primary" data-action="claim-appointment" data-id="${intake.id}">领取跟进</button>`;
-  return `<div class="task-row"><span class="task-priority ${intake.assignee ? "普通" : "高"}"></span><div><div class="task-title">${escapeHtml(project)}${intake.doctor ? ` · ${escapeHtml(intake.doctor)}医生` : ""}</div><div class="task-meta"><span>${escapeHtml(intake.branch || "")}</span><span>${escapeHtml(intake.time_preference || "")}</span>${badge(appointmentStatusLabel(intake.followup_status), intake.assignee ? "brand" : "warning")}</div><div class="caption" style="margin-top:5px">会话 ${escapeHtml(intake.conversation_id || "")} · 手机号已保存，待回电核号 · 登记号 ${escapeHtml(intake.appointment_no || "")}</div></div><div class="task-due"><div class="caption">${formatDate(intake.updated_at)}</div><div class="caption">${intake.assignee ? `跟进人：${escapeHtml(intake.assignee)}` : "尚未领取"}</div></div><div class="row">${action}</div></div>`;
+  const actionable = intake.status === "registered" && intake.followup_status !== "completed";
+  const action = !actionable ? badge(appointmentStatusLabel(intake.status === "cancelled" ? "cancelled" : intake.followup_status), "outline") : intake.assignee ? `<button class="btn small primary" data-action="resolve-appointment" data-id="${intake.id}">记录跟进</button><button class="btn small" data-action="reveal-appointment-contact" data-id="${intake.id}">查看回拨号码</button>` : `<button class="btn small primary" data-action="claim-appointment" data-id="${intake.id}">领取跟进</button>`;
+  const displayStatus = intake.status === "cancelled" ? "cancelled" : intake.followup_status;
+  return `<div class="task-row"><span class="task-priority ${intake.assignee ? "普通" : "高"}"></span><div><div class="task-title">${escapeHtml(project)}${intake.doctor ? ` · ${escapeHtml(intake.doctor)}医生` : ""}</div><div class="task-meta"><span>${escapeHtml(intake.branch || "")}</span><span>${escapeHtml(intake.time_preference || "")}</span>${badge(appointmentStatusLabel(displayStatus), intake.assignee ? "brand" : "warning")}</div><div class="caption" style="margin-top:5px">会话 ${escapeHtml(intake.conversation_id || "")} · 手机号已保存，待回电核号 · 登记号 ${escapeHtml(intake.appointment_no || "")}</div></div><div class="task-due"><div class="caption">${formatDate(intake.updated_at)}</div><div class="caption">${intake.assignee ? `跟进人：${escapeHtml(intake.assignee)}` : "尚未领取"}</div></div><div class="row">${action}</div></div>`;
 }
 
 function taskRow(task) {
@@ -474,7 +519,7 @@ function customersPage() {
   const metrics = managementOverviewMetrics();
   const query = ui.customerQuery.trim().toLowerCase();
   const customers = store.state.customers.map(customerPresentation).filter((customer) => {
-    const matchesQuery = !query || [customer.name, customer.mobile, customer.id, customer.source, customer.owner, ...customer.tags].join(" ").toLowerCase().includes(query);
+    const matchesQuery = customerMatchesSearch(customer, query);
     return matchesQuery && (ui.customerStage === "全部" || customer.macroStage === ui.customerStage) && (ui.customerOwner === "全部负责人" || customer.owner === ui.customerOwner);
   });
   const presales = isPresalesWorkspace();
@@ -487,6 +532,21 @@ function customersPage() {
       ${ui.customerView === "table" ? customerTable(customers) : customerBoard(customers)}
     </section>
   </div>`;
+}
+
+// Customer snapshots deliberately contain only a masked mobile number.  An
+// operator may paste an authorized 11-digit number into search, but matching
+// it only against the visible suffix must not cause the unmasked value to be
+// sent to, retained by, or rendered in the browser.
+function customerMatchesSearch(customer, query = "") {
+  const term = String(query || "").trim().toLowerCase();
+  if (!term) return true;
+  const visible = [customer.name, customer.mobile, customer.id, customer.source, customer.owner, ...(customer.tags || [])]
+    .join(" ").toLowerCase();
+  if (visible.includes(term)) return true;
+  const digits = term.replace(/\D/g, "");
+  return /^1\d{10}$/.test(digits)
+    && String(customer.mobile || "").replace(/\D/g, "").endsWith(digits.slice(-4));
 }
 
 function customerTable(customers) {
@@ -518,7 +578,7 @@ function customer360Page(customerId) {
     <section class="card lifecycle"><div class="lifecycle-top"><div><div class="card-title">客户生命周期</div><div class="card-subtitle">当前环节：${customer.microStage} · 进入于 ${formatDate(customer.stageEnteredAt)}</div></div><div class="row">${badge(customer.sla, customer.sla.includes("超时") ? "danger" : "success")}<button class="link" data-action="stage-history" data-id="${customer.id}">查看阶段历史</button></div></div><div class="stage-rail">${["售前","售中","售后"].map((stage, index) => `<div class="stage-block ${customer.macroStage === stage ? "active" : ""}" style="--progress:${customer.macroStage === stage ? ((stepIndex + 1) / Math.max(1, steps.length)) * 100 : index < ["售前","售中","售后"].indexOf(customer.macroStage) ? 100 : 0}%"><div class="stage-name">${index + 1}. ${stage}</div><div class="stage-detail">${customer.macroStage === stage ? `${customer.microStage} · ${stepIndex + 1}/${steps.length}` : stage === "售前" ? "咨询 → 预约" : stage === "售中" ? "到院 → 项目完成" : "随访 → 复购/转介绍"}</div></div>`).join("")}</div></section>
     <div class="grid cols-4 customer-kpis">${metric("意向评分", customer.score, `主要兴趣：${(customer.interests[0]?.name || "项目待确认")}`, "spark")}${metric("经营健康度", customer.health, customer.health >= 80 ? "关系稳定" : "需要关注", "shield")}${metric("阶段停留", Math.max(1, Math.round((Date.now() - new Date(customer.stageEnteredAt)) / 86400000)), "请关注服务时限", "clock", "天")}${metric("最近渠道", customer.latestChannel, relativeTime(customer.timeline[0]?.occurredAt), "message")}</div>
     <div class="grid customer360-grid">
-      <div class="stack">${profileCard(customer)}${memberCheckCard(customer)}${interestCard(customer)}${pidCard(customer)}</div>
+      <div class="stack">${profileCard(customer)}${customer.origin === "acquisition_advisor" ? contactRestrictionCard(customer) : ""}${customer.origin === "acquisition_advisor" ? customerNotesCard(customer) : ""}${memberCheckCard(customer)}${interestCard(customer)}${pidCard(customer)}</div>
       <div class="stack">${nbaCard(customer)}${timelineCard(customer, timeline)}</div>
       <div class="stack">${responsibilityCard(customer)}${journeyCard(customer)}${riskConsentCard(customer)}</div>
     </div>
@@ -562,13 +622,36 @@ function profileCard(customer) {
   const phoneVerification = customer.phoneVerificationStatus === "verified" ? "已人工核号" : "待人工核号";
   const preferences = customer.contactPreferences || {};
   const contactSummary = [
-    preferences.do_not_contact ? "禁止联系" : "",
     preferences.preferred_time ? `时段：${preferences.preferred_time}` : "",
     customer.profile.contact
   ].filter(Boolean).join(" · ");
   const fields = { "预算区间":customer.profile.budget, "决策方式":customer.profile.decision, "联系偏好":contactSummary,
     "沟通风格":customer.profile.style, "核心顾虑":customer.profile.concern };
-  return card("客户画像", `<div class="row between" style="margin-bottom:11px"><span class="caption">信息完整度 ${customer.profile.confidence}% · 新信息会自动补充</span>${badge("持续更新", "ai")}</div><div class="profile-list">${Object.entries(fields).map(([key,value]) => `<div class="profile-row"><span class="profile-key">${escapeHtml(key)}</span><span class="profile-value">${escapeHtml(String(value || "待确认"))}</span></div>`).join("")}</div><div class="divider"></div><div class="profile-row"><span class="profile-key">手机号状态</span><span class="profile-value">${escapeHtml(phoneVerification)}</span></div><div class="divider"></div><div class="profile-row"><span class="profile-key">院方身份核验</span><span class="profile-value">${escapeHtml(memberCheck.label)}${memberCheck.checkedAt ? `<br><span class="caption">查询时间：${escapeHtml(formatDate(memberCheck.checkedAt))}</span>` : ""}</span></div><div class="divider"></div><div class="tag-list">${customer.tags.map((tag) => badge(tag,"outline")).join("")}</div>`, { action: `<button class="link" data-action="edit-profile" data-id="${customer.id}">编辑</button>` });
+  const appointment = customer.appointment;
+  // 取消是登记本身的终态，必须优先于历史的跟进状态呈现；取消前
+  // 的 pending/claimed 不能让客户 360 误报仍待人工处理。
+  const appointmentStatus = appointment?.status === "cancelled"
+    ? "已取消"
+    : ({ pending:"待人工跟进", claimed:"跟进中", completed:"跟进完成", needs_customer_info:"待补充信息" })[appointment?.followup_status] || "待人工跟进";
+  const appointmentRows = appointment ? `<div class="divider"></div><div class="profile-row"><span class="profile-key">到院意向</span><span class="profile-value">${escapeHtml(appointment.time_preference || "待确认")}</span></div><div class="profile-row"><span class="profile-key">登记状态</span><span class="profile-value">${escapeHtml(appointmentStatus)}<br><span class="caption">登记号：${escapeHtml(appointment.appointment_no || "待同步")}</span></span></div><div class="caption" style="margin-top:8px">仅为客户确认的到院意向，不代表医生、排班或接诊名额已锁定。</div>` : "";
+  return card("客户画像", `<div class="row between" style="margin-bottom:11px"><span class="caption">信息完整度 ${customer.profile.confidence}% · 新信息会自动补充</span>${badge("持续更新", "ai")}</div><div class="profile-list">${Object.entries(fields).map(([key,value]) => `<div class="profile-row"><span class="profile-key">${escapeHtml(key)}</span><span class="profile-value">${escapeHtml(String(value || "待确认"))}</span></div>`).join("")}</div><div class="divider"></div><div class="profile-row"><span class="profile-key">手机号状态</span><span class="profile-value">${escapeHtml(phoneVerification)}</span></div><div class="divider"></div><div class="profile-row"><span class="profile-key">院方身份核验</span><span class="profile-value">${escapeHtml(memberCheck.label)}${memberCheck.checkedAt ? `<br><span class="caption">查询时间：${escapeHtml(formatDate(memberCheck.checkedAt))}</span>` : ""}</span></div>${appointmentRows}<div class="divider"></div><div class="tag-list">${customer.tags.map((tag) => badge(tag,"outline")).join("")}</div>`, { action: `<button class="link" data-action="edit-profile" data-id="${customer.id}">编辑</button>` });
+}
+
+function contactRestrictionCard(customer) {
+  const preferences = customer.contactPreferences || {};
+  const prohibited = preferences.do_not_contact === true;
+  const body = prohibited
+    ? `<div class="risk-banner">${icon("alert",15)}<div><strong>禁止主动联系</strong><br/>客户已设置禁止联系偏好。不得创建人工回访承诺或发起未授权触达；如客户主动咨询，仍按当前授权范围提供服务。</div></div>`
+    : `<div class="guardrail">${icon("shield",14)}当前未设置禁止联系偏好。联系前仍须遵守客户服务授权和渠道规则。</div>`;
+  return card("联系限制", body, { subtitle:prohibited ? "限制已生效，独立于备注与普通联系偏好" : "未设置禁止联系" });
+}
+
+function customerNotesCard(customer) {
+  const notes = Array.isArray(customer.customerNotes) ? customer.customerNotes : [];
+  const body = notes.length
+    ? `<div class="stack">${notes.slice(0, 8).map((note) => `<div class="profile-row" style="grid-template-columns:1fr"><strong>${escapeHtml(note.content || "")}</strong><span class="caption">${escapeHtml(note.author || "当前用户")} · ${escapeHtml(formatDate(note.created_at))}</span></div>`).join("")}</div>`
+    : empty("暂无客户备注", "记录客户已确认的需求或后续处理，保存后将保留作者和时间。");
+  return card("客户备注", body, { subtitle:"备注不改变预约、会员或生命周期状态", action:`<button class="link" data-action="add-customer-note" data-id="${customer.id}">新增备注</button>` });
 }
 
 function interestCard(customer) {
@@ -587,7 +670,7 @@ function nbaCard(customer) {
 function timelineCard(customer, timeline) {
   const sourceLabel = (value) => ({ "画像引擎":"客户画像", "百度连接器":"渠道数据", "规则引擎":"业务规则" }[value] || value);
   const titleLabel = (value) => value === "动态画像更新" ? "客户画像更新" : value;
-  return card("完整时间线", `<div class="timeline-filter">${["全部","conversation","profile","task","risk","appointment","treatment","followup","consent"].map((filter) => `<button class="tab-btn ${ui.timelineFilter === filter ? "active" : ""}" data-action="timeline-filter" data-id="${filter}">${({conversation:"会话",profile:"画像",task:"任务",risk:"风险",appointment:"预约",treatment:"项目",followup:"随访",consent:"授权"})[filter] || filter}</button>`).join("")}</div><div class="timeline">${timeline.length ? timeline.map((event) => `<article class="timeline-event"><span class="timeline-dot ${event.tone || ""}"></span><div class="timeline-title">${escapeHtml(titleLabel(event.title))}</div><div class="timeline-time">${formatDate(event.occurredAt)} · ${escapeHtml(sourceLabel(event.actor))} · ${escapeHtml(sourceLabel(event.channel))}</div><div class="timeline-detail">${escapeHtml(event.detail)}</div></article>`).join("") : empty("暂无该类事件", "切换其他时间线筛选")}</div>`, { subtitle: "按时间汇总客户沟通、员工操作和系统记录", action: `<button class="link" data-action="export-timeline" data-id="${customer.id}">${icon("download",13)} 导出摘要</button>` });
+  return card("完整时间线", `<div class="timeline-filter">${["全部","conversation","profile","note","task","risk","appointment","treatment","followup","consent"].map((filter) => `<button class="tab-btn ${ui.timelineFilter === filter ? "active" : ""}" data-action="timeline-filter" data-id="${filter}">${({conversation:"会话",profile:"画像",note:"备注",task:"任务",risk:"风险",appointment:"预约",treatment:"项目",followup:"随访",consent:"授权"})[filter] || filter}</button>`).join("")}</div><div class="timeline">${timeline.length ? timeline.map((event) => `<article class="timeline-event"><span class="timeline-dot ${event.tone || ""}"></span><div class="timeline-title">${escapeHtml(titleLabel(event.title))}</div><div class="timeline-time">${formatDate(event.occurredAt)} · ${escapeHtml(sourceLabel(event.actor))} · ${escapeHtml(sourceLabel(event.channel))}</div><div class="timeline-detail">${escapeHtml(event.detail)}</div></article>`).join("") : empty("暂无该类事件", "切换其他时间线筛选")}</div>`, { subtitle: "按时间汇总客户沟通、员工操作和系统记录", action: `<button class="link" data-action="export-timeline" data-id="${customer.id}">${icon("download",13)} 导出摘要</button>` });
 }
 
 function responsibilityCard(customer) {
@@ -715,7 +798,61 @@ function acquisitionConversationComposer(conversation, customer) {
   const unavailableReason = handoverIsActive
     ? `该会话已由${handoverAssigneeDisplay(handover).title}领取；仅当前领取人可发送`
     : "请先从人工接管队列领取会话";
-  return `<div class="chat-compose"><div class="compose-box"><label class="caption" for="message-input">${canSend ? "人工回复" : "回复草稿 · 接管后可发送"}</label><textarea id="message-input" maxlength="4000" placeholder="输入回复，或从右侧插入常用话术。接管后点击发送。"></textarea><div class="compose-actions"><span class="caption">${canSend ? "发送后会同步到前台会话与超级管理员后台" : escapeHtml(unavailableReason)}</span><span class="spacer"></span><button class="btn small primary" data-action="send-message" data-id="${conversation.id}" ${canSend ? "" : "disabled"}>发送</button></div></div><div class="risk-banner" style="width:100%;margin:8px 0 0">${icon("shield",15)}<div><strong>人工回复受接管状态和渠道权限控制</strong><br/><details><summary>发送说明</summary>仅已实名接管的会话可发送；消息会写入统一会话记录并同步到前台。企业微信、抖音、小红书在完成官方凭证、回调验签和发送验收前，不会把草稿或话术标记为“已发送”。</details></div><span class="spacer"></span>${action}</div></div>`;
+  return `<div class="chat-compose"><div class="compose-box"><label class="caption" for="message-input">${canSend ? "人工回复" : "回复草稿 · 接管后可发送"}</label><textarea id="message-input" maxlength="4000" placeholder="输入回复，或从右侧插入常用话术。接管后点击发送。"></textarea><div class="compose-actions"><span class="caption">${canSend ? "发送后会同步到前台会话与超级管理员后台 · Ctrl+Enter 发送，Enter 换行" : escapeHtml(unavailableReason)}</span><span class="spacer"></span><button class="btn small primary" data-action="send-message" data-id="${conversation.id}" ${canSend ? "" : "disabled"}>发送</button></div></div><div class="risk-banner" style="width:100%;margin:8px 0 0">${icon("shield",15)}<div><strong>人工回复受接管状态和渠道权限控制</strong><br/><details><summary>发送说明</summary>仅已实名接管的会话可发送；消息会写入统一会话记录并同步到前台。企业微信、抖音、小红书在完成官方凭证、回调验签和发送验收前，不会把草稿或话术标记为“已发送”。</details></div><span class="spacer"></span>${action}</div></div>`;
+}
+
+const RECEPTION_HISTORY_PAGE_SIZE = 6;
+
+function receptionHistoryWindow(conversation) {
+  const messages = Array.isArray(conversation?.messages) ? conversation.messages : [];
+  const conversationId = String(conversation?.id || "");
+  if (!conversationId) return { messages, hasEarlier:false, remaining:0 };
+
+  const existing = ui.receptionHistoryWindows[conversationId];
+  const state = existing || {
+    visibleCount:Math.min(messages.length, RECEPTION_HISTORY_PAGE_SIZE),
+    knownCount:messages.length
+  };
+  // The window stays fixed as new turns arrive.  The latest messages remain
+  // visible while the oldest rendered item becomes available through the
+  // explicit history control, rather than silently expanding the window.
+  state.visibleCount = Math.min(messages.length, Math.max(0, state.visibleCount));
+  state.knownCount = messages.length;
+  ui.receptionHistoryWindows[conversationId] = state;
+  return {
+    messages:messages.slice(-state.visibleCount),
+    hasEarlier:state.visibleCount < messages.length,
+    remaining:messages.length - state.visibleCount
+  };
+}
+
+function loadEarlierConversationMessages(conversationId) {
+  const conversation = store.conversation(conversationId);
+  const messages = Array.isArray(conversation?.messages) ? conversation.messages : [];
+  if (!conversation || !messages.length) return;
+
+  const state = ui.receptionHistoryWindows[conversation.id] || {
+    visibleCount:Math.min(messages.length, RECEPTION_HISTORY_PAGE_SIZE),
+    knownCount:messages.length
+  };
+  state.visibleCount = Math.min(messages.length, Math.max(0, state.visibleCount) + RECEPTION_HISTORY_PAGE_SIZE);
+  state.knownCount = messages.length;
+  ui.receptionHistoryWindows[conversation.id] = state;
+  updateReceptionWindow();
+}
+
+// Reading a conversation must be visible immediately, while the signed-in
+// server receipt makes that state survive logout, re-login, and a new browser
+// profile.  A failed receipt write is intentionally non-blocking: the local
+// account-scoped cache remains a safe retry fallback and no customer message
+// is ever prevented from being handled because unread metadata is unavailable.
+function markConversationRead(conversation) {
+  if (!conversation) return;
+  conversationReads.markRead(conversation);
+  const messageIds = conversationReads.receiptFor(conversation);
+  if (!messageIds.length) return;
+  void saveManagementConversationReadReceipt(conversation.id, messageIds)
+    .catch(() => { /* next read/open retries; do not surface metadata failures as chat failures */ });
 }
 
 function conversationsPage() {
@@ -728,6 +865,16 @@ function conversationsPage() {
   const current = store.conversation(ui.conversationId) || conversations[0] || store.state.conversations[0];
   if (current) ui.conversationId = current.id;
   if (!current) {
+    if (ui.conversationSyncLoading) {
+      return `<div class="page">${pageHead("客户沟通", "会话与接待", "正在从服务端同步可接待会话。", "")}
+        <section class="card" aria-live="polite">${empty("正在加载会话", "请稍候，正在读取会话、未读状态与接待状态。")}</section>
+      </div>`;
+    }
+    if (ui.conversationSyncError) {
+      return `<div class="page">${pageHead("客户沟通", "会话与接待", "会话同步暂时不可用，未将失败结果显示为空数据。", "")}
+        <section class="card" aria-live="polite"><div class="risk-banner">${icon("alert",15)}<div><strong>会话同步失败</strong><br/>请确认本地服务连接后重新同步。</div><span class="spacer"></span><button class="btn small" data-action="refresh-conversations">重新同步</button></div></section>
+      </div>`;
+    }
     return `<div class="page">${pageHead("客户沟通", "会话与接待", "当前没有已接入的客户会话。前台咨询记录与人工新建会话会在服务端创建可追溯记录。", `<button class="btn primary" data-action="new-conversation">${icon("plus",15)}发起会话</button>`)}
       <section class="card">${empty("暂无会话", "请先在“客户与会员”创建真实客户档案，或等待前台咨询产生会话后再接待。")}</section>
     </div>`;
@@ -742,11 +889,12 @@ function conversationsPage() {
   const assignee = handoverAssigneeDisplay(handover);
   const phrases = commonPhraseRecords();
   const imChannels = phaseOneImChannels();
+  const history = receptionHistoryWindow(current);
   return `<div class="page reception-page" style="padding-bottom:20px">${pageHead("客户沟通", "会话与接待", isPresalesWorkspace() ? "这里展示已进入聊天的客户会话。售前人员可实名接管、确认后将会话交回机器人，并调用已启用的常用话术；所有操作都会留下审计记录。" : "查看实时咨询、未读消息和接待状态；选择客户后处理对应会话。", isPresalesWorkspace() ? "" : `<button class="btn" data-action="conversation-stats">${icon("chart",15)}会话质量检查</button><button class="btn primary" data-action="new-conversation">${icon("plus",15)}发起会话</button>`)}
     <section class="card conversation-layout">
       <aside class="conversation-list"><div class="conversation-filter"><strong>接待工作台</strong><div class="caption" role="status">${ui.conversationSyncError || "会话实时同步"}</div><div class="search-field" style="min-width:0;margin-top:12px">${icon("search",15)}<input id="reception-search" class="field" aria-label="搜索客户或会话" placeholder="搜索客户、渠道、会话内容" value="${escapeHtml(ui.conversationQuery)}"/></div><div class="reception-filters">${["全部","待人工","人工接待","机器人","已结束"].map(filter=>`<button class="tab-btn ${ui.conversationFilter===filter?'active':''}" data-action="conversation-filter" data-id="${filter}">${filter}<span>${store.state.conversations.filter(item=>filter==='全部'||groupOf(item)===filter).length}</span></button>`).join('')}</div></div><div class="conversation-items">${['待人工','人工接待','机器人','已结束'].map(group=>{const items=conversations.filter(item=>groupOf(item)===group);return items.length?`<details class="reception-group" open><summary>${group} <span>${items.length}</span></summary>${items.map(conversation=>{const itemCustomer=store.customer(conversation.customerId);if(!itemCustomer)return '';return `<button class="conversation-item ${conversation.id===current.id?'active':''}" data-search="${escapeHtml([customerDisplayName(itemCustomer),conversation.channel,conversation.lastMessage].join(' ').toLowerCase())}" data-action="select-conversation" data-id="${escapeHtml(conversation.id)}">${avatar(itemCustomer,'sm')}<div style="min-width:0"><div class="row"><span class="conversation-name">${escapeHtml(customerDisplayName(itemCustomer))}</span></div><div class="conversation-preview">${escapeHtml(conversation.lastMessage||'暂无消息')}</div><div class="customer-meta">${escapeHtml(conversation.channel)} · ${relativeTime(conversation.updatedAt)}</div></div>${conversationReads.unread(conversation)?`<span class="unread" aria-label="${conversationReads.unread(conversation)}条未读消息">${Math.min(conversationReads.unread(conversation),99)}${conversationReads.unread(conversation)>99?"+":""}</span>`:''}</button>`;}).join('')}</details>`:'';}).join('')}<p id="reception-empty" class="caption" hidden>没有匹配的会话，请调整搜索或分组。</p></div></aside>
       <section class="chat"><header class="chat-head">${avatar(customer,"sm")}<div><strong>${escapeHtml(customerDisplayName(customer))}</strong><div class="customer-meta">${escapeHtml(current.channel)} · ${handover ? handoverStatusLabel(handover.status) : conversationStatusLabel(current.status)}</div></div><div class="caption" style="margin-left:6px;line-height:1.45"><strong style="color:var(--ink)">当前接待：${escapeHtml(assignee.title)}</strong><br/>${escapeHtml(assignee.detail)}</div><span class="spacer"></span><button class="btn small ghost" data-action="conversation-detail" data-id="${current.id}">详情</button>${acquisitionConversationControls(current, customer)}<button class="btn icon-only ghost" data-customer="${customer.id}" aria-label="客户360">${icon("users",17)}</button></header>
-        <div class="chat-body">${(current.messages || []).length ? (current.messages || []).map((message) => `<div class="message ${message.from === "customer" ? "customer" : message.from === "system" ? "system" : ""}" data-message-id="${escapeHtml(message.id || `${message.from}:${message.at}`)}">${message.from !== "system" ? `<div class="avatar sm" style="display:grid;place-items:center;background:${message.from === "customer" ? "#f0d4db" : "#ebe5f4"};color:${message.from === "customer" ? "var(--brand)" : "#7651a8"};font-size:10px;font-weight:800">${escapeHtml(message.from === "customer" ? customer.name.slice(0,1) : message.from === "staff" ? String(assignee.title || customer.owner).slice(0,1) : "AI")}</div>` : ""}<div><div class="message-bubble">${escapeHtml(message.text)}</div><div class="message-time">${formatDate(message.at)}</div></div></div>`).join("") : `<div class="empty">该会话暂无消息记录：客户只提交了联系方式，可在右侧查看客户资料。</div>`}</div>
+        <div class="chat-body">${history.hasEarlier ? `<div class="reception-history-loader"><button class="btn small ghost" data-action="load-earlier-messages" data-id="${escapeHtml(current.id)}">加载更早消息（还有 ${history.remaining} 条）</button></div>` : ""}${history.messages.length ? history.messages.map((message) => `<div class="message ${message.from === "customer" ? "customer" : message.from === "system" ? "system" : ""}" data-message-id="${escapeHtml(message.id || `${message.from}:${message.at}`)}">${message.from !== "system" ? `<div class="avatar sm" style="display:grid;place-items:center;background:${message.from === "customer" ? "#f0d4db" : "#ebe5f4"};color:${message.from === "customer" ? "var(--brand)" : "#7651a8"};font-size:10px;font-weight:800">${escapeHtml(message.from === "customer" ? customer.name.slice(0,1) : message.from === "staff" ? String(assignee.title || customer.owner).slice(0,1) : "AI")}</div>` : ""}<div><div class="message-bubble">${escapeHtml(message.text)}</div><div class="message-time">${formatDate(message.at)}</div></div></div>`).join("") : `<div class="empty">该会话暂无消息记录：客户只提交了联系方式，可在右侧查看客户资料。</div>`}</div>
         ${acquisitionConversationComposer(current, customer)}
       </section>
       <aside class="customer-sidebar reception-tools"><div class="reception-tabs" role="tablist" aria-label="接待辅助工具">${[['phrases','常用话术'],['customer','客户资料'],['channel','渠道状态']].map(([id,label])=>`<button role="tab" aria-selected="${ui.receptionTab===id}" class="tab-btn ${ui.receptionTab===id?'active':''}" data-action="reception-tab" data-id="${id}">${label}</button>`).join('')}</div><section data-reception-panel="customer" ${ui.receptionTab==='customer'?'':'hidden'}><div class="compact-customer">${avatar(customer,"lg")}<div class="compact-customer-name">${escapeHtml(customerDisplayName(customer))}</div><div class="compact-customer-meta">${escapeHtml(customer.macroStage)} · ${escapeHtml(customer.microStage)}</div><button class="btn small" style="margin-top:9px" data-customer="${customer.id}">打开客户资料</button></div>
@@ -1763,13 +1911,19 @@ function listPaginationMarkup({ key, page, pageSize, total, totalPages, variant 
 }
 
 function mountListPagination({ key, items, anchor, host, variant = "table" }) {
-  if (!items.length || !anchor || !host) return;
+  if (!anchor || !host) return;
+  const existingPager = Array.from(host.children).find((child) => child.classList?.contains("table-pagination") && child.dataset.paginationKey === key);
+  if (!items.length) {
+    existingPager?.remove();
+    delete ui.listPagination[key];
+    return;
+  }
   const { page, pageSize, totalPages } = listPaginationState(key, items.length);
   const start = (page - 1) * pageSize;
   const end = start + pageSize;
   items.forEach((item, index) => { item.hidden = index < start || index >= end; });
 
-  let pager = Array.from(host.children).find((child) => child.classList?.contains("table-pagination") && child.dataset.paginationKey === key);
+  let pager = existingPager;
   if (!pager) {
     pager = document.createElement("div");
     anchor.insertAdjacentElement("afterend", pager);
@@ -1795,7 +1949,32 @@ function hydrateListPagination() {
     });
   });
 
+  // The rendered inbox is a grouped list, not a card collection.  Give it the
+  // same data-paginated-list="conversations" contract before enumerating
+  // paginated lists so it participates in the shared pagination lifecycle.
+  const conversationInbox = root.querySelector(".conversation-items");
+  if (conversationInbox) conversationInbox.dataset.paginatedList = "conversations";
+
   [...root.querySelectorAll("[data-paginated-list]")].forEach((list, index) => {
+    // The reception inbox groups conversation buttons by status. Paginating
+    // group containers would let a busy group bypass the configured page size.
+    if (list.dataset.paginatedList === "conversations") {
+      const query = String(ui.conversationQuery || "").trim().toLowerCase();
+      const allItems = [...list.querySelectorAll(".conversation-item")];
+      const items = allItems.filter((item) => !query || String(item.dataset.search || "").includes(query));
+      allItems.filter((item) => !items.includes(item)).forEach((item) => { item.hidden = true; });
+      mountListPagination({
+        key:listPaginationKey("conversations", index),
+        items,
+        anchor:list,
+        host:list.parentElement,
+        variant:"collection"
+      });
+      [...list.querySelectorAll(".reception-group")].forEach((group) => {
+        group.hidden = ![...group.querySelectorAll(".conversation-item")].some((item) => !item.hidden);
+      });
+      return;
+    }
     const itemSelector = list.dataset.paginationItem || "article";
     const items = [...list.children].filter((item) => item.matches(itemSelector));
     mountListPagination({
@@ -1955,9 +2134,14 @@ function qualityFeedbackPanel(){
  return `<section class="card padded"><div class="row between"><h3>脱敏反馈与质量复核</h3><button class="btn" data-action="refresh-bad-cases">刷新反馈</button></div><p>未归属科室的记录仅对全院范围质检开放。</p>${ui.badCasesError?`<p role="alert">${escapeHtml(ui.badCasesError)}</p>`:''}${ui.badCases.map(f=>`<div class="row between"><span>${escapeHtml(f.id)} · ${escapeHtml(f.status)}</span><button class="btn" data-action="view-bad-case" data-id="${escapeHtml(f.id)}">查看脱敏记录</button></div>`).join('')||'<p>暂无可显示的反馈，请刷新查看。</p>'}</section>`;
 }
 
+function qualityRedactedConversationPanel(){
+ const conversations=(store.state.conversations||[]).filter((item)=>item?.content_redacted===true);
+ return `<section class="card padded" style="margin-top:16px"><div class="row between"><div><h3>脱敏会话质量样本</h3><p>仅展示服务端生成的伪标识、渠道、时间与消息数量；客户档案、联系方式、备注、预约及会话原文均不下发。</p></div><button class="btn" data-action="refresh-conversations" ${ui.conversationSyncLoading?'disabled':''}>${ui.conversationSyncLoading?'正在刷新':'刷新脱敏会话'}</button></div>${ui.conversationSyncError?`<p role="alert">${escapeHtml(ui.conversationSyncError)}</p>`:''}${conversations.map((item)=>`<article class="card padded" style="margin-top:12px"><strong>${escapeHtml(item.id)}</strong><p class="caption">${escapeHtml(item.channel||'web')} · ${formatDate(item.updated_at||item.updatedAt)} · ${Number(item.message_count||0)} 条消息</p><p class="guardrail">${escapeHtml(item.last_message||'[会话内容已脱敏]')}</p></article>`).join('')||`<p>${ui.conversationSyncLoading?'正在读取授权范围内的脱敏会话…':'当前授权科室暂无可展示的脱敏会话。'}</p>`}</section>`;
+}
+
 function productionKnowledgeGovernancePage() {
   const actions = `${knowledgeIntakeEnabled && hasCapability("knowledge:manage") ? `<button class="btn primary" data-action="new-knowledge-intake">${icon("plus",15)}录入资料</button>` : ""}`;
-  return `<div class="page">${pageHead("知识库与图谱", "知识与合规", "资料解析后保存为内部草稿；补齐来源与院方确认后准备候选，完成正式发布才能用于对客问答。", actions)}${hasCapability("knowledge:read") ? knowledgeIntakePanel() : ""}${publicationPanel()}${hasCapability("feedback:manage") ? qualityFeedbackPanel() : ""}</div>`;
+  return `<div class="page">${pageHead("知识库与图谱", "知识与合规", "资料解析后保存为内部草稿；补齐来源与院方确认后准备候选，完成正式发布才能用于对客问答。", actions)}${hasCapability("knowledge:read") ? knowledgeIntakePanel() : ""}${publicationPanel()}${hasCapability("feedback:manage") ? qualityFeedbackPanel() : ""}${hasCapability("conversations:read_redacted") ? qualityRedactedConversationPanel() : ""}</div>`;
 }
 
 function knowledgePage() {
@@ -2435,7 +2619,7 @@ function updateReceptionWindow() {
   const chat=layout.querySelector('.chat-body');
   const nearBottom=!chat || chat.scrollHeight-chat.scrollTop-chat.clientHeight<48;
   const chatAnchor=captureScrollAnchor(chat);
-  if(document.visibilityState==='visible' && nearBottom)conversationReads.markRead(store.conversation(ui.conversationId));
+  if(document.visibilityState==='visible' && nearBottom)markConversationRead(store.conversation(ui.conversationId));
   const template=document.createElement('template');template.innerHTML=conversationsPage();
   const next=template.content;
   for(const selector of ['.reception-filters','.conversation-items','.chat-head','.chat-body','.reception-tools']) {
@@ -2763,6 +2947,17 @@ function showProfileModal(customerId) {
   });
 }
 
+function showCustomerNoteModal(customerId) {
+  const customer = store.customer(customerId);
+  if (!customer || customer.origin !== "acquisition_advisor") return toast("当前客户不支持通过获客档案记录备注", "warning");
+  openModal({
+    title:`新增${customerDisplayName(customer)}的客户备注`,
+    desc:"备注将绑定当前操作人、保存时间和该客户档案；只记录已确认的沟通事实，不会改写预约、会员或生命周期状态。",
+    body:`<form id="customer-note-form" data-customer-id="${escapeHtml(customer.id)}" data-version="${Number(customer.profileVersion || 1)}">${formField("客户备注","customer_note","",{ type:"textarea", full:true, required:true })}</form>`,
+    footer:`<button class="btn" data-action="modal-close">取消</button><button class="btn primary" type="submit" form="customer-note-form">保存备注</button>`
+  });
+}
+
 function showStageModal(customerId) {
   const customer = store.customer(customerId);
   openModal({
@@ -2996,7 +3191,13 @@ async function copyApiCurl() {
 
 async function handleAction(action, id, target) {
   if (action === "reception-tab") { ui.receptionTab=id;render(true);return; }
+  if (action === "load-earlier-messages") { loadEarlierConversationMessages(id); return; }
   if (action === "copy-reply-draft") { const text=document.querySelector('#message-input')?.value.trim();if(!text)return toast('请先输入回复内容','warning');try{await navigator.clipboard.writeText(text);toast('回复已复制','success');}catch{toast('复制失败，请选中文本手动复制','warning');}return; }
+  if (action === "refresh-conversations") {
+    await syncAcquisitionCustomers();
+    if (!ui.conversationSyncError) toast("会话同步已恢复", "success");
+    return;
+  }
 
   if (action === "admin-logout") { try { target.disabled=true;await logoutAdminSession(); } catch(error){toast(error.message,"error");target.disabled=false;} return; }
   if (action === "list-page") {
@@ -3042,6 +3243,7 @@ async function handleAction(action, id, target) {
     case "refresh-handovers": await syncAcquisitionHandovers(true); break;
     case "reveal-appointment-contact": await revealHandoverContactFromUi(id, target, { appointment:true }); break;
     case "refresh-appointments": await syncAppointmentOperations(true); break;
+    case "clear-appointment-filters": ui.appointmentFilters = { status:"pending", preferredDate:"", assignee:"" }; await syncAppointmentOperations(true); break;
     case "refresh-bad-cases": await syncBadCases(true); break;
     case "recheck-member-check": {
       try {
@@ -3077,6 +3279,7 @@ async function handleAction(action, id, target) {
     case "new-customer": openModal({ title: "新增客户", desc: "填写已经获得授权的客户基本信息、来源渠道与负责人；创建后可在客户360继续补充真实沟通记录。", body: `<form id="customer-form"><div class="form-grid">${formField("客户姓名","name","",{required:true})}${formField("手机号","mobile","",{required:true})}${formField("来源渠道","source","官网",{type:"select",items:["官网","企业微信","电话","到院","转介绍","其他"]})}${formField("负责人","owner","",{type:"select",items:["", ...store.state.managementUsers.filter((item) => item.status === "启用").map((item) => item.name)]})}</div></form>`, footer: `<button class="btn" data-action="modal-close">取消</button><button class="btn primary" type="submit" form="customer-form">创建档案</button>` }); break;
     case "segment": location.hash = "#/customers/segments"; toast("已打开动态分群，规则会随客户事件实时重算", "success"); break;
     case "edit-profile": showProfileModal(id); break;
+    case "add-customer-note": showCustomerNoteModal(id); break;
     case "photo-consent": showPhotoModal(id); break;
     case "update-stage": showStageModal(id); break;
     case "create-customer-task": showTaskModal(id); break;
@@ -3102,7 +3305,7 @@ async function handleAction(action, id, target) {
     case "add-journey": showJourneyModal(id); break;
     case "consent-detail": showPhotoModal(id); break;
     case "stage-history": showEvidenceModal(id); break;
-    case "select-conversation": ui.conversationId = id; conversationReads.markRead(store.conversation(id)); render(true); break;
+    case "select-conversation": ui.conversationId = id; markConversationRead(store.conversation(id)); render(true); break;
     case "conversation-stats": location.hash = "#/conversations/quality"; break;
     case "new-conversation": showNewConversationModal(); break;
     case "conversation-filter": ui.conversationFilter = id; render(true); break;
@@ -3143,7 +3346,8 @@ async function handleAction(action, id, target) {
       input.value = template.content;
       saveReplyDraft(input.dataset.conversationId, input.value);
       input.focus();
-      toast(`已插入话术模板：${template.name}`, "success");
+      const variableReminder = templateVariableReminder(input.value);
+      toast(variableReminder ? `已插入话术模板：${template.name}；${variableReminder}` : `已插入话术模板：${template.name}`, variableReminder ? "warning" : "success");
       break;
     }
     case "open-phrase-library": location.hash = "#/conversations/templates"; break;
@@ -3156,7 +3360,8 @@ async function handleAction(action, id, target) {
         input.value = input.value ? `${input.value}\n${template.content}` : template.content;
         saveReplyDraft(input.dataset.conversationId, input.value);
         input.focus();
-        toast(`已插入常用话术：${template.name}`, "success");
+        const variableReminder = templateVariableReminder(input.value);
+        toast(variableReminder ? `已插入常用话术：${template.name}；${variableReminder}` : `已插入常用话术：${template.name}`, variableReminder ? "warning" : "success");
         break;
       }
       try {
@@ -3310,7 +3515,14 @@ async function handleAction(action, id, target) {
       toast("一期角色固定为管理员和售前人员，暂不支持新增、编辑或删除角色", "warning");
       break;
     case "view-audit": showAuditRecordModal(id); break;
-    case "new-message-template": showConfigurationRecordModal("message_template"); break;
+    case "new-message-template": {
+      if (!ui.managementDataReady || ui.managementDataLoading) {
+        toast("正在读取本地服务中的话术配置，请稍候", "warning");
+        break;
+      }
+      showConfigurationRecordModal("message_template");
+      break;
+    }
     case "edit-message-template": showConfigurationRecordModal("message_template", id); break;
     case "new-journey-template": showConfigurationRecordModal("journey_template"); break;
     case "edit-journey-template": showConfigurationRecordModal("journey_template", id); break;
@@ -3531,12 +3743,10 @@ async function claimAppointmentFromUi(intakeId, trigger) {
   const original = trigger?.innerHTML;
   if (trigger) { trigger.disabled = true; trigger.textContent = "正在领取…"; }
   try {
-    const intake = await claimManagementAppointmentIntake(intakeId);
-    const index = ui.appointmentIntakes.findIndex((item) => item.id === intake.id);
-    if (index < 0) ui.appointmentIntakes.unshift(intake);
-    else ui.appointmentIntakes[index] = intake;
+    await claimManagementAppointmentIntake(intakeId);
+    // 领取会改变负责人和跟进状态；不能把已领取记录留在“未领取”等当前筛选结果中。
+    await syncAppointmentOperations();
     toast("到院登记已领取，请回电核号并记录跟进结果", "success");
-    render(true);
   } catch (error) {
     toast(error.status === 403 ? "当前账号没有预约处理权限" : error.status === 409 ? "该预约已由其他人员处理，请刷新队列" : "领取预约事项失败，请稍后重试", "danger");
     await syncAppointmentOperations();
@@ -3552,7 +3762,8 @@ async function showResolveAppointmentModal(intakeId) {
     body:`<form id="appointment-resolve-form" data-appointment-intake-id="${intake.id}"><div class="form-grid">
       ${formField("跟进结果","status","completed",{type:"select",items:[{ value:"completed", label:"已完成本次跟进" }, { value:"needs_customer_info", label:"待客户补充信息" }]})}
       ${formField("跟进说明","note","",{type:"textarea",full:true,required:true})}
-    </div><div class="guardrail">客户已确认到院时间。此处只记录跟进结果；修改时间或取消登记需由客户明确确认。</div></form>`,
+      ${formField("下次跟进时间（待补充信息时必填）","next_followup_at","",{type:"datetime-local",full:true})}
+    </div><div class="guardrail">客户已确认到院时间。此处只记录跟进结果和下一步；修改时间或取消登记需由客户明确确认，跟进完成不代表已到院、成交或付款。</div></form>`,
     footer:`<button class="btn" data-action="modal-close">返回</button><button class="btn primary" type="submit" form="appointment-resolve-form">保存跟进结果</button>` });
 }
 
@@ -3613,6 +3824,11 @@ async function sendCurrentMessage(conversationId) {
   const input = document.querySelector("#message-input");
   const text = input?.value.trim();
   if (!text) return toast("请输入回复内容", "warning");
+  const variableReminder = templateVariableReminder(text);
+  if (variableReminder) {
+    input?.focus();
+    return toast(`${variableReminder}；补全后才能发送`, "warning");
+  }
   const conversation = store.conversation(conversationId);
   const customer = conversation ? store.customer(conversation.customerId) : null;
   if (customer?.origin === "acquisition_advisor") {
@@ -3689,9 +3905,9 @@ document.addEventListener("loadedmetadata", (event) => {
 }, true);
 
 function filterReceptionList() {
-  let visible=0;
-  document.querySelectorAll('.reception-group').forEach(group=>{let count=0;group.querySelectorAll('[data-search]').forEach(item=>{item.hidden=!item.dataset.search.includes(ui.conversationQuery.trim().toLowerCase());if(!item.hidden){count++;visible++;}});group.hidden=!count;});
-  const empty=document.querySelector('#reception-empty');if(empty)empty.hidden=Boolean(visible);
+  hydrateListPagination();
+  const empty = document.querySelector('#reception-empty');
+  if (empty) empty.hidden = Boolean(document.querySelectorAll('.conversation-item:not([hidden])').length);
 }
 document.addEventListener("input", (event) => {
   if (event.target.id === "message-input") {
@@ -3703,7 +3919,7 @@ document.addEventListener("input", (event) => {
   if (event.target.id === "global-search") {
     const query = event.target.value.trim().toLowerCase();
     const results = document.querySelector("#global-results");
-    const matches = query ? store.state.customers.filter((customer) => [customer.name,customer.mobile,customer.id,...customer.tags].join(" ").toLowerCase().includes(query)).slice(0,5) : [];
+    const matches = query ? store.state.customers.filter((customer) => customerMatchesSearch(customer, query)).slice(0,5) : [];
     results.classList.toggle("open", Boolean(query));
     results.innerHTML = matches.length ? matches.map((customer) => `<button class="search-result" data-customer="${customer.id}">${avatar(customer,"sm")}<div><strong>${customer.name}</strong><div class="search-result-meta">档案编号 ${customer.id} · ${customer.macroStage}/${customer.microStage}</div></div></button>`).join("") : empty("未找到客户", "可尝试姓名、手机号或档案编号");
   }
@@ -3722,6 +3938,17 @@ document.addEventListener("input", (event) => {
     const counter = document.querySelector("#avatar-script-count");
     if (counter) counter.textContent = `${Array.from(event.target.value).length}/90`;
   }
+});
+
+document.addEventListener("keydown", (event) => {
+  const input = event.target;
+  if (input?.id !== "message-input" || event.key !== "Enter") return;
+  // Enter remains available for line breaks and IME candidate confirmation.
+  // Only an explicit Ctrl/Command+Enter can submit, and never while a Chinese
+  // (or other) IME composition is in progress.
+  if ((!event.ctrlKey && !event.metaKey) || event.isComposing || event.keyCode === 229 || event.repeat) return;
+  event.preventDefault();
+  void sendCurrentMessage(input.dataset.conversationId);
 });
 
 document.addEventListener("change", (event) => {
@@ -3747,6 +3974,15 @@ document.addEventListener("change", (event) => {
   if (event.target.id === "knowledge-intake-public-scope") {
     ui.knowledgeIntakePublicScope = event.target.value;
     void hydrateKnowledgeIntake({ force:true });
+    return;
+  }
+  if (["appointment-status", "appointment-date", "appointment-assignee"].includes(event.target.id)) {
+    ui.appointmentFilters = {
+      status:document.querySelector("#appointment-status")?.value || "pending",
+      preferredDate:document.querySelector("#appointment-date")?.value || "",
+      assignee:document.querySelector("#appointment-assignee")?.value || ""
+    };
+    void syncAppointmentOperations();
     return;
   }
   if (handoverOnlyMode) {
@@ -3903,6 +4139,13 @@ document.addEventListener("submit", async (event) => {
     return;
   }
   if (form.id === "configuration-record-form") {
+    // The overlay revision is assigned by the server. Creating a record before
+    // the first hydration would create a browser-only row with revision 0,
+    // which vanishes on refresh after the server rejects the write.
+    if (!ui.managementDataReady || ui.managementDataLoading) {
+      toast("正在读取本地服务中的话术配置，请稍候再创建", "warning");
+      return;
+    }
     const kind = String(form.dataset.kind || "");
     const recordId = String(form.dataset.recordId || "");
     let payload;
@@ -3956,6 +4199,19 @@ document.addEventListener("submit", async (event) => {
       ? store.updateConfigurationRecord(recordId, payload)
       : store.addConfigurationRecord(payload);
     if (!record) return toast("运营配置保存失败，请刷新后重试", "danger");
+    // A template is an authorization-controlled shared resource.  Do not
+    // close the form or claim success until this explicit create/edit has
+    // reached the server; otherwise a quick logout or navigation can cancel
+    // the deferred overlay timer and make the template disappear for sales.
+    if (managementPersistTimer) {
+      window.clearTimeout(managementPersistTimer);
+      managementPersistTimer = null;
+    }
+    const persisted = await flushManagementOverlay();
+    if (!persisted) {
+      toast("话术模板尚未保存到本地服务，请检查服务状态后重试", "danger");
+      return;
+    }
     closeModal(); render(true); toast(`${record.name} 已${recordId ? "更新" : "保存"}到本地服务`, "success");
     return;
   }
@@ -4025,16 +4281,18 @@ document.addEventListener("submit", async (event) => {
     }
     return;
   }
-  if (form.id === "appointment-resolve-form") {
+    if (form.id === "appointment-resolve-form") {
     const intake = (ui.appointmentIntakes || []).find((item) => item.id === form.dataset.appointmentIntakeId);
     if (!intake) return toast("预约事项已不存在，请刷新队列", "warning");
     if (!String(data.note || "").trim()) return toast("请填写跟进说明", "warning");
+    if (data.status === "needs_customer_info" && !data.next_followup_at) return toast("待客户补充信息时请填写下次跟进时间", "warning");
     const submit = form.querySelector('button[type="submit"]') || document.querySelector(`[form="${form.id}"][type="submit"]`);
     if (submit) { submit.disabled = true; submit.textContent = "正在提交…"; }
     try {
       const resolved = await resolveManagementAppointmentIntake(intake.id, {
         status:data.status,
-        note:data.note
+        note:data.note,
+        nextFollowupAt:data.next_followup_at
       });
       const index = ui.appointmentIntakes.findIndex((item) => item.id === resolved.intake.id);
       if (index >= 0) ui.appointmentIntakes[index] = resolved.intake;
@@ -4127,6 +4385,27 @@ document.addEventListener("submit", async (event) => {
   }
   if (form.id === "task-form") {
     store.addTask({ ...data, dueAt: new Date(data.dueAt).toISOString(), source: "人工创建" }); closeModal(); toast("任务已创建并进入今日工作台", "success");
+  }
+  if (form.id === "customer-note-form") {
+    const customer = store.customer(form.dataset.customerId);
+    const note = String(data.customer_note || "").trim();
+    if (!customer || customer.origin !== "acquisition_advisor") return toast("客户档案已变更，请刷新后重试", "warning");
+    if (!note) return toast("请填写客户备注", "warning");
+    if (form.dataset.saving === "true") return;
+    form.dataset.saving = "true";
+    const submit = form.querySelector('button[type="submit"]') || document.querySelector(`[form="${form.id}"][type="submit"]`);
+    if (submit) { submit.disabled = true; submit.textContent = "正在保存…"; }
+    try {
+      await updateManagementCustomerProfile(customer.id, { expectedVersion:Number(form.dataset.version) || 1, patch:{ customer_note:note } });
+      closeModal();
+      await syncAcquisitionCustomers();
+      toast("客户备注已保存并写入时间线", "success");
+    } catch (error) {
+      toast(error.message || "客户备注保存失败，请刷新后重试", error.code === "PROFILE_VERSION_CONFLICT" ? "warning" : "danger");
+      form.dataset.saving = "false";
+      if (submit) { submit.disabled = false; submit.textContent = "保存备注"; }
+    }
+    return;
   }
   if (form.id === "profile-form") {
     const customer = store.customer(form.dataset.customerId);
@@ -4238,6 +4517,7 @@ const MANAGEMENT_SERVER_ONLY_SOURCES = new Set([
 let managementPersistTimer = null;
 let managementPersistInFlight = false;
 let managementPersistQueued = false;
+let managementPersistPromise = null;
 
 const managementOverlaySignature = () => JSON.stringify(store.managementOverlay());
 
@@ -4282,8 +4562,18 @@ const hydrateManagementDomain = async ({ announce = false } = {}) => {
 };
 
 const flushManagementOverlay = async () => {
-  managementPersistTimer = null;
-  if (managementPersistInFlight || handoverOnlyMode || !ui.managementDataReady) return;
+  if (managementPersistTimer) {
+    window.clearTimeout(managementPersistTimer);
+    managementPersistTimer = null;
+  }
+  if (handoverOnlyMode || !ui.managementDataReady) return false;
+  // A form submission can occur while a background persistence pass is
+  // already saving an older snapshot. Wait for that pass, then persist the
+  // newer state instead of reporting a false failure to the operator.
+  if (managementPersistInFlight) {
+    const priorSaved = await managementPersistPromise;
+    return priorSaved ? flushManagementOverlay() : false;
+  }
   managementPersistInFlight = true;
   managementPersistQueued = false;
   const revision = store.serverRevision;
@@ -4291,27 +4581,34 @@ const flushManagementOverlay = async () => {
   const sentSignature = JSON.stringify(overlay);
   ui.managementPersistenceState = "saving";
   ui.managementPersistenceError = "";
-  try {
-    const saved = await saveManagementDomainOverlay({ revision, overlay });
-    store.serverRevision = Number(saved.record?.revision) || revision;
-    ui.managementPersistenceState = "saved";
-  } catch (error) {
-    ui.managementPersistenceState = "error";
-    ui.managementPersistenceError = error.code || error.message || "MANAGEMENT_SAVE_FAILED";
-    if (error.code === "MANAGEMENT_REVISION_CONFLICT") {
-      toast("后台数据已被其他操作更新，请重新连接后再继续修改", "warning");
-    } else {
-      toast("本次修改尚未保存到本地服务，请检查服务后重试", "danger");
+  managementPersistPromise = (async () => {
+    try {
+      const saved = await saveManagementDomainOverlay({ revision, overlay });
+      store.serverRevision = Number(saved.record?.revision) || revision;
+      ui.managementPersistenceState = "saved";
+      return true;
+    } catch (error) {
+      ui.managementPersistenceState = "error";
+      ui.managementPersistenceError = error.code || error.message || "MANAGEMENT_SAVE_FAILED";
+      if (error.code === "MANAGEMENT_REVISION_CONFLICT") {
+        toast("后台数据已被其他操作更新，请重新连接后再继续修改", "warning");
+      } else {
+        toast("本次修改尚未保存到本地服务，请检查服务后重试", "danger");
+      }
+      return false;
+    } finally {
+      managementPersistInFlight = false;
+      // Preserve rapid, consecutive operator edits: a second commit is queued
+      // only when the state changed after the in-flight snapshot was captured.
+      if (ui.managementDataReady && (managementPersistQueued || sentSignature !== managementOverlaySignature())) {
+        managementPersistQueued = false;
+        if (!managementPersistTimer) managementPersistTimer = window.setTimeout(flushManagementOverlay, 120);
+      }
     }
-  } finally {
-    managementPersistInFlight = false;
-    // Preserve rapid, consecutive operator edits: a second commit is queued
-    // only when the state changed after the in-flight snapshot was captured.
-    if (ui.managementDataReady && (managementPersistQueued || sentSignature !== managementOverlaySignature())) {
-      managementPersistQueued = false;
-      if (!managementPersistTimer) managementPersistTimer = window.setTimeout(flushManagementOverlay, 120);
-    }
-  }
+  })();
+  const persisted = await managementPersistPromise;
+  managementPersistPromise = null;
+  return persisted;
 };
 
 const scheduleManagementOverlayPersist = () => {
@@ -4344,20 +4641,42 @@ const HANDOVER_POLL_BASE_MS = 15_000;
 const HANDOVER_POLL_MAX_BACKOFF_MS = 60_000;
 const syncAcquisitionCustomers = async () => {
   if (acquisitionSyncPromise) return acquisitionSyncPromise;
-  const afterCursor = encodeAcquisitionCursors(readAcquisitionCursors());
-  const endpoint = afterCursor
-    ? `/api/local/acquisition-customers?after_cursor=${encodeURIComponent(afterCursor)}`
+  ui.conversationSyncLoading = true;
+  ui.conversationSyncError = "";
+  if (routeInfo().route === "conversations" && !store.state.conversations.length) render(true);
+  const qualityRedactedView = hasCapability("conversations:read_redacted")
+    && !hasCapability("customers:read_all") && !hasCapability("customers:read_assigned");
+  const afterCursor = ui.acquisitionSnapshotHydrated
+    ? encodeAcquisitionCursors(readAcquisitionCursors())
+    : "";
+  // Quality replies contain pseudonymous IDs, not the source conversation
+  // cursor. Always request a complete redacted projection for that role.
+  const requestCursor = qualityRedactedView ? "" : afterCursor;
+  const endpoint = requestCursor
+    ? `/api/local/acquisition-customers?after_cursor=${encodeURIComponent(requestCursor)}`
     : "/api/local/acquisition-customers";
   acquisitionSyncPromise = fetch(endpoint, { headers:{ Accept:"application/json" } })
     .then(async (response) => {
       if (!response.ok) throw new Error("获客客户同步失败");
       const body = await response.json();
-      ui.conversationSyncError="";
       store.upsertAcquisitionSnapshot(body.data);
       persistAcquisitionCursors(body.data?.meta?.cursor);
+      // Mark hydrated only after the complete initial request has been
+      // accepted. Later polling/focus/SSE refreshes may safely use deltas.
+      ui.acquisitionSnapshotHydrated = true;
     })
-    .catch(() => {ui.conversationSyncError="会话同步失败，请刷新重试";if(routeInfo().route==="conversations")render(true);})
-    .finally(() => { acquisitionSyncPromise = null; });
+    .catch(() => {
+      ui.conversationSyncLoading = false;
+      ui.conversationSyncError = "会话同步失败，请重新同步";
+      if (routeInfo().route === "conversations") render(true);
+    })
+    .finally(() => {
+      ui.conversationSyncLoading = false;
+      acquisitionSyncPromise = null;
+      // A successful but truly empty response must replace the loading view;
+      // a non-empty snapshot already triggers the normal store render.
+      if (routeInfo().route === "conversations" && !store.state.conversations.length) render(true);
+    });
   return acquisitionSyncPromise;
 };
 const syncAcquisitionChannels = async () => {
@@ -4495,8 +4814,9 @@ const syncAppointmentOperations = async (announce = false, { background = false 
     ui.appointmentsLoading = true;
     if (routeInfo().route === "workbench") render(true);
   }
-  appointmentSyncPromise = listManagementAppointmentIntakes({ limit:200 }).then((intakes) => {
+  appointmentSyncPromise = listManagementAppointmentIntakes({ ...appointmentFilterQuery(ui.appointmentFilters), limit:200 }).then((intakes) => {
     ui.appointmentIntakes = intakes;
+    ui.appointmentAssignees = [...new Set([...(ui.appointmentAssignees || []), ...intakes.map((item) => item.assignee).filter(Boolean)])];
     ui.appointmentsError = "";
     if (announce) toast("到院登记跟进队列已同步", "success");
     return intakes;
@@ -4616,16 +4936,35 @@ window.addEventListener("beforeunload", () => {
   pauseHandoverPolling();
 });
 const bootstrapManagementApplication = async () => {
+  const initialConversationRoute = routeInfo().route === "conversations";
+  // Do not briefly present an empty inbox before the first authorized
+  // conversation snapshot has had a chance to arrive.
+  if (initialConversationRoute) ui.conversationSyncLoading = true;
   render();
-  try{ui.managementIdentity=await getManagementIdentity();conversationReads.setScope({subject:ui.managementIdentity.subject,tenantId:ui.managementIdentity.scope==='platform'?'*':ui.managementIdentity.tenant_id});ui.identityError='';store.state.currentRole=ui.managementIdentity.role;}
-  catch(e){ui.identityError=e.message;render();return;}
-  ui.managementDataReady=true;
+  try{
+    ui.managementIdentity=await getManagementIdentity();
+    conversationReads.setScope({subject:ui.managementIdentity.subject,tenantId:ui.managementIdentity.scope==='platform'?'*':ui.managementIdentity.tenant_id});
+    // The read receipt is scoped by the authenticated server subject.  Merge
+    // it before the first inbox snapshot renders, preventing already-read
+    // conversations from briefly reappearing as unread after a fresh login.
+    try { conversationReads.mergeReceipts(await getManagementConversationReadReceipts()); } catch { /* browser cache remains available offline */ }
+    ui.identityError='';store.state.currentRole=ui.managementIdentity.role;
+  }
+  catch(e){ui.conversationSyncLoading=false;ui.identityError=e.message;render();return;}
+  // Keep writes closed until hydrateManagementDomain has supplied the current
+  // server revision.  A rendered management page is not proof that its
+  // durable overlay is ready to accept a mutation.
+  ui.managementDataReady=handoverOnlyMode;
   if(hasCapability('users:manage'))await refreshManagedAccounts();
   if(hasCapability('knowledge:read'))await hydrateKnowledgeIntake();
   if(hasCapability('knowledge:read')||hasCapability('evaluations:read'))await refreshPublications();
+  const canSyncConversations = !handoverOnlyMode && (hasCapability('superadmin:manage') || hasCapability('conversations:read_redacted'));
+  if (initialConversationRoute && !canSyncConversations) ui.conversationSyncLoading = false;
   if(isPresalesWorkspace()||hasCapability('superadmin:manage')){
     if(!handoverOnlyMode)await hydrateManagementDomain();
-    await Promise.all([syncAcquisitionHandovers(),syncAppointmentOperations(),...(hasCapability('superadmin:manage')?[syncAcquisitionCustomers()]:[])]);scheduleHandoverPoll();
+    await Promise.all([syncAcquisitionHandovers(),syncAppointmentOperations(),...(canSyncConversations?[syncAcquisitionCustomers()]:[])]);scheduleHandoverPoll();
+  } else if (hasCapability('conversations:read_redacted')) {
+    await syncAcquisitionCustomers();
   }
   render();
   connectConversationEvents();
@@ -4650,6 +4989,6 @@ setTimeout(connectConversationEvents,1000);
 document.addEventListener('scroll',event=>{
   if(event.target?.matches?.('.chat-body') && event.target.scrollHeight-event.target.scrollTop-event.target.clientHeight<48){
     const current=store.conversation(ui.conversationId);
-    if(current&&conversationReads.unread(current)){conversationReads.markRead(current);updateReceptionWindow();}
+    if(current&&conversationReads.unread(current)){markConversationRead(current);updateReceptionWindow();}
   }
 },true);

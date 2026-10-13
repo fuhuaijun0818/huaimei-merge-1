@@ -63,19 +63,29 @@ try {
     () => store.submitReview({
       tenantId, releaseId, reviewType:"business", decision:"approved",
       identity:identity("reviewer-business", "knowledge.business_reviewer"),
+      comments:"用于范围校验的本地验收理由。",
       scopeChecksum:"f".repeat(64)
     }),
     (error) => error?.code === "23514"
   );
 
   const businessIdentity = identity("reviewer-business", "knowledge.business_reviewer");
+  await assert.rejects(
+    () => store.submitReview({
+      tenantId, releaseId, reviewType:"business", decision:"approved",
+      identity:businessIdentity, comments:"   ", scopeChecksum:scope.scope_checksum
+    }),
+    (error) => error?.code === "KNOWLEDGE_REVIEW_REASON_REQUIRED",
+    "审核结论必须附带非空理由"
+  );
+  const businessReason = "C006 AC2 本地验收：版本、来源和审批范围一致。";
   const business = await store.submitReview({
     tenantId, releaseId, reviewType:"business", decision:"approved",
-    identity:businessIdentity, scopeChecksum:scope.scope_checksum
+    identity:businessIdentity, comments:businessReason, scopeChecksum:scope.scope_checksum
   });
   const businessReplay = await store.submitReview({
     tenantId, releaseId, reviewType:"business", decision:"approved",
-    identity:businessIdentity, scopeChecksum:scope.scope_checksum
+    identity:businessIdentity, comments:businessReason, scopeChecksum:scope.scope_checksum
   });
   assert.equal(businessReplay.review_id, business.review_id, "同一实名审核重试必须幂等");
 
@@ -83,6 +93,7 @@ try {
     () => store.submitReview({
       tenantId, releaseId, reviewType:"medical", decision:"approved",
       identity:identity("reviewer-business", "knowledge.medical_reviewer"),
+      comments:"角色隔离校验。",
       scopeChecksum:scope.scope_checksum
     }),
     (error) => error?.code === "23514"
@@ -92,12 +103,21 @@ try {
     await store.submitReview({
       tenantId, releaseId, reviewType, decision:"approved",
       identity:identity(`reviewer-${reviewType}`, `knowledge.${reviewType}_reviewer`),
+      comments:`${reviewType} 审核结论：本地验收资料满足发布前置条件。`,
       scopeChecksum:scope.scope_checksum
     });
   }
   const receipt = await store.releaseReceipt({ tenantId, releaseId });
   assert.deepEqual(Object.keys(receipt.approvals).sort(), ["business", "compliance", "medical"]);
   assert.equal(new Set(Object.values(receipt.approvals).map((item) => item.review_id)).size, 3);
+  assert.deepEqual(receipt.approvals.business, {
+    status:"approved",
+    review_id:business.review_id,
+    reviewer_id:"reviewer-business",
+    reason:businessReason,
+    reviewed_at:receipt.approvals.business.reviewed_at
+  });
+  assert.ok(Number.isFinite(Date.parse(receipt.approvals.business.reviewed_at)), "审核时间必须可审计");
 
   const manifest = {
     schema_version:"huamei.graphrag.index-manifest.v1",

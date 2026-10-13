@@ -8,6 +8,10 @@ const messageIds=conversation=>(conversation?.messages||[])
  .filter(message=>message.from==='customer'||message.from==='ai')
  .map((message,index)=>String(message.id||`${message.from}:${message.at}:${index}:${message.text}`));
 
+const receiptIds=value=>Array.isArray(value)
+ ? [...new Set(value.map(String).filter(id=>id&&id.length<=256))].slice(-200)
+ : [];
+
 const scopeKey=scope=>{
  const subject=typeof scope==='string'?scope:scope?.subject;
  const tenant=typeof scope==='object' ? (scope?.tenantId ?? scope?.tenant_id) : '';
@@ -41,6 +45,22 @@ export function createConversationReadState({storage=browserStorage(),storagePre
    if(!conversation)return;
    read.set(conversation.id,new Set(messageIds(conversation)));
    persist();
+  },
+  // Server receipts are merged rather than replacing local state, so an
+  // offline read in this tab cannot be lost when the next signed-in snapshot
+  // is hydrated.  The receipt contains message identifiers only, never text.
+  mergeReceipts(receipts){
+   if(!receipts||typeof receipts!=='object'||Array.isArray(receipts))return;
+   for(const [conversationId,seen] of Object.entries(receipts)){
+    const ids=receiptIds(seen);if(!ids.length)continue;
+    const existing=read.get(conversationId)||new Set();
+    ids.forEach(id=>existing.add(id));read.set(conversationId,existing);
+   }
+   persist();
+  },
+  receiptFor(conversation){
+   if(!conversation?.id)return [];
+   return receiptIds([...((read.get(conversation.id))||new Set())]);
   },
   unread(conversation){
    const seen=read.get(conversation?.id)||new Set();

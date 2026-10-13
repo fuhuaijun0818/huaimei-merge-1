@@ -1,7 +1,7 @@
 // Display defaults only: do not write inferred facts back into customer records.
 export function customerPresentation(customer) {
   const result = { ...customer };
-  for (const key of ['tags', 'timeline', 'journeys', 'pains', 'itches', 'delights']) {
+  for (const key of ['tags', 'timeline', 'journeys', 'pains', 'itches', 'delights', 'customerNotes']) {
     result[key] = Array.isArray(customer[key]) ? customer[key] : [];
   }
   result.interests = (Array.isArray(customer.interests) ? customer.interests : [])

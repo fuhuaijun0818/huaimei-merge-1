@@ -1,4 +1,4 @@
-import { readPersistedConversations, localConversationView } from "./local-conversation-store.mjs";
+import { appendPersistedHumanReply, readPersistedConversations, localConversationView, recordPersistedHumanReplyDelivery } from "./local-conversation-store.mjs";
 import { hasPhaseOneCapability } from "./platform/phase-one-role-policy.mjs";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
@@ -22,6 +22,7 @@ let memoryState = { version:2, leads:[], candidates:[] };
 let mutationQueue = Promise.resolve();
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
+const openHandoverStatus = (status) => ["pending", "claimed", "active"].includes(status);
 const cleanText = (value, limit = 500) => redactContactPii(String(value || ""))
   .replace(/[<>]/g, "")
   .replace(/\s+/g, " ")
@@ -119,6 +120,48 @@ const publicLead = (lead) => {
   return clone(safe);
 };
 
+// 质检不是客户运营岗位。质量视图必须在服务端生成，不能依赖浏览器隐藏
+// 联系方式、备注或会话正文。对于无法确定脱敏安全性的自由文本，一律不给出
+// 原文；这也意味着将来新增字段时不会默认落入质量视图。
+const qualityRedactedPrincipal = (principal) => Boolean(principal)
+  && hasPhaseOneCapability(principal, "conversations:read_redacted")
+  && !hasPhaseOneCapability(principal, "customers:read_all")
+  && !hasPhaseOneCapability(principal, "customers:read_assigned");
+
+const validIsoOrNull = (value) => {
+  const timestamp = Date.parse(value || "");
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+};
+
+const redactedQualityConversation = (tenantId, conversation = {}) => {
+  const sourceId = String(conversation.externalConversationId || conversation.id || "");
+  const customerId = String(conversation.customerId || sourceId || "anonymous");
+  const messages = Array.isArray(conversation.messages) ? conversation.messages : [];
+  return {
+    id:stableId("QCON", `${tenantId}:${sourceId}`, 24),
+    customer_reference:stableId("QCU", `${tenantId}:${customerId}`, 24),
+    channel:cleanText(conversation.channel || "web", 48) || "web",
+    updated_at:validIsoOrNull(conversation.updatedAt || conversation.updated_at),
+    message_count:messages.length,
+    last_message:"[会话内容已脱敏]",
+    content_redacted:true,
+    messages:messages.map((message, index) => ({
+      id:stableId("QMSG", `${tenantId}:${sourceId}:${message?.id || index}`, 24),
+      from:["customer", "ai", "staff"].includes(message?.from) ? message.from : "system",
+      at:validIsoOrNull(message?.at),
+      text:"[会话内容已脱敏]",
+      content_redacted:true
+    }))
+  };
+};
+
+const qualityHandoverInScope = (handover, principal) => {
+  const departments = Array.isArray(principal?.departmentIds) ? principal.departmentIds : [];
+  // 没有归属科室的历史记录不能被有限科室的质检账号读取；只有全院范围
+  // 才可读取，并且仍然仅返回下方的脱敏投影。
+  return departments.includes("*") || Boolean(handover?.department && departments.includes(handover.department));
+};
+
 const profileVersionOf = (lead) => Math.max(1, Number(lead?.profile_version || lead?.customer?.profileVersion || 1));
 
 const profileUpdateError = (code, message, status = 409, details = []) => {
@@ -167,6 +210,11 @@ const normalizeProfileUpdate = (patch = {}) => {
     }
     if (Object.keys(preferences).length) result.contactPreferences = preferences;
   }
+  if (Object.hasOwn(patch, "customer_note")) {
+    const customerNote = cleanText(patch.customer_note, 500);
+    if (!customerNote) throw profileUpdateError("CUSTOMER_NOTE_REQUIRED", "请填写客户备注内容", 400);
+    result.customerNote = customerNote;
+  }
   if (Object.hasOwn(patch, "tags")) {
     const tags = Array.isArray(patch.tags) ? patch.tags : String(patch.tags || "").split(/[、,，]/);
     result.tags = [...new Set(tags.map((item) => cleanText(item, 40)).filter(Boolean))].slice(0, 10);
@@ -179,6 +227,7 @@ const changedProfileFields = (patch) => [
   ...(Object.hasOwn(patch, "mobile") ? ["mobile"] : []),
   ...(patch.profile ? Object.keys(patch.profile).map((key) => `profile.${key}`) : []),
   ...(patch.contactPreferences ? ["contact_preferences"] : []),
+  ...(patch.customerNote ? ["customer_note"] : []),
   ...(Object.hasOwn(patch, "tags") ? ["tags"] : [])
 ];
 
@@ -287,7 +336,12 @@ export async function upsertAcquisitionLead(payload = {}, { memberCheckClient = 
     }
     // An omitted name is valid lead data. Do not fabricate a customer name
     // from the phone suffix; presentation layers may show a placeholder.
-    const name = cleanText(payload.name, 40) || existing?.customer?.name || "";
+    // A public capture is not authoritative enough to replace a stored name:
+    // keep the existing name and create a review record when the two disagree.
+    const submittedName = cleanText(payload.name, 40);
+    const existingName = cleanText(existing?.customer?.name, 40);
+    const hasNameConflict = Boolean(existing && submittedName && existingName && submittedName !== existingName);
+    const name = hasNameConflict ? existingName : submittedName || existingName;
     const dataClassification = existing
       ? leadDataClassification(existing)
       : "production";
@@ -300,13 +354,31 @@ export async function upsertAcquisitionLead(payload = {}, { memberCheckClient = 
     const conversationId = stableId("V-AI", `${identity}:${sessionId}`, 10);
     const latestCustomerMessage = [...messages].reverse().find((message) => message.from === "customer")?.text || "客户完成在线留资";
     const createdAt = existing?.created_at || now;
-    const identityDetail = existing
+    const nameConflict = hasNameConflict ? {
+      id:stableId("NC", `${identity}:${sessionId}:${submittedName}`, 16),
+      status:"pending_manual",
+      existing_name:existingName,
+      submitted_name:submittedName,
+      session_id:sessionId,
+      source:"获客顾问 Web",
+      captured_at:now
+    } : null;
+    const priorNameConflicts = Array.isArray(existing?.customer?.nameConflicts)
+      ? existing.customer.nameConflicts
+      : [];
+    const nameConflicts = nameConflict
+      ? [nameConflict, ...priorNameConflicts.filter((item) => item?.id !== nameConflict.id)].slice(0, 20)
+      : priorNameConflicts.slice(0, 20);
+    const hasPendingNameConflict = nameConflicts.some((item) => item?.status === "pending_manual");
+    const identityDetail = hasNameConflict
+      ? `手机号强标识哈希与已有档案一致，但本次称呼“${submittedName}”与现有称呼“${existingName}”不一致；已保留原称呼，待人工复核。`
+      : existing
       ? "手机号强标识哈希与已有档案一致，系统已合并本次咨询，不创建重复客户。"
       : "客户授权提供手机号，系统以手机号强标识建立唯一客户360档案。";
     const timelineEvent = {
       id:stableId("E", `${identity}:${now}`, 14),
-      type:"lead",
-      title:existing ? "同一客户再次咨询，已合并客户360" : "获客顾问留资，创建客户360",
+      type:hasNameConflict ? "profile" : "lead",
+      title:hasNameConflict ? "姓名信息冲突，待人工复核" : existing ? "同一客户再次咨询，已合并客户360" : "获客顾问留资，创建客户360",
       detail:`${identityDetail} 主要兴趣：${interestScores.slice(0, 3).map((item) => item.name).join("、")}。`,
       occurredAt:now,
       actor:"AI获客顾问·小美",
@@ -374,6 +446,7 @@ export async function upsertAcquisitionLead(payload = {}, { memberCheckClient = 
       marketingConsent:false,
       phoneVerificationStatus:"pending_manual",
       memberCheck,
+      nameConflicts,
       profileVersion:Math.max(1, Number(existing?.customer?.profileVersion || existing?.profile_version || 1)),
       timeline:[timelineEvent, conversationEvent, ...(existing?.customer?.timeline || [])].slice(0, 80)
     };
@@ -401,13 +474,13 @@ export async function upsertAcquisitionLead(payload = {}, { memberCheckClient = 
     const task = {
       id:stableId("T-AI", customerId, 10),
       customerId,
-      title:`人工跟进：${interestScores[0].name}留资客户`,
-      type:"待邀约",
+      title:hasPendingNameConflict ? "人工复核：客户姓名冲突" : `人工跟进：${interestScores[0].name}留资客户`,
+      type:hasPendingNameConflict ? "人工资料复核" : "待邀约",
       priority:"高",
       dueAt:customer.nextAction.dueAt,
       assignee:"在线咨询组",
       status:"待处理",
-      reason:existing ? "同客再次咨询" : "新线索黄金响应",
+      reason:hasPendingNameConflict ? "同一手机号提交了不同姓名；请人工核对后再更正客户称呼。" : existing ? "同客再次咨询" : "新线索黄金响应",
       source:"AI获客顾问·小美"
     };
     const lead = {
@@ -531,6 +604,11 @@ export async function updateAcquisitionCustomer({
     const changed = changedProfileFields(normalizedPatch);
     const profileUpdate = { version:nextVersion, fields:changed, source:cleanText(source, 80) || "management",
       actor:cleanText(actor, 160) || "当前用户", at:now };
+    const customerNote = normalizedPatch.customerNote ? {
+      id:stableId("N", `${customerId}:note:${now}`, 14), customer_id:customerId,
+      content:normalizedPatch.customerNote, author:cleanText(actor, 160) || "当前用户",
+      created_at:now, source:cleanText(source, 80) || "management"
+    } : null;
     const priorPreferences = current.customer?.contactPreferences || {};
     const customer = {
       ...current.customer,
@@ -545,6 +623,7 @@ export async function updateAcquisitionCustomer({
       ...(normalizedPatch.profile ? { profile:{ ...(current.customer?.profile || {}), ...normalizedPatch.profile } } : {}),
       ...(normalizedPatch.contactPreferences ? { contactPreferences:{ ...priorPreferences, ...normalizedPatch.contactPreferences,
         updated_at:now, updated_by:cleanText(actor, 160), source:cleanText(source, 80) } } : {}),
+      ...(customerNote ? { customerNotes:[customerNote, ...(current.customer?.customerNotes || [])].slice(0, 100) } : {}),
       ...(normalizedPatch.tags ? { tags:normalizedPatch.tags } : {}),
       profileVersion:nextVersion,
       profileUpdatedAt:now,
@@ -553,8 +632,8 @@ export async function updateAcquisitionCustomer({
       profileUpdateHistory:[profileUpdate, ...(current.customer?.profileUpdateHistory || [])].slice(0, 50)
     };
     const event = {
-      id:stableId("E", `${customerId}:profile:${now}`, 14), type:"profile", title:"客户资料由人工更正",
-      detail:`已更新${changed.join("、")}。${phoneChanged ? "手机号变更后将重新查询会员状态。" : ""}`,
+      id:stableId("E", `${customerId}:${customerNote ? "note" : "profile"}:${now}`, 14), type:customerNote ? "note" : "profile", title:customerNote ? "新增客户备注" : "客户资料由人工更正",
+      detail:customerNote ? customerNote.content : `已更新${changed.join("、")}。${phoneChanged ? "手机号变更后将重新查询会员状态。" : ""}`,
       occurredAt:now, actor:cleanText(actor, 160) || "当前用户", channel:cleanText(source, 80) || "管理后台", tone:"neutral",
       source:cleanText(source, 80) || "management", fields:changed
     };
@@ -799,13 +878,13 @@ export async function appendAcquisitionConversationReply({ tenant_id, conversati
   };
   if (postgresPersistenceEnabled()) {
     const result = await getPostgresLeadStore().appendConversationReply({ tenantId, conversationId, message, updateLead });
-    if (!result) {
-      const error = new Error("未找到可回复的获客顾问会话");
-      error.code = "CONVERSATION_NOT_FOUND";
-      error.status = 404;
-      throw error;
-    }
-    return { ...result, delivery:clone(result.message?.delivery || message.delivery), replayed:Boolean(result.replayed) };
+    if (result) return { ...result, delivery:clone(result.message?.delivery || message.delivery), replayed:Boolean(result.replayed) };
+    const persisted = await appendPersistedHumanReply({ tenant_id:tenantId, conversation_id:conversationId, message });
+    if (persisted) return { ...persisted, delivery:clone(persisted.message?.delivery || message.delivery), replayed:Boolean(persisted.replayed) };
+    const error = new Error("未找到可回复的获客顾问会话");
+    error.code = "CONVERSATION_NOT_FOUND";
+    error.status = 404;
+    throw error;
   }
   const resultPromise = mutationQueue.then(async () => {
     const state = await readState();
@@ -820,6 +899,8 @@ export async function appendAcquisitionConversationReply({ tenant_id, conversati
   mutationQueue = resultPromise.then(() => undefined, () => undefined);
   const updated = await resultPromise;
   if (!updated) {
+    const persisted = await appendPersistedHumanReply({ tenant_id:tenantId, conversation_id:conversationId, message });
+    if (persisted) return { ...persisted, delivery:clone(persisted.message?.delivery || message.delivery), replayed:Boolean(persisted.replayed) };
     const error = new Error("未找到可回复的获客顾问会话");
     error.code = "CONVERSATION_NOT_FOUND";
     error.status = 404;
@@ -846,7 +927,10 @@ export async function getAcquisitionConversationStaffMessages({ tenant_id, conve
     : (await readState()).leads.filter((item) => (item.tenant_id || tenantId) === tenantId).map(publicLead);
   const conversation = leads.flatMap((lead) => lead.conversations || [])
     .find((item) => item.id === conversationId || item.externalConversationId === conversationId);
-  return clone((conversation?.messages || []).filter((message) => message?.from === "staff"));
+  const staffMessages = (conversation?.messages || []).filter((message) => message?.from === "staff");
+  if (staffMessages.length) return clone(staffMessages);
+  const persisted = (await readPersistedConversations(tenantId)).find((item) => item.externalId === conversationId);
+  return clone((persisted?.messages || []).filter((message) => message?.from === "staff"));
 }
 
 // A browser receipt means the authenticated public web client obtained this
@@ -891,13 +975,13 @@ export async function recordAcquisitionConversationDelivery({ tenant_id, convers
   };
   if (postgresPersistenceEnabled()) {
     const result = await getPostgresLeadStore().recordConversationDelivery({ tenantId, conversationId, messageId, updateLead });
-    if (!result) {
-      const error = new Error("未找到可确认送达的人工消息");
-      error.code = "CONVERSATION_DELIVERY_NOT_FOUND";
-      error.status = 404;
-      throw error;
-    }
-    return result;
+    if (result) return result;
+    const persisted = await recordPersistedHumanReplyDelivery({ tenant_id:tenantId, conversation_id:conversationId, message_id:messageId });
+    if (persisted) return persisted;
+    const error = new Error("未找到可确认送达的人工消息");
+    error.code = "CONVERSATION_DELIVERY_NOT_FOUND";
+    error.status = 404;
+    throw error;
   }
   const operation = mutationQueue.then(async () => {
     const state = await readState();
@@ -912,6 +996,8 @@ export async function recordAcquisitionConversationDelivery({ tenant_id, convers
   mutationQueue = operation.then(() => undefined, () => undefined);
   const result = await operation;
   if (!result) {
+    const persisted = await recordPersistedHumanReplyDelivery({ tenant_id:tenantId, conversation_id:conversationId, message_id:messageId });
+    if (persisted) return persisted;
     const error = new Error("未找到可确认送达的人工消息");
     error.code = "CONVERSATION_DELIVERY_NOT_FOUND";
     error.status = 404;
@@ -929,7 +1015,18 @@ export async function acquisitionCustomerSnapshot(tenantId, { operationalOnly = 
   const {listHandovers}=await import("./acquisition-operations-store.mjs");
   const handovers=await listHandovers({tenant_id:tenant,limit:500});
   let scopedLeads=leads;
-  if(principal && !hasPhaseOneCapability(principal,"customers:read_all")){
+  const qualityView = qualityRedactedPrincipal(principal);
+  if (qualityView) {
+    const permittedConversationIds = new Set(handovers
+      .filter((handover) => qualityHandoverInScope(handover, principal))
+      .map((handover) => handover.conversation_id));
+    scopedLeads = leads
+      .filter((lead) => (lead.conversations || []).some((conversation) => permittedConversationIds.has(conversation.externalConversationId)))
+      .map((lead) => ({
+        ...lead,
+        conversations:(lead.conversations || []).filter((conversation) => permittedConversationIds.has(conversation.externalConversationId))
+      }));
+  } else if(principal && !hasPhaseOneCapability(principal,"customers:read_all")){
     // Pending tasks have no assignee yet, so filtering to the current assignee
     // made every newly escalated web conversation disappear from a presales
     // workspace.  An unassigned task is claimable by the authorized operations
@@ -937,7 +1034,7 @@ export async function acquisitionCustomerSnapshot(tenantId, { operationalOnly = 
     // metadata is available.  Once claimed, it is restricted to that assignee.
     const canSeeHandover=(h) => {
       const inDepartment=principal.departmentIds?.includes("*") || !h.department || principal.departmentIds?.includes(h.department);
-      return inDepartment && (h.assignee===principal.subject || (!h.assignee && ["pending","claimed"].includes(h.status)));
+      return inDepartment && (h.assignee===principal.subject || (!h.assignee && openHandoverStatus(h.status)));
     };
     const owned=new Set(handovers
       .filter(canSeeHandover)
@@ -949,10 +1046,58 @@ export async function acquisitionCustomerSnapshot(tenantId, { operationalOnly = 
   const visibleLeads = operationalOnly
     ? classifiedLeads.filter((lead) => lead.data_classification !== "test")
     : classifiedLeads;
+  if (qualityView) {
+    const permittedConversationIds = new Set(visibleLeads.flatMap((lead) => (lead.conversations || [])
+      .map((conversation) => conversation.externalConversationId)));
+    const archived = visibleLeads.flatMap((lead) => lead.conversations || []);
+    const liveRows = includeLiveConversations ? await readPersistedConversations(tenant) : [];
+    const conversationsBySourceId = new Map(archived.map((conversation) => [
+      String(conversation.externalConversationId || conversation.id || ""), conversation
+    ]));
+    for (const row of liveRows) {
+      if (!permittedConversationIds.has(row.externalId)) continue;
+      const handover = handovers.find((item) => item.conversation_id === row.externalId);
+      const view = localConversationView(row, undefined, handover);
+      conversationsBySourceId.set(String(row.externalId), view.conversation);
+    }
+    return {
+      customers:[],
+      conversations:[...conversationsBySourceId.values()].map((conversation) => redactedQualityConversation(tenant, conversation)),
+      tasks:[],
+      meta:{
+        tenant_id:tenant,
+        total:visibleLeads.length,
+        source_total:classifiedLeads.length,
+        operational_only:Boolean(operationalOnly),
+        excluded_test_total:classifiedLeads.filter((lead) => lead.data_classification === "test").length,
+        unclassified_total:classifiedLeads.filter((lead) => lead.data_classification === "unclassified").length,
+        view:"quality_redacted",
+        plaintext_mobile_stored:false,
+        updated_at:classifiedLeads[0]?.updated_at || null
+      }
+    };
+  }
+  // The customer snapshot is still useful when the independent appointment
+  // persistence is temporarily unavailable.  Do not turn a read-only customer
+  // refresh into a failure or synthesize an appointment from stale data.
+  let appointmentCustomers = visibleLeads;
+  try {
+    const [{ listAppointmentIntakes }, { projectAppointmentsOntoCustomers }] = await Promise.all([
+      import("./appointment-intake-store.mjs"),
+      import("./appointment-customer-projection.mjs")
+    ]);
+    appointmentCustomers = projectAppointmentsOntoCustomers(
+      visibleLeads,
+      await listAppointmentIntakes({ tenant_id:tenant, limit:500 })
+    );
+  } catch {
+    // The appointment queue reports its own availability.  Keep the authorized
+    // customer snapshot available without claiming a time was synchronized.
+  }
   const liveRows=includeLiveConversations ? await readPersistedConversations(tenant) : [];
-  const views=liveRows.filter(row=>!principal || hasPhaseOneCapability(principal,'customers:read_all') || handovers.some(h=>h.conversation_id===row.externalId && ((h.assignee===principal.subject || (!h.assignee && ["pending","claimed"].includes(h.status))) && (principal.departmentIds?.includes('*')||!h.department||principal.departmentIds?.includes(h.department))))).map(row=>{
+  const views=liveRows.filter(row=>!principal || hasPhaseOneCapability(principal,'customers:read_all') || handovers.some(h=>h.conversation_id===row.externalId && ((h.assignee===principal.subject || (!h.assignee && openHandoverStatus(h.status))) && (principal.departmentIds?.includes('*')||!h.department||principal.departmentIds?.includes(h.department))))).map(row=>{
     const lead=visibleLeads.find(l=>(l.conversations||[]).some(c=>c.externalConversationId===row.externalId));
-    const task=handovers.find(h=>h.conversation_id===row.externalId&&['pending','claimed'].includes(h.status));
+    const task=handovers.find(h=>h.conversation_id===row.externalId&&openHandoverStatus(h.status));
     const view=localConversationView(row,lead?.customer,task);
     // A persisted session is authoritative for customer and AI turns.  Human
     // replies are written to the lead archive, however; without this merge the
@@ -984,7 +1129,7 @@ export async function acquisitionCustomerSnapshot(tenantId, { operationalOnly = 
   // 客户列表按“来的时间”（首次进入时间）倒序，最新客户排最前，无论它来自留资还是在线会话。
   const arrivalTime = (item) => Date.parse(item?.stageEnteredAt || item?.createdAt || "") || 0;
   const mergedCustomers = [
-    ...visibleLeads.map((item) => ({ ...item.customer, dataClassification:item.data_classification })),
+    ...appointmentCustomers.map((item) => ({ ...item.customer, dataClassification:item.data_classification })),
     ...views.filter((v) => !visibleLeads.some((l) => l.customer.id === v.customer.id)).map((v) => v.customer)
   ].sort((left, right) => arrivalTime(right) - arrivalTime(left));
   return {

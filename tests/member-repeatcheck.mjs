@@ -3,6 +3,7 @@ import { createHmac } from "node:crypto";
 import { createMemberRepeatCheckClient, memberRepeatCheckConfiguration } from "../server/integrations/member-repeatcheck-client.mjs";
 import { memberCheckPresentation } from "../src/member-check-display.js";
 import { redactForLog } from "../server/observability/redaction.mjs";
+import { createRequestContext, createStructuredLogger, runWithRequestContext } from "../server/observability/index.mjs";
 import { memberRepeatCheckSigner, memberRepeatCheckSigningConfigured } from "../server/integrations/member-repeatcheck-signing.mjs";
 
 process.env.HUAMEI_RUNTIME_ENV = "development";
@@ -59,6 +60,69 @@ assert.equal(signedClient.config.ready, true);
 assert.equal((await signedClient.check(request())).status, "checked");
 assert.equal(defaultSignedRequest.headers.sign, memberRepeatCheckSigner(defaultSignedRequest.headers, { env:signingEnv }));
 assert.doesNotMatch(JSON.stringify(defaultSignedRequest), /fixture-secret/);
+const auditLines = [];
+const auditLogger = createStructuredLogger({
+  service:"member-check-test", environment:"production",
+  secrets:[signingEnv.HUAMEI_MEMBER_CHECK_SECRET, signingEnv.HUAMEI_MEMBER_CHECK_AKEY],
+  write:(line) => auditLines.push(line)
+});
+const auditContext = createRequestContext({
+  service:"member-check-test", headers:{ "x-request-id":"member-check-audit-001" }
+});
+await runWithRequestContext(auditContext, async () => {
+  const audited = createMemberRepeatCheckClient({
+    env:signingEnv, signRequest:signer, logger:auditLogger,
+    fetchImpl:async () => response(false)
+  });
+  assert.equal((await audited.check(request())).status, "checked");
+});
+assert.equal(auditLines.length, 1);
+const auditRecord = JSON.parse(auditLines[0]);
+assert.equal(auditRecord.event, "member_check.request.completed");
+assert.equal(auditRecord.request_id, "member-check-audit-001");
+assert.equal(auditRecord.outcome, "success");
+assert.equal(typeof auditRecord.duration_ms, "number");
+assert.ok(auditRecord.duration_ms >= 0);
+for (const forbidden of [phone, signingEnv.HUAMEI_MEMBER_CHECK_SECRET, signingEnv.HUAMEI_MEMBER_CHECK_AKEY, "fixture-signature"]) {
+  assert.equal(JSON.stringify(auditRecord).includes(forbidden), false, `member-check audit leaked ${forbidden}`);
+}
+const failedAuditLines = [];
+const failedAuditLogger = createStructuredLogger({
+  service:"member-check-test", environment:"production",
+  secrets:[signingEnv.HUAMEI_MEMBER_CHECK_SECRET, signingEnv.HUAMEI_MEMBER_CHECK_AKEY],
+  write:(line) => failedAuditLines.push(line)
+});
+await runWithRequestContext(auditContext, async () => {
+  const auditedFailure = createMemberRepeatCheckClient({
+    env:signingEnv, signRequest:signer, logger:failedAuditLogger,
+    fetchImpl:async () => { throw new Error(`phone=${phone}; akey=${signingEnv.HUAMEI_MEMBER_CHECK_AKEY}`); }
+  });
+  assert.equal((await auditedFailure.check(request())).reason_code, "PROVIDER_UNAVAILABLE");
+});
+assert.equal(failedAuditLines.length, 1);
+const failedAuditRecord = JSON.parse(failedAuditLines[0]);
+assert.equal(failedAuditRecord.request_id, "member-check-audit-001");
+assert.equal(failedAuditRecord.outcome, "failed");
+assert.equal(failedAuditRecord.error_code, "PROVIDER_UNAVAILABLE");
+for (const forbidden of [phone, signingEnv.HUAMEI_MEMBER_CHECK_SECRET, signingEnv.HUAMEI_MEMBER_CHECK_AKEY]) {
+  assert.equal(JSON.stringify(failedAuditRecord).includes(forbidden), false, `failed member-check audit leaked ${forbidden}`);
+}
+const backgroundAuditLines = [];
+const backgroundAuditLogger = createStructuredLogger({
+  service:"member-check-test", environment:"production",
+  secrets:[signingEnv.HUAMEI_MEMBER_CHECK_SECRET, signingEnv.HUAMEI_MEMBER_CHECK_AKEY],
+  write:(line) => backgroundAuditLines.push(line)
+});
+const backgroundCheck = createMemberRepeatCheckClient({
+  env:signingEnv, signRequest:signer, logger:backgroundAuditLogger,
+  fetchImpl:async () => response(false)
+});
+assert.equal((await backgroundCheck.check(request("member-background"))).status, "checked");
+assert.equal(backgroundAuditLines.length, 1);
+const backgroundAuditRecord = JSON.parse(backgroundAuditLines[0]);
+assert.match(backgroundAuditRecord.request_id, /^member_check_[0-9a-f-]{36}$/);
+assert.equal(backgroundAuditRecord.duration_ms >= 0, true);
+assert.equal(JSON.stringify(backgroundAuditRecord).includes(phone), false);
 for (const override of [
   { HUAMEI_MEMBER_CHECK_URL:"" }, { HUAMEI_MEMBER_CHECK_AKEY:"" },
   { HUAMEI_MEMBER_CHECK_OPERATION:"sync" }, { HUAMEI_MEMBER_CHECK_HTTP_METHOD:"" },

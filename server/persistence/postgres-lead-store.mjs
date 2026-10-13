@@ -460,9 +460,14 @@ export function createPostgresLeadStore(options = {}) {
       ...(phoneChanged ? ["mobile"] : []),
       ...(patch.profile ? Object.keys(patch.profile).map((key) => `profile.${key}`) : []),
       ...(patch.contactPreferences ? ["contact_preferences"] : []),
+      ...(patch.customerNote ? ["customer_note"] : []),
       ...(Object.hasOwn(patch, "tags") ? ["tags"] : [])
     ];
     const profileUpdate = { version:nextVersion, fields:changed, source:source || "management", actor:actor || "当前用户", at:now };
+    const customerNote = patch.customerNote ? {
+      id:`N-${createHash("sha256").update(`${customerId}:note:${now}`).digest("hex").slice(0, 14).toUpperCase()}`,
+      customer_id:customerId, content:patch.customerNote, author:actor || "当前用户", created_at:now, source:source || "management"
+    } : null;
     const customer = {
       ...current.customer,
       ...(Object.hasOwn(patch, "name") ? { name:patch.name } : {}),
@@ -470,6 +475,7 @@ export function createPostgresLeadStore(options = {}) {
       ...(patch.profile ? { profile:{ ...(current.customer?.profile || {}), ...patch.profile } } : {}),
       ...(patch.contactPreferences ? { contactPreferences:{ ...(current.customer?.contactPreferences || {}), ...patch.contactPreferences,
         updated_at:now, updated_by:actor, source } } : {}),
+      ...(customerNote ? { customerNotes:[customerNote, ...(current.customer?.customerNotes || [])].slice(0, 100) } : {}),
       ...(patch.tags ? { tags:patch.tags } : {}),
       profileVersion:nextVersion, profileUpdatedAt:now, profileUpdatedBy:actor, profileUpdateSource:source,
       profileUpdateHistory:[profileUpdate, ...(current.customer?.profileUpdateHistory || [])].slice(0, 50)
@@ -486,8 +492,8 @@ export function createPostgresLeadStore(options = {}) {
         is_repeat:null, member_status:"unknown", reason_code:null, attempted_at:now, checked_at:null, capture_id:captureId };
     }
     const event = {
-      id:`E-${createHash("sha256").update(`${customerId}:profile:${now}`).digest("hex").slice(0, 14).toUpperCase()}`,
-      type:"profile", title:"客户资料由人工更正", detail:`已更新${changed.join("、")}。${phoneChanged ? "手机号变更后将重新查询会员状态。" : ""}`,
+      id:`E-${createHash("sha256").update(`${customerId}:${customerNote ? "note" : "profile"}:${now}`).digest("hex").slice(0, 14).toUpperCase()}`,
+      type:customerNote ? "note" : "profile", title:customerNote ? "新增客户备注" : "客户资料由人工更正", detail:customerNote ? customerNote.content : `已更新${changed.join("、")}。${phoneChanged ? "手机号变更后将重新查询会员状态。" : ""}`,
       occurredAt:now, actor:actor || "当前用户", channel:source || "管理后台", tone:"neutral", source, fields:changed
     };
     const document = { ...current, phone_hash:undefined, updated_at:now, profile_version:nextVersion,

@@ -998,6 +998,7 @@ textarea.form-control { min-height: 88px; padding: 10px 11px; resize: vertical; 
 .reception-page .chat { min-height:0; }
 .reception-page .chat-head { height:auto;min-height:80px;flex-wrap:wrap;padding:12px;gap:8px; }
 .reception-page .chat-body { background:#fafafa;min-height:120px; }
+.reception-history-loader { display:flex;justify-content:center;margin:0 0 12px; }
 .reception-page .message { align-items:flex-start;max-width:92%; }
 .reception-page .message.customer { margin-left:0;flex-direction:row; }
 .reception-page .message.customer .message-bubble { background:#fff;color:var(--ink);border:1px solid var(--line);border-radius:4px 12px 12px 12px; }

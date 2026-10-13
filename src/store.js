@@ -54,6 +54,14 @@ const OVERLAY_OVERRIDE_COLLECTIONS = Object.freeze([
   ["physicians", "physicianOverrides"],
   ["knowledge", "knowledgeOverrides"]
 ]);
+// These collections are maintained by their dedicated server workflows.  A
+// phrase-template save must therefore send back the exact server snapshot,
+// rather than the normalized display state held by this page.  In particular,
+// the fixed phase-one role catalog is reconstructed for display but is not a
+// writable management-domain overlay field.
+const SERVER_PROTECTED_OVERLAY_COLLECTIONS = Object.freeze([
+  "customers", "conversations", "tasks", "knowledgeOverrides", "managementUsers", "managementRoles"
+]);
 
 const canonicalState = (value) => {
   if (Array.isArray(value)) return `[${value.map(canonicalState).join(",")}]`;
@@ -94,7 +102,7 @@ const acquisitionCustomerIds = (state) => new Set((state.customers || [])
 // A management overlay contains real operator-owned data only. The acquisition
 // service keeps public-advisor customers, handovers and sensitive messages in
 // its own authenticated store, never in this management persistence channel.
-export const buildManagementDomainOverlay = (state, base = runtimeBaseline()) => {
+export const buildManagementDomainOverlay = (state, base = runtimeBaseline(), serverProtectedOverlay = {}) => {
   const acquired = acquisitionCustomerIds(state);
   const omitAcquired = (collection) => (state[collection] || []).filter((item) => {
     if (collection === "customers") return !acquired.has(item.id);
@@ -111,6 +119,9 @@ export const buildManagementDomainOverlay = (state, base = runtimeBaseline()) =>
   }));
   for (const [collection, overrideKey] of OVERLAY_OVERRIDE_COLLECTIONS) {
     overlay[overrideKey] = overlayItems(base[collection] || [], state[collection] || []);
+  }
+  for (const collection of SERVER_PROTECTED_OVERLAY_COLLECTIONS) {
+    overlay[collection] = clone(Array.isArray(serverProtectedOverlay?.[collection]) ? serverProtectedOverlay[collection] : []);
   }
   return overlay;
 };
@@ -387,12 +398,12 @@ const agentHasAssignments = (state, agent = {}) => (state.customers || []).some(
   return assigned && (assigned === agent.name || assigned === agent.id);
 });
 
-// The management console must never mix explicitly named local test records
-// into an operator's live queue.  This is deliberately conservative: only a
-// server-provided test classification or an explicit test marker in the
-// customer name is isolated; unknown historical records remain visible.
+// The management console must never mix server-classified test records into
+// an operator's live queue.  A customer's display name is user-entered data,
+// so words such as “测试” or “演示” must not change the operational visibility
+// of an otherwise production lead (or hide its linked conversation).
 const isExplicitAcquisitionTestCustomer = (customer = {}) => customer?.origin === "acquisition_advisor"
-  && (customer.dataClassification === "test" || /(测试|演示|样例|样本|fixture|sample|\btest\b)/i.test(String(customer.name || "")));
+  && customer.dataClassification === "test";
 
 // Several legacy management views render structured state with innerHTML.
 // Normalize every browser-persisted, operator-entered and server-fetched value
@@ -599,6 +610,7 @@ class Store extends EventTarget {
     this.state = this.load();
     this.serverRevision = 0;
     this.managementHydrated = false;
+    this.serverProtectedOverlay = {};
   }
 
   load() {
@@ -621,17 +633,23 @@ class Store extends EventTarget {
     this.state = clone(this.baseState);
     this.serverRevision = 0;
     this.managementHydrated = false;
+    this.serverProtectedOverlay = {};
     this.save("management-reset");
   }
 
   managementOverlay() {
-    return buildManagementDomainOverlay(this.state, this.baseState);
+    return buildManagementDomainOverlay(this.state, this.baseState, this.serverProtectedOverlay);
   }
 
   hydrateManagementOverlay(record = {}) {
-    this.state = applyManagementDomainOverlay(sanitizeDisplayData(record.overlay || {}), this.baseState);
+    const sanitizedOverlay = sanitizeDisplayData(record.overlay || {});
+    this.state = applyManagementDomainOverlay(sanitizedOverlay, this.baseState);
     this.serverRevision = Number(record.revision) || 0;
     this.managementHydrated = true;
+    this.serverProtectedOverlay = Object.fromEntries(SERVER_PROTECTED_OVERLAY_COLLECTIONS.map((collection) => [
+      collection,
+      clone(Array.isArray(sanitizedOverlay?.[collection]) ? sanitizedOverlay[collection] : [])
+    ]));
     this.state.meta.lastSync = record.updated_at || this.state.meta.lastSync || null;
     this.dispatchEvent(new CustomEvent("change", { detail:{ state:this.state, source:"management-hydrate" } }));
   }
@@ -948,6 +966,7 @@ class Store extends EventTarget {
   upsertAcquisitionSnapshot(snapshot = {}) {
     const safeSnapshot = sanitizeDisplayData(snapshot);
     const incremental = safeSnapshot.meta?.incremental === true;
+    const authoritative = safeSnapshot.meta?.authoritative === true;
     const rawCustomers = Array.isArray(safeSnapshot.customers) ? safeSnapshot.customers : [];
     const explicitTestCustomerIds = new Set(rawCustomers.filter(isExplicitAcquisitionTestCustomer).map((item) => item.id));
     const customers = rawCustomers.filter((item) => !explicitTestCustomerIds.has(item.id));
@@ -958,12 +977,21 @@ class Store extends EventTarget {
     const persistedExplicitTestCustomerIds = new Set((this.state.customers || [])
       .filter(isExplicitAcquisitionTestCustomer)
       .map((item) => item.id));
-    if (!customers.length && !conversations.length && !tasks.length && !persistedExplicitTestCustomerIds.size) return false;
+    if (!authoritative && !customers.length && !conversations.length && !tasks.length && !persistedExplicitTestCustomerIds.size) return false;
     const before = JSON.stringify({
       customers:this.state.customers,
       conversations:this.state.conversations,
       tasks:this.state.tasks
     });
+    // A successful full snapshot is the source of truth.  Keeping acquisition
+    // rows that are absent from it mixes records from a previous process or
+    // port into the current queue, which made refresh results non-repeatable.
+    if (authoritative && !incremental) {
+      const previousAcquisitionCustomerIds = acquisitionCustomerIds(this.state);
+      this.state.customers = this.state.customers.filter((item) => !previousAcquisitionCustomerIds.has(item.id));
+      this.state.conversations = this.state.conversations.filter((item) => !previousAcquisitionCustomerIds.has(item.customerId));
+      this.state.tasks = this.state.tasks.filter((item) => !previousAcquisitionCustomerIds.has(item.customerId));
+    }
     if (persistedExplicitTestCustomerIds.size) {
       this.state.customers = this.state.customers.filter((item) => !persistedExplicitTestCustomerIds.has(item.id));
       this.state.conversations = this.state.conversations.filter((item) => !persistedExplicitTestCustomerIds.has(item.customerId));

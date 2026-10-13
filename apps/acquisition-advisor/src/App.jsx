@@ -7,14 +7,26 @@ const QUICK_QUESTIONS = [
 ];
 
 const emptyConversation = () => [];
-// 与服务端同一套规范化：+86 / 0086 / 空格 / 短横线都归一为 11 位，并且按整串
-// 处理，避免把 "0086…" 这类输入截成错误号码。只在离开输入框和提交时调用，
+const APPOINTMENT_LEAD_CAPTURE_PROMPT = Object.freeze({
+  title:"请先保存联系方式",
+  description:"为便于顾问与您确认到院安排，请留下本次咨询的联系方式。手机号将由顾问回电时人工核对。",
+  consent_text:"我同意顾问仅为本次到院安排和咨询服务使用以上联系方式"
+});
+const appointmentLeadCaptureRequired = (message) => message?.orchestration?.action_proposal?.type === "appointment_request";
+const appointmentProjectFromMessage = (value) => {
+  const text = String(value || "").replace(/\s+/g, "").trim();
+  const match = text.match(/(?:预约|约面诊|安排到院)(?:一下)?[，,：:]?([^，。！？!?]{2,24})/);
+  return String(match?.[1] || "").replace(/(?:面诊|咨询|项目)$/g, "").trim().slice(0, 80);
+};
+// 与服务端同一套规范化：+86 / 0086 / 空格 / 短横线都归一为本地号码，并且按整串
+// 处理。绝不能截断超过 11 位的输入，否则无效号码会被改写成有效号码后保存。只在离开输入框和提交时调用，
 // 输入过程中不做整体重写，否则粘贴/快速输入会被 React 的受控更新吃掉字符。
 const normalizeMobileInput = (value) => {
   const digits = String(value || "").normalize("NFKC").replace(/\D/g, "");
   const local = /^1[3-9]\d{9}$/.test(digits) ? digits : digits.replace(/^(?:00)?86/, "");
-  return local.slice(0, 11);
+  return local;
 };
+const isValidMainlandMobileInput = (value) => /^1[3-9]\d{9}$/.test(normalizeMobileInput(value));
 
 // 输入过程中只做轻量清洗：保留数字和开头的一个 +，其余分隔符由失焦时统一归一。
 // 输入框不能用 maxLength=11：粘贴 "0086 138-0000-0001" 会被浏览器先截成
@@ -250,6 +262,7 @@ function KnowledgeMediaPreview({ preview, onClose }) {
 function LeadCaptureCard({ prompt, status, error, result, onSubmit, handover }) {
   const [name, setName] = useState("");
   const [mobile, setMobile] = useState("");
+  const [mobileError, setMobileError] = useState("");
   const [serviceConsent, setServiceConsent] = useState(false);
   if (result) return (
     <section className="lead-capture-card lead-success" aria-live="polite">
@@ -265,6 +278,11 @@ function LeadCaptureCard({ prompt, status, error, result, onSubmit, handover }) 
     event.preventDefault();
     // 提交前再归一一次，避免用户直接点提交（未触发失焦）时把 +86/0086 原样送出。
     const normalizedMobile = normalizeMobileInput(mobile);
+    if (!isValidMainlandMobileInput(mobile)) {
+      setMobileError("请输入有效的11位中国大陆手机号");
+      return;
+    }
+    setMobileError("");
     setMobile(normalizedMobile);
     onSubmit({ name:name.trim(), mobile:normalizedMobile, service_consent:serviceConsent });
   };
@@ -282,10 +300,11 @@ function LeadCaptureCard({ prompt, status, error, result, onSubmit, handover }) 
       <div className="lead-card-kicker">{kicker}</div>
       <h3>{title}</h3>
       <p>{description}</p>
-      <form className="lead-form" onSubmit={submit}>
+      <form className="lead-form" onSubmit={submit} noValidate>
         <label><span>怎么称呼您 <em>选填</em></span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={40} autoComplete="name" placeholder="您的称呼" /></label>
-        <label><span>手机号</span><input value={mobile} onChange={(event) => setMobile(cleanMobileTyping(event.target.value))} onBlur={() => setMobile(normalizeMobileInput(mobile))} required maxLength={20} pattern="(?:00)?(?:\+?86)?1[3-9][0-9]{9}" inputMode="tel" autoComplete="tel" placeholder="11位手机号，可粘贴 +86 或 0086" aria-invalid={Boolean(error)} /></label>
+        <label><span>手机号</span><input value={mobile} onChange={(event) => { setMobile(cleanMobileTyping(event.target.value)); setMobileError(""); }} onBlur={() => setMobile(normalizeMobileInput(mobile))} required maxLength={20} pattern="(?:00)?(?:\+?86)?1[3-9][0-9]{9}" inputMode="tel" autoComplete="tel" placeholder="11位手机号，可粘贴 +86 或 0086" aria-invalid={Boolean(error || mobileError)} aria-describedby={mobileError ? "lead-mobile-error" : undefined} /></label>
         <label className="lead-consent"><input type="checkbox" checked={serviceConsent} onChange={(event) => setServiceConsent(event.target.checked)} required /><span>{prompt.consent_text || "请阅读并同意本次咨询联系授权"}</span></label>
+        {mobileError && <div id="lead-mobile-error" className="lead-error" role="alert">{mobileError}</div>}
         {error && <div className="lead-error" role="alert">{error}</div>}
         <button className="lead-submit" type="submit" disabled={status === "submitting" || !serviceConsent}>{status === "submitting" ? submittingLabel : submitLabel}</button>
       </form>
@@ -317,19 +336,22 @@ function AppointmentTimeFields({ value, onChange }) {
 const blankAppointmentTime = () => ({ preferred_date:"", precision:"date", time_period:"afternoon", preferred_time:"" });
 const appointmentTimePayload = (value) => ({ preferred_date:value.preferred_date, preferred_time:value.precision === "minute" ? value.preferred_time : "", time_period:value.precision === "period" ? value.time_period : "" });
 
-function AppointmentActionCard({ proposal, profileSignals, leadCaptured, state, onSubmit }) {
+function AppointmentActionCard({ proposal, profileSignals, leadCaptured, state, onSubmit, allowSubjectEntry = false }) {
   const [time, setTime] = useState(blankAppointmentTime);
   const [confirmed, setConfirmed] = useState(false);
+  const [subject, setSubject] = useState("");
   if (!proposal || proposal.type !== "appointment_request" || state?.intake?.status === "registered") return null;
-  const projects = profileSignals?.projects || [];
+  const projects = Array.isArray(profileSignals?.projects) ? profileSignals.projects.filter(Boolean) : [];
   const doctor = profileSignals?.doctors?.[0];
-  const subjectReady = projects.length || doctor;
+  const selectedProjects = projects.length ? projects : subject.trim() ? [subject.trim()] : [];
+  const subjectReady = selectedProjects.length || doctor;
   return <section className="lead-capture-card appointment-action-card">
     <div className="lead-card-kicker">到院时间登记</div><h3>确认您希望到院的时间</h3>
-    <p>院区：上海华美医疗美容医院<br />咨询内容：{projects.join("、") || "项目待补充"}{doctor ? ` · ${doctor}医生` : ""}</p>
+    <p>院区：上海华美医疗美容医院<br />咨询内容：{selectedProjects.join("、") || "项目待补充"}{doctor ? ` · ${doctor}医生` : ""}</p>
     <p>{leadCaptured ? "使用本次咨询已保存的联系方式，顾问后续回电核对手机号与到院安排。" : "请先保存本次咨询的联系方式。"}</p>
-    {!subjectReady && <p className="appointment-hint">请先在对话中确认想咨询的项目或医生。</p>}
-    <form className="lead-form" onSubmit={(e) => { e.preventDefault(); if (confirmed) onSubmit(proposal, profileSignals, appointmentTimePayload(time)); }}>
+    {!subjectReady && !allowSubjectEntry && <p className="appointment-hint">请先在对话中确认想咨询的项目或医生。</p>}
+    <form className="lead-form" onSubmit={(e) => { e.preventDefault(); if (confirmed) onSubmit(proposal, { ...profileSignals, projects:selectedProjects }, appointmentTimePayload(time)); }}>
+      {allowSubjectEntry && !projects.length && !doctor && <label><span>咨询项目或医生</span><input required maxLength={80} value={subject} onChange={(event) => { setSubject(event.target.value); setConfirmed(false); }} placeholder="例如：热玛吉" /></label>}
       <AppointmentTimeFields value={time} onChange={(value) => { setTime(value); setConfirmed(false); }} />
       <label className="lead-consent"><input type="checkbox" required checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} /><span>我确认以上院区、咨询内容和到院时间，并同意顾问使用已留联系方式跟进。本登记不代表指定医生或接诊名额已锁定。</span></label>
       {state?.error && state.actionId === proposal.id && <div className="lead-error" role="alert">{state.error}</div>}
@@ -363,6 +385,14 @@ function AppointmentRegistrationCard({ state, onChange }) {
   </section>;
 }
 
+const shouldApplyAppointmentResponse = (current, submitted, incoming) => {
+  if (!incoming || current?.id !== submitted?.id) return false;
+  const currentVersion = Number(current.version) || 0;
+  const incomingVersion = Number(incoming.version) || 0;
+  if (incomingVersion < currentVersion) return false;
+  return current.status !== "cancelled" || incoming.status === "cancelled";
+};
+
 function ConversationFeedback({ feedback, onFeedback }) {
   const saving = feedback?.status === "saving";
   const saved = feedback?.status === "saved";
@@ -386,6 +416,9 @@ function ChatMessage({ message, showLeadCapture, leadState, appointmentState, on
     </article>
   );
   const medicalHandover = ["medical_emergency", "medical_safety", "medical_boundary"].includes(message.handover?.reason);
+  const leadPrompt = appointmentLeadCaptureRequired(message)
+    ? { ...APPOINTMENT_LEAD_CAPTURE_PROMPT, ...(message.leadCapture || {}) }
+    : message.leadCapture;
   return (
     <article className={`assistant-message ${message.isContinuation ? "continuation" : ""} ${message.status === "handover_required" ? "handover" : ""}`}>
       {!message.isContinuation && <div className="assistant-label"><span className="assistant-avatar">美</span><span>小美 · AI获客顾问</span></div>}
@@ -394,8 +427,8 @@ function ChatMessage({ message, showLeadCapture, leadState, appointmentState, on
       <PublicKnowledgeMedia media={message.media} onPreview={onPreview} />
       <KnowledgeSources citations={message.citations} onPreview={onPreview} />
       {message.isFinalSegment && <ConversationFeedback feedback={feedback} onFeedback={onFeedback} />}
-      {showLeadCapture && <LeadCaptureCard prompt={{ ...message.leadCapture, consent_text:leadState.consentText || message.leadCapture?.consent_text }} status={leadState.status} error={leadState.error} result={leadState.result} onSubmit={onLeadSubmit} handover={message.handover} />}
-      {message.isFinalSegment && <AppointmentActionCard proposal={message.orchestration?.action_proposal} profileSignals={message.profileSignals} leadCaptured={Boolean(leadState.result)} state={appointmentState} onSubmit={onAppointmentSubmit} />}
+      {showLeadCapture && <LeadCaptureCard prompt={{ ...leadPrompt, consent_text:leadState.consentText || leadPrompt?.consent_text }} status={leadState.status} error={leadState.error} result={leadState.result} onSubmit={onLeadSubmit} handover={message.handover} />}
+      {message.isFinalSegment && <AppointmentActionCard proposal={message.orchestration?.action_proposal} profileSignals={message.profileSignals} leadCaptured={Boolean(leadState.result)} state={appointmentState} onSubmit={onAppointmentSubmit} allowSubjectEntry={message.handover?.required === true} />}
     </article>
   );
 }
@@ -584,7 +617,10 @@ export function App() {
         }
         throw new Error(body?.error?.message || "更新失败，请稍后重试。");
       }
-      setAppointmentState((current) => ({ ...current, status:"accepted", error:"", intake:body.intake, message:body.message }));
+      setAppointmentState((current) => {
+        if (!shouldApplyAppointmentResponse(current.intake, intake, body.intake)) return current;
+        return { ...current, status:"accepted", error:"", intake:body.intake, message:body.message };
+      });
     } catch (err) { if (epoch === sessionEpochRef.current) setAppointmentState((current) => ({ ...current, status:"accepted", error:err.message })); }
   };
 
@@ -675,6 +711,20 @@ export function App() {
         ? body.reply_segments.map((item) => String(item || "").trim()).filter(Boolean)
         : [];
       const replySegments = segments.length ? segments : [String(body.reply || "").trim()].filter(Boolean);
+      const bookingProject = appointmentProjectFromMessage(question);
+      const responseProfileSignals = {
+        ...(body.profile_signals || {}),
+        projects:bookingProject ? [bookingProject] : (body.profile_signals?.projects || [])
+      };
+      const handoverAppointmentProposal = body.delivery?.suppress_ai === true && body.orchestration?.action_proposal?.type === "appointment_request"
+        ? body.orchestration.action_proposal : null;
+      if (handoverAppointmentProposal) {
+        setAppointmentState((current) => ({
+          ...current,
+          proposal:handoverAppointmentProposal,
+          profileSignals:responseProfileSignals
+        }));
+      }
       const replyGroupId = body.run_id || `assistant-${Date.now()}`;
       const serverReplyId = String(body.assistant_message_id || `${idempotencyKey}:reply`);
       const serverReplyText = String(body.reply || replySegments.join("\n")).trim();
@@ -694,7 +744,7 @@ export function App() {
           media:isFinalSegment ? body.media || [] : [],
           status:body.status,
           handover:isFinalSegment ? body.handover : null,
-          profileSignals:isFinalSegment ? body.profile_signals : null,
+          profileSignals:isFinalSegment ? responseProfileSignals : null,
           leadCapture:isFinalSegment ? body.lead_capture : null,
           orchestration:isFinalSegment ? body.orchestration : null,
           at:replyAt
@@ -712,7 +762,8 @@ export function App() {
     }
   };
 
-  const leadPromptMessageId = [...messages].reverse().find((message) => message.role === "assistant" && message.leadCapture?.should_prompt)?.id;
+  const leadPromptMessageId = [...messages].reverse().find((message) => message.role === "assistant"
+    && (message.leadCapture?.should_prompt || appointmentLeadCaptureRequired(message)))?.id;
 
   return (
     <div className={`advisor-shell ${chatStarted ? "chat-mode" : "welcome-mode"}`}>
@@ -746,6 +797,7 @@ export function App() {
             return <ChatMessage key={message.id} message={message} showLeadCapture={message.id === leadPromptMessageId && !leadState.result} leadState={leadState} appointmentState={appointmentState} onLeadSubmit={submitLead} onAppointmentSubmit={submitAppointment} feedback={feedbackByReply[feedbackKey]} onFeedback={(rating) => submitFeedback(message, rating)} onPreview={setKnowledgePreview} />;
           })}
           {leadState.result && <LeadCaptureCard result={leadState.result} status={leadState.status} error="" prompt={{}} onSubmit={submitLead} />}
+          {appointmentState.proposal && !appointmentState.intake && <AppointmentActionCard proposal={appointmentState.proposal} profileSignals={appointmentState.profileSignals} leadCaptured={Boolean(leadState.result)} state={appointmentState} onSubmit={submitAppointment} allowSubjectEntry />}
           <AppointmentRegistrationCard state={appointmentState} onChange={changeAppointment} />
           {isLoading && (
             <article className="assistant-message loading-message">
