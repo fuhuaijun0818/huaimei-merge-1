@@ -161,11 +161,15 @@ export function splitAcquisitionReplySegments(message = "", options = {}) {
   if (String(message).includes("\n")) return atomicSegments.filter(Boolean);
   const segments = [];
   const groupLimit = Math.min(maxCharacters * 2, 64);
+  // 结论/边界句说明的是“需要面诊确认、价格需核验”这类独立信息，和上一句
+  // 合并后客户只看到一个长气泡，也不利于渠道侧单独呈现合规提示。
+  const standaloneClosing = /^(?:具体(?:方案|选择|方式|价格|包含|时间|安排|恢复|事项|情况)|价格|报价|以上|如果需要|需要的话|这一点|本登记|该问题|如果出现|如出现|相关(?:资料|信息))/u;
   for (const segment of atomicSegments.filter(Boolean)) {
     const previous = segments.at(-1);
     const canGroup = previous
       && !/[？?]$/.test(previous)
       && !/[？?]$/.test(segment)
+      && !standaloneClosing.test(segment)
       && !/^\d+[.、]\s+/u.test(previous)
       && !/^\d+[.、]\s+/u.test(segment)
       && previous.split("\n").length < 2

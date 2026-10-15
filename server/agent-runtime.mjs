@@ -205,9 +205,14 @@ const knowledgeIdentityTerms = (item) => [...new Set([
   ...(item.cardTags || []), ...(item.efficacyLabels || [])
 ].flatMap((value) => String(value || "").split(/[—、/｜_\-]/)).map((value) => value.trim()).filter((value) => value.length >= 2))];
 
+// 显式项目识别只认项目名、品牌/型号与登记别名。此前把资料标题按分隔符切片，
+// 会让“痛感明显吗”这类追问因标题里的“明显”被误判成点名的项目提问，随后把
+// 图片 OCR 原文当成答复讲给客户。
 const explicitProjectTerms = (item) => [...new Set([
-  item.project, item.cardTitle, item.sourceTitle
-].flatMap((value) => String(value || "").split(/[—、/｜_\-]/)).map((value) => value.trim()).filter((value) => value.length >= 2))];
+  item.project,
+  item.brandOrModel,
+  ...(PROJECT_INTENT_ALIASES[item.project] || [])
+].map((value) => String(value || "").trim()).filter((value) => value.length >= 2))];
 
 const projectKnowledgeText = (item) => [
   item.project, item.cardTitle, item.sourceTitle, item.brandOrModel,
@@ -1067,6 +1072,33 @@ function acquisitionAgent(input, context, intentAnalysis) {
       recommended_actions:[],handover:{required:false},citations:[citation(item.project,item)]
     };
   }
+  // 客户在已知项目下追问感受、恢复或风险时，必须接着这个项目回答，而不是
+  // 落回“您主要在意的是……”这类占位承接，也不能把资料原文当结论。这些
+  // 回答只说需要面诊确认的边界，不替医生判断个体情况。
+  const followupItem = hits[0]?.item;
+  const followupFacet = followupItem && !breastType && !currentExplicitProjects.length && rememberedProjects.length
+    ? [
+        { key:"comfort", pattern:/(?:痛|疼|麻药|麻醉|舒适|难受|感觉)/, message:`${followupItem.project}的治疗感受和是否需要麻药，会因治疗部位与具体方案不同，需要医生在面诊时结合您的情况说明。` },
+        { key:"recovery", pattern:/(?:恢复|休息|消肿|肿胀|几天|多久|上班|请假|停工期)/, message:`${followupItem.project}的恢复安排需要按具体方案确认，一般会关注护理要求和按时复诊；如果出现明显或持续不适，请及时联系院方。` },
+        { key:"safety", pattern:/(?:风险|副作用|安全|危害|并发症|后遗症)/, message:`${followupItem.project}的适用性、禁忌和风险需要医生面诊评估，这里不做个体判断；需要的话我可以帮您转人工顾问。` }
+      ].find((entry) => entry.pattern.test(input.message))
+    : null;
+  if (followupFacet) return {
+    status:'completed',
+    message:followupFacet.message,
+    structured_data:{
+      intent:'conversation_followup',
+      project:followupItem.project,
+      projects:[followupItem.project],
+      requested_facet:followupFacet.key,
+      next_questions:[],
+      conversation_state:baseConversationState,
+      knowledge_hits:[{ knowledge_id:followupItem.id, project:followupItem.project, general_information:safeProjectSummary(followupItem) }]
+    },
+    recommended_actions:[],
+    handover:{ required:false },
+    citations:[citation(followupItem.project, followupItem)]
+  };
   const confirmedBreastMethod = breastType;
   const breastPrincipleFollowup = intent === "project_explanation"
     && Boolean(breastType)
@@ -1321,7 +1353,8 @@ function acquisitionAgent(input, context, intentAnalysis) {
     ? `先按资料比较${explicitHits.map(({ item }) => comparisonLabel(item)).join("和")}：${explicitHits.map(({ item }) => `${comparisonLabel(item)}：${shortProjectSummary(item)}`).join("；")}。具体包含范围、材料和恢复安排仍需面诊核实。`
     : exactProject
       ? `${customerProjectSummary(primary)} 具体方案由医生面诊确认。`
-      : `明白，您主要在意的是${entities.concerns?.join("、") || "当前改善问题"}。可以先看这些方向：${hits.map(({ item }) => `${item.project}（${(item.efficacyLabels || []).slice(0, 3).join("、") || "一般项目介绍"}）`).join("；")}。具体选择再由医生面诊确认。`;
+      // 客户没说明主诉时不能回“当前改善问题”这类占位词；先承接再给方向。
+      : `${entities.concerns?.length ? `明白，您主要在意的是${entities.concerns.join("、")}。` : "好的。"}可以先看这些方向：${hits.map(({ item }) => `${item.project}（${(item.efficacyLabels || []).slice(0, 3).join("、") || "一般项目介绍"}）`).join("；")}。具体选择再由医生面诊确认。`;
   if (PRICE_OR_POLICY_INTENT.test(input.message)) {
     message += " 价格或活动我可以继续帮您核验，但不把历史图片直接当当前报价；需要确认包含项、有效期和限制条件。";
   }
