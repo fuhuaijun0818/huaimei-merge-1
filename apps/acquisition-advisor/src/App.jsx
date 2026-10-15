@@ -12,6 +12,7 @@ const SESSION_STORAGE_KEY = "huamei.advisor.session.v1";
 const emptyConversation = () => [];
 const createSessionId = () => globalThis.crypto?.randomUUID?.() || `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const trimTrailingSlashes = (value = "") => String(value).replace(/\/+$/, "");
+const normalizeForCompare = (value = "") => String(value).replace(/\s+/g, "");
 const joinBaseUrl = (baseUrl, path) => {
   const normalizedBaseUrl = trimTrailingSlashes(baseUrl);
   if (!normalizedBaseUrl) return path;
@@ -474,6 +475,19 @@ export function App() {
 
   // 刷新后带着本机会话凭证回读服务端确认过的消息顺序；失败时给出重试与
   // 新对话入口，不把旧消息挂到新客户身上。
+  // 轮询补齐只追加真正的新消息：同一条消息在本地渲染和服务端记录里的 id
+  // 不同，只按 id 去重会把同一轮再加一遍，所以要同时比对角色与文本内容。
+  const isRenderedAlready = (message, current) => {
+    const text = normalizeForCompare(message.content);
+    if (!text) return true;
+    const sameRole = current.filter((item) => item.role === message.role);
+    if (sameRole.some((item) => normalizeForCompare(item.content) === text)) return true;
+    if (message.role !== "assistant") return false;
+    // 服务端把一轮答复存成一条整文本，本地按分段渲染成多个气泡，用包含关系判断。
+    const joinedAssistant = normalizeForCompare(current.filter((item) => item.role === "assistant").map((item) => item.content).join(""));
+    return joinedAssistant.includes(text);
+  };
+
   const restoreConversation = async (options = {}) => {
     const epoch = sessionEpochRef.current;
     const stored = readStoredSessionCredential();
@@ -501,7 +515,7 @@ export function App() {
       else if (restored.length && options.silent) {
         setMessages((current) => {
           const known = new Set(current.map((item) => item.id));
-          const additions = restored.filter((item) => !known.has(item.id));
+          const additions = restored.filter((item) => !known.has(item.id) && !isRenderedAlready(item, current));
           return additions.length ? [...current, ...additions] : current;
         });
       }
