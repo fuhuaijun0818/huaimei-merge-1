@@ -44,6 +44,31 @@ try{
  assert.equal(afterRetry.messages.filter((item)=>item.text==='重试幂等检查').length,1,'重试不得产生重复对话记录');checks.push('retry does not duplicate conversation');
  const invalidTranscript=await get('/api/public/acquisition-conversation',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({session_id:first.session_id,session_token:'invalid-token'})});
  assert.ok([400,401,403].includes(invalidTranscript.status),'无效凭证不得回读会话');checks.push('transcript rejects invalid credential');
+
+ // A-005：流式答复（片段推送 + 最终回执）与归档一致性。
+ const parseSse=(text)=>text.split('\n\n').filter((chunk)=>chunk.trim()).map((chunk)=>{
+  const event={name:'message',data:null};
+  for(const line of chunk.split('\n')){
+   if(line.startsWith('event:'))event.name=line.slice(6).trim();
+   if(line.startsWith('data:')){try{event.data=JSON.parse(line.slice(5).trim());}catch{}}
+  }
+  return event;
+ });
+ const streamBody=()=>JSON.stringify({message:'请介绍光子嫩肤的一般项目知识',client_message_id:'stream-check-1',session_id:first.session_id,session_token:first.session_token});
+ const streamResponse=await get('/api/public/acquisition-chat/stream',{method:'POST',headers:{Origin:base,'Content-Type':'application/json','Idempotency-Key':'stream-check-1'},body:streamBody()});
+ test('chat stream status',streamResponse.status,200);
+ assert.match(streamResponse.headers.get('content-type')||'',/text\/event-stream/);checks.push('chat stream content type');
+ const streamEvents=parseSse(await streamResponse.text());
+ const streamDeltas=streamEvents.filter((item)=>item.name==='delta');
+ const streamFinals=streamEvents.filter((item)=>item.name==='final');
+ assert.ok(streamDeltas.length>=2,'流式应答应包含多个片段');assert.equal(streamFinals.length,1,'流式应答应以唯一最终回执结束');checks.push('chat stream emits deltas and one final');
+ assert.equal(streamFinals[0].data.run_id,streamDeltas[0].data.run_id,'片段与最终回执必须属于同一轮次');checks.push('stream fragments share the run id');
+ const streamedText=streamDeltas.map((item)=>item.data.text).join('');
+ assert.equal(streamedText,(streamFinals[0].data.reply_segments||[]).join(''),'片段拼接后应与最终回执一致');checks.push('stream fragments match final receipt');
+ const resumed=parseSse(await (await get('/api/public/acquisition-chat/stream',{method:'POST',headers:{Origin:base,'Content-Type':'application/json','Idempotency-Key':'stream-check-1'},body:JSON.stringify({message:'请介绍光子嫩肤的一般项目知识',client_message_id:'stream-check-1',since_seq:1,session_id:first.session_id,session_token:first.session_token})})).text());
+ assert.equal(resumed.filter((item)=>item.name==='delta').length,streamDeltas.length-1,'重连只补发缺失片段');checks.push('stream resume skips delivered fragments');
+ const archived=await (await transcriptRequest()).json();
+ assert.ok(archived.messages.some((item)=>String(item.text||'').replace(/\s+/g,'')===streamedText.replace(/\s+/g,'')),'后台归档应与流式提交文本一致');checks.push('stream text matches archive');
  test('logout',(await get('/auth/logout',{method:'POST',headers:{Cookie:cookie,Origin:base}})).status,200);test('old session rejected',(await get('/auth/session',{headers:{Cookie:cookie}})).status,401);
  mkdirSync('.team-dev',{recursive:true});const report={scope:'isolated real Node application HTTP; LLM/member disabled; local_json; not browser or PostgreSQL acceptance',passed:true,count:checks.length,checks};writeFileSync('.team-dev/application-http-report.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }finally{

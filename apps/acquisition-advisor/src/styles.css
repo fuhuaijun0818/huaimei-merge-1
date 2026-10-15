@@ -321,3 +321,7 @@ button, input, textarea { font: inherit; }
 .assistant-message.source-human .assistant-avatar { background: #d9ece1; color: #1f5c42; }
 .assistant-message.source-system { border-color: #e3dced; background: #faf8fd; }
 .assistant-message.source-system .assistant-avatar { background: #e6dff2; color: #4a3a70; }
+/* A-005：流式生成中的中间状态与中止标记。 */
+.stream-state { margin-top: 6px; color: #9a888a; font-size: 11px; }
+.stream-state.aborted { color: #a3908f; }
+.assistant-message .stream-state::before { content: "· "; }

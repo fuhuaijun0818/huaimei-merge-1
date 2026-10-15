@@ -65,6 +65,9 @@ export const DEMO_API_KEY = "hm_local_demo_key_2026";
 const API_KEY = process.env.HUAMEI_API_KEY || DEMO_API_KEY;
 const RATE_LIMIT = Math.max(10, Number(process.env.HUAMEI_API_RATE_LIMIT || 60));
 const PUBLIC_WEB_RATE_LIMIT = Math.max(5, Number(process.env.HUAMEI_PUBLIC_WEB_RATE_LIMIT || 20));
+// 流式答复的片段间隔：让客户能看到“生成中”的过程。接入真实模型后该值只作为
+// 兜底节流，token 到达即推送。
+const PUBLIC_CHAT_STREAM_PACING_MS = Math.max(0, Math.min(Number(process.env.HUAMEI_CHAT_STREAM_PACING_MS || 60), 1_000));
 const MAX_BODY_BYTES = 64 * 1024;
 // The management overlay contains only operator-maintained records and source
 // overrides, never the full knowledge package. A dedicated cap lets a real
@@ -1354,6 +1357,113 @@ export async function handleApiRequest(request, response) {
       const validation = ["VALIDATION_ERROR", "UNSUPPORTED_CHANNEL"].includes(error.code);
       const conflict = error.code === "IDEMPOTENCY_PAYLOAD_MISMATCH";
       sendError(request, response, requestId, conflict ? 409 : validation ? 400 : 503, conflict || validation ? error.code : "ACQUISITION_SERVICE_UNAVAILABLE", conflict || validation ? error.message : "售前智能体服务暂时不可用，请稍后再试", error.details || [], rateHeaders);
+    }
+    return true;
+  }
+
+  // A-005：真实流式答复。按片段推送 delta，最终由 final 回执提交；带 since_seq
+  // 支持断线重连时只补发缺失片段，重复片段由运行号+序号在客户端去重。
+  if (request.method === "POST" && url.pathname === "/api/public/acquisition-chat/stream") {
+    let payload;
+    try {
+      payload = await readJsonBody(request);
+    } catch (error) {
+      const tooLarge = error.code === "BODY_TOO_LARGE";
+      sendError(request, response, requestId, tooLarge ? 413 : 400, tooLarge ? "BODY_TOO_LARGE" : "INVALID_JSON", tooLarge ? "请求体不能超过64KB" : "请求体不是有效JSON");
+      return true;
+    }
+    const message = typeof payload.message === "string" ? payload.message.trim() : "";
+    if (!message || message.length > 1000) {
+      sendError(request, response, requestId, 400, "VALIDATION_ERROR", "咨询内容不能为空且不能超过1000字符", [{ field:"message", message:"请输入1–1000字符" }]);
+      return true;
+    }
+    let tenantId;
+    let session;
+    try {
+      tenantId = resolvePublicTenant(request, payload);
+      session = resolvePublicSession(request, payload, tenantId);
+    } catch (error) {
+      sendError(request, response, requestId, error.status || 400, error.code || "INVALID_SESSION", error.message || "会话凭证校验失败", error.details || []);
+      return true;
+    }
+    let rate;
+    try { rate = await consumePublicRateLimit({ tenantId, operation:"chat", session }); }
+    catch {
+      sendError(request, response, requestId, 503, "RATE_LIMIT_STORE_UNAVAILABLE", "咨询服务暂时不可用，请稍后再试");
+      return true;
+    }
+    const rateHeaders = {
+      "X-RateLimit-Limit":String(PUBLIC_WEB_RATE_LIMIT),
+      "X-RateLimit-Remaining":String(rate.remaining),
+      "X-RateLimit-Reset":rate.resetAt,
+      "Set-Cookie":session.setCookie
+    };
+    if (!rate.allowed) {
+      sendJson(request, response, requestId, 429, { error:{ code:"RATE_LIMITED", message:"咨询请求较多，请稍后再试" }, request_id:requestId }, { ...rateHeaders, "Retry-After":"60" });
+      return true;
+    }
+    try {
+      const result = await callAcquisitionChannel("web", {
+        tenant_id:tenantId,
+        message,
+        session_id:session.sessionId,
+        interests:Array.isArray(payload.interests) ? payload.interests.slice(0, 3) : []
+      }, { requestId, caller:"huamei_web_gateway", idempotencyKey:String(request.headers["idempotency-key"] || "").trim().slice(0, 160) });
+      const receipt = {
+        ...result,
+        session_id:session.sessionId,
+        session_token:session.sessionToken,
+        session_expires_at:session.expiresAt,
+        request_id:requestId
+      };
+      const runId = String(result.run_id || `run_${requestId}`);
+      const suppressed = result.delivery?.suppress_ai === true;
+      const segments = suppressed
+        ? []
+        : (Array.isArray(result.reply_segments) && result.reply_segments.length
+          ? result.reply_segments.map((item) => String(item || "")).filter(Boolean)
+          : [String(result.reply || "")].filter(Boolean));
+      const sinceSeq = Math.max(0, Number(payload.since_seq) || 0);
+      response.writeHead(200, {
+        ...commonHeaders(request, requestId),
+        ...rateHeaders,
+        "Content-Type":"text/event-stream; charset=utf-8",
+        "Cache-Control":"no-store",
+        "Connection":"keep-alive",
+        "X-Accel-Buffering":"no"
+      });
+      const writeEvent = (event, data) => {
+        if (response.writableEnded) return;
+        response.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+      writeEvent("open", { run_id:runId, request_id:requestId, total:segments.length, since_seq:sinceSeq, suppressed });
+      let lastSeq = sinceSeq;
+      for (let index = 0; index < segments.length; index += 1) {
+        const seq = index + 1;
+        if (seq <= sinceSeq) continue;
+        // 请求体读完后 request.destroyed 会变成 true，这里只判断响应侧是否还活着。
+        if (response.writableEnded || response.destroyed || request.aborted) break;
+        writeEvent("delta", { run_id:runId, seq, index, text:segments[index], total:segments.length });
+        lastSeq = seq;
+        // 片段之间留出间隔，客户才能看到“生成中”的过程；模型接入后可换成真实 token 流。
+        await new Promise((resolve) => setTimeout(resolve, PUBLIC_CHAT_STREAM_PACING_MS));
+      }
+      writeEvent("final", { ...receipt, stream:{ run_id:runId, last_seq:lastSeq, committed:true, suppressed } });
+      response.end();
+    } catch (error) {
+      const validation = ["VALIDATION_ERROR", "UNSUPPORTED_CHANNEL"].includes(error.code);
+      const conflict = error.code === "IDEMPOTENCY_PAYLOAD_MISMATCH";
+      const status = conflict ? 409 : validation ? 400 : 503;
+      const code = conflict || validation ? error.code : "ACQUISITION_SERVICE_UNAVAILABLE";
+      const text = conflict || validation ? error.message : "售前智能体服务暂时不可用，请稍后再试";
+      if (response.headersSent) {
+        if (!response.writableEnded) {
+          response.write(`event: error\ndata: ${JSON.stringify({ code, message:text, request_id:requestId })}\n\n`);
+          response.end();
+        }
+      } else {
+        sendError(request, response, requestId, status, code, text, error.details || [], rateHeaders);
+      }
     }
     return true;
   }

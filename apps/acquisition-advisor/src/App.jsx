@@ -317,6 +317,10 @@ function ChatMessage({ message, showLeadCapture, leadState, appointmentState, on
     <article className={`assistant-message source-${source} ${message.isContinuation ? "continuation" : ""} ${message.status === "handover_required" ? "handover" : ""}`}>
       {!message.isContinuation && <div className="assistant-label"><span className="assistant-avatar">{sourceAvatar}</span><span>{sourceLabel}</span></div>}
       <div className="assistant-copy">{message.content}</div>
+      {message.generating && <div className="stream-state" role="status">正在生成…</div>}
+      {message.aborted && !message.generating && (
+        <div className="stream-state aborted">已中止（这段内容未提交）</div>
+      )}
       {message.isFinalSegment && message.status === "handover_required" && <div className="handover-note">{medicalHandover ? "该问题需要人工顾问或医生进一步协助，小美不会在线判断或提供医疗处置建议。" : "该问题已停止自动推进，需要由相关人工团队继续处理。"}</div>}
       <PublicKnowledgeMedia media={message.media} onPreview={onPreview} />
       <KnowledgeSources citations={message.citations} onPreview={onPreview} />
@@ -643,41 +647,112 @@ export function App() {
 
   // 客户端消息标识随消息一起发给服务端，并用同一个标识做幂等键：重试不会
   // 增加重复对话、客户或预约记录；成功回执只更新原来那条消息。
-  const sendQuestion = async ({ question, clientMessageId, retryOfId }) => {
-    const messageKey = clientMessageId || globalThis.crypto?.randomUUID?.() || `web-msg-${Date.now()}`;
-    questionInFlightRef.current = true;
-    inputRef.current?.focus({ preventScroll:true });
-    setMessages((current) => retryOfId
-      ? current.map((item) => item.id === retryOfId ? { ...item, status:"sending", error:"" } : item)
-      : [...current, { id:`user-${Date.now()}`, clientMessageId:messageKey, role:"user", content:question, at:new Date().toISOString(), status:"sending", error:"" }]);
-    if (!retryOfId) setInput("");
-    setError("");
-    setIsLoading(true);
-    const controller = new AbortController();
-    activeRequestRef.current = controller;
-    const timer = window.setTimeout(() => controller.abort(), 45_000);
-    try {
-      const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-chat"), {
-        method:"POST",
-        credentials:"include",
-        headers:{ ...publicHeaders(), "Idempotency-Key":messageKey },
-        body:JSON.stringify({ message:question, client_message_id:messageKey, session_id:sessionIdRef.current, ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {}) }),
-        signal:controller.signal
-      });
-      const body = await response.json();
-      updateSessionCredential(body);
-      if (!response.ok) throw new Error(body?.error?.message || "咨询服务暂时不可用");
-      if (body.lead_receipt?.status === "accepted") setLeadState({status:"captured", error:"", result:body.lead_receipt, consentText:""});
-      const segments = Array.isArray(body.reply_segments)
-        ? body.reply_segments.map((item) => String(item || "").trim()).filter(Boolean)
-        : [];
-      const replySegments = segments.length ? segments : [String(body.reply || "").trim()].filter(Boolean);
-      const replyGroupId = body.run_id || `assistant-${Date.now()}`;
-      const replyAt = new Date().toISOString();
-      setMessages((current) => current.map((item) => item.id.startsWith("user-") && item.clientMessageId === messageKey
+  const parseSseChunk = (chunk = "") => {
+    let event = "message";
+    const dataLines = [];
+    for (const line of String(chunk).split("\n")) {
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+    }
+    let data = null;
+    if (dataLines.length) {
+      try { data = JSON.parse(dataLines.join("\n")); } catch { data = null; }
+    }
+    return { event, data };
+  };
+
+  // A-005：分片推送 + 最终回执。重复片段按序号丢弃，断线时带 since_seq 只补缺失片段。
+  const streamReply = async ({ question, messageKey, controller }) => {
+    const streamId = `stream-${messageKey}`;
+    let sinceSeq = 0;
+    let text = "";
+    const applyDelta = (delta) => {
+      if (!delta) return;
+      const seq = Number(delta.seq) || 0;
+      if (seq && seq <= sinceSeq) return;
+      sinceSeq = Math.max(sinceSeq, seq);
+      text += String(delta.text || "");
+      setMessages((current) => current.some((item) => item.id === streamId)
+        ? current.map((item) => item.id === streamId ? { ...item, content:text, seq:sinceSeq, generating:true } : item)
+        : [...current, {
+            id:streamId, groupId:streamId, role:"assistant", source:"ai",
+            content:text, seq:sinceSeq, generating:true,
+            citations:[], isFinalSegment:false, at:new Date().toISOString()
+          }]);
+    };
+    const open = (since) => fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-chat/stream"), {
+      method:"POST",
+      credentials:"include",
+      headers:{ ...publicHeaders(), "Content-Type":"application/json", "Idempotency-Key":messageKey },
+      body:JSON.stringify({
+        message:question,
+        client_message_id:messageKey,
+        since_seq:since,
+        session_id:sessionIdRef.current,
+        ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {})
+      }),
+      signal:controller.signal
+    });
+    let receipt = null;
+    for (let attempt = 0; attempt < 2 && !receipt; attempt += 1) {
+      const response = await open(sinceSeq);
+      if (!response.ok || !response.body) {
+        const detail = await response.json().catch(() => null);
+        // 流式通道不可用时回落到普通接口，客户照样能拿到回执。
+        if (attempt === 0 && sinceSeq === 0) return requestReplyReceipt({ question, messageKey, controller });
+        throw new Error(detail?.error?.message || "咨询服务暂时不可用");
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream:true });
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary >= 0) {
+          const { event, data } = parseSseChunk(buffer.slice(0, boundary));
+          buffer = buffer.slice(boundary + 2);
+          boundary = buffer.indexOf("\n\n");
+          if (event === "delta") applyDelta(data);
+          else if (event === "final") receipt = data;
+          else if (event === "error") throw new Error(data?.message || "咨询服务暂时不可用");
+        }
+      }
+    }
+    if (!receipt) throw new Error("本次咨询响应中断，请稍后重试");
+    return receipt;
+  };
+
+  const requestReplyReceipt = async ({ question, messageKey, controller }) => {
+    const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-chat"), {
+      method:"POST",
+      credentials:"include",
+      headers:{ ...publicHeaders(), "Idempotency-Key":messageKey },
+      body:JSON.stringify({ message:question, client_message_id:messageKey, session_id:sessionIdRef.current, ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {}) }),
+      signal:controller.signal
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body?.error?.message || "咨询服务暂时不可用");
+    return body;
+  };
+
+  // 最终回执为准：未提交的流式片段在这里被丢弃，替换成服务端确认过的分段答复。
+  const applyReplyReceipt = (body, messageKey) => {
+    updateSessionCredential(body);
+    if (body.lead_receipt?.status === "accepted") setLeadState({ status:"captured", error:"", result:body.lead_receipt, consentText:"" });
+    const segments = Array.isArray(body.reply_segments)
+      ? body.reply_segments.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+    const replySegments = segments.length ? segments : [String(body.reply || "").trim()].filter(Boolean);
+    const replyGroupId = body.run_id || `assistant-${Date.now()}`;
+    const replyAt = new Date().toISOString();
+    setMessages((current) => current
+      .filter((item) => item.id !== `stream-${messageKey}`)
+      .map((item) => item.id.startsWith("user-") && item.clientMessageId === messageKey
         ? { ...item, status:"confirmed", runId:replyGroupId, confirmedAt:replyAt }
-        : item));
-      setMessages((current) => [...current, ...replySegments.map((content, index) => {
+        : item)
+      .concat(replySegments.map((content, index) => {
         const isFinalSegment = index === replySegments.length - 1;
         return {
           id:`${replyGroupId}-${index + 1}`,
@@ -696,7 +771,32 @@ export function App() {
           orchestration:isFinalSegment ? body.orchestration : null,
           at:replyAt
         };
-      })]);
+      })));
+  };
+
+  const sendQuestion = async ({ question, clientMessageId, retryOfId }) => {
+    const messageKey = clientMessageId || globalThis.crypto?.randomUUID?.() || `web-msg-${Date.now()}`;
+    questionInFlightRef.current = true;
+    inputRef.current?.focus({ preventScroll:true });
+    setMessages((current) => retryOfId
+      ? current.map((item) => item.id === retryOfId ? { ...item, status:"sending", error:"" } : item)
+      : [...current, { id:`user-${Date.now()}`, clientMessageId:messageKey, role:"user", content:question, at:new Date().toISOString(), status:"sending", error:"" }]);
+    if (!retryOfId) setInput("");
+    setError("");
+    setIsLoading(true);
+    const controller = new AbortController();
+    activeRequestRef.current = controller;
+    const timer = window.setTimeout(() => controller.abort(), 45_000);
+    try {
+      let receipt = null;
+      try {
+        receipt = await streamReply({ question, messageKey, controller });
+      } catch (streamError) {
+        if (streamError.name === "AbortError") throw streamError;
+        // 流式通道不可用时回落到普通接口，保证客户仍能拿到回执。
+        receipt = await requestReplyReceipt({ question, messageKey, controller });
+      }
+      applyReplyReceipt(receipt, messageKey);
     } catch (requestError) {
       const stopped = stoppedByUserRef.current;
       const timedOut = requestError.name === "AbortError" && !stopped;
@@ -713,6 +813,10 @@ export function App() {
         setError(failure);
         setMessages((current) => [...current, { id:`error-${Date.now()}`, role:"assistant", source:"system", content:`抱歉，${failure}`, status:"error", citations:[], isFinalSegment:true, at:new Date().toISOString() }]);
       }
+      // 已经显示出来的流式片段按“中止”处理：不谎称已完成，也不静默丢失。
+      setMessages((current) => current
+        .map((item) => item.id === `stream-${messageKey}` ? { ...item, generating:false, aborted:true, abortReason:stopped ? "stopped" : "failed" } : item)
+        .filter((item) => !(item.id === `stream-${messageKey}` && !String(item.content || "").trim())));
     } finally {
       window.clearTimeout(timer);
       if (activeRequestRef.current === controller) activeRequestRef.current = null;
