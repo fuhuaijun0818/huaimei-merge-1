@@ -135,6 +135,11 @@ export async function refreshKnowledgeReleasePolicy(tenantIds) {
 }
 
 export async function ensureKnowledgeReleasePolicyFresh(tenantId, options = {}) {
+  // 本地 JSON 发布存储只在进程启动时读盘：跨进程的发布、撤回与过期必须每轮重读，
+  // 否则运行时会一直用启动时的旧发布范围（实测表现为撤回后仍引用旧证据）。
+  if (!postgresPersistenceEnabled()) {
+    try { store.reload(); } catch {}
+  }
   if (!postgresPersistenceEnabled()) return getKnowledgeAdmissionStatus(tenantId);
   const tenant = normalizeTenantId(tenantId);
   registerKnowledgeReleaseTenants(tenant);
