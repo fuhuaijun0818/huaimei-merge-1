@@ -452,16 +452,49 @@ const detectProject = (message, context) => {
   return interestName && PROJECT_KNOWLEDGE[interestName] ? [interestName, PROJECT_KNOWLEDGE[interestName]] : null;
 };
 
-const citation = (title, item) => ({
+// 项目解释类回答的引用来自内置策划表（只有 knowledge_id/summary，没有文件路径），
+// 客户看到的“参考资料”因此无法定位到原始资料。这里按项目名回查公开知识子集里
+// 项目介绍目录下的资料记录，补上可追溯的来源路径；查不到时保持原样。
+const projectEvidenceSourceCache = new Map();
+const projectEvidenceSource = (project) => {
+  const key = String(project || "").trim();
+  if (!key) return null;
+  if (projectEvidenceSourceCache.has(key)) return projectEvidenceSourceCache.get(key);
+  let resolved = null;
+  try {
+    const candidates = retrieveHuameiKnowledge(key, {
+      audience: "public",
+      pathPrefixes: ["项目介绍/"],
+      limit: 5,
+      minimumScore: 8
+    }).map((hit) => hit?.item || hit).filter((record) => record && String(record.source_relative_path || "").startsWith("项目介绍/"));
+    const fileRecord = candidates.find((record) => ["image_ocr", "pdf_text"].includes(record.record_type));
+    const picked = fileRecord || candidates.find((record) => record.record_type === "directory_overview") || candidates[0] || null;
+    resolved = picked
+      ? { source_relative_path:String(picked.source_relative_path), source_record_id:picked.record_id || picked.id || null }
+      : null;
+  } catch {
+    resolved = null;
+  }
+  projectEvidenceSourceCache.set(key, resolved);
+  return resolved;
+};
+
+const citation = (title, item) => {
+  const fallbackEvidence = item.source_relative_path ? null : projectEvidenceSource(title || item.project);
+  return {
   knowledge_id: item.knowledge_id || LEGACY_KNOWLEDGE_IDS[item.project] || item.id,
   source_record_id: item.id || null,
   title: `${title}｜项目介绍`,
   version: item.version,
   usage: "consumer_safe_general_information",
   review_status: item.status || "已发布",
-  ...(item.source_relative_path ? { source_relative_path:item.source_relative_path } : {}),
+  ...(item.source_relative_path
+    ? { source_relative_path:item.source_relative_path }
+    : fallbackEvidence ? { source_relative_path:fallbackEvidence.source_relative_path, evidence_source_record_id:fallbackEvidence.source_record_id } : {}),
   ...(item.requires_verification === true ? { requires_verification:true } : {})
-});
+  };
+};
 
 const handoverMessage = (risk) => {
   const categories = new Set(risk.matches.map((item) => item.category));
