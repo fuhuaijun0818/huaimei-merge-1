@@ -413,6 +413,8 @@ const normalizeContext = (context = {}) => ({
   conversation_summary:maskSensitive(context.conversation_summary || "").slice(0, 500),
   session_id:String(context.session_id || "").slice(0, 128),
   turn_index:Math.max(1, Number(context.turn_index) || 1),
+  // 连续“没听懂”的轮数，用于连续两次仍无法理解时给出人工入口。
+  clarification_streak:Math.max(0, Number(context.clarification_streak) || 0),
   active_critical_risk:context.active_critical_risk && typeof context.active_critical_risk === "object"
     ? { category:String(context.active_critical_risk.category || "").slice(0, 80), rule_id:String(context.active_critical_risk.rule_id || "").slice(0, 80) }
     : null
@@ -805,6 +807,27 @@ const attachGraphRagEvidence = (localResponse, graphResult, context, query = "")
   return localResponse;
 };
 
+// A-011 AC4：连续两次仍无法理解时，承认不确定并给出人工入口，而不是再问一遍。
+const CLARIFICATION_ESCALATION_MESSAGE = "抱歉，我可能没有理解您的意思。您可以换个说法，比如想了解的项目，或想改善的部位；也可以回复“转人工”，我为您转接人工顾问继续沟通。";
+const clarificationEscalationResult = (input, context, intent, conversationState) => ({
+  status:"completed",
+  message:CLARIFICATION_ESCALATION_MESSAGE,
+  structured_data:{
+    intent:"need_clarification",
+    original_intent:intent || "",
+    clarification_streak:Math.max(0, Number(context?.clarification_streak) || 0),
+    supported_projects:[...new Set(searchableProjectKnowledge(context?.tenant_id).map((item) => item.project))],
+    conversation_state:conversationState,
+    next_questions:[CLARIFICATION_ESCALATION_MESSAGE]
+  },
+  recommended_actions:[
+    { type:"request_human_service_verification" },
+    { type:"collect_need", fields:["concern", "body_part", "preferred_project"] }
+  ],
+  handover:{ required:false },
+  citations:[]
+});
+
 function acquisitionAgent(input, context, intentAnalysis) {
   const intent = intentAnalysis?.primary_intent || "need_clarification";
   const entities = intentAnalysis?.entities || { projects:[], doctors:[], concerns:[] };
@@ -1039,6 +1062,8 @@ function acquisitionAgent(input, context, intentAnalysis) {
   }
 
   if (intentAnalysis?.clarification_required) {
+    // 连续两次都没听懂：不再重复同一个澄清问题，改为承认不确定并给出人工入口。
+    if (Number(context.clarification_streak) >= 1) return clarificationEscalationResult(input, context, intent, baseConversationState);
     const message = intent === "doctor_discovery_by_project"
       ? "我先按项目方向帮您缩小医生范围。您主要想咨询眼部、鼻部、胸部，还是面部年轻化？"
       : entities.concerns?.length
@@ -1346,6 +1371,7 @@ function acquisitionAgent(input, context, intentAnalysis) {
   };
 
   if (!hits.length && huameiResponse) return resultFromKnowledgeResponse({ ...huameiResponse, intent });
+  if (!hits.length && Number(context.clarification_streak) >= 1) return clarificationEscalationResult(input, context, intent, baseConversationState);
   if (!hits.length) return {
     status: "completed",
     message: entities.concerns?.length
