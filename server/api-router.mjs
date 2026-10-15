@@ -42,6 +42,7 @@ import {
 import { getPostgresClient } from "./platform/postgres.mjs";
 import { createProductionReadiness } from "./platform/production-readiness.mjs";
 import { appendAuditEvent } from "./persistence/postgres-helpers.mjs";
+import { readLocalConversationRecord } from "./local-conversation-store.mjs";
 import {
   authorizeManagementPrincipal,
   createManagementAuthorizer,
@@ -1354,6 +1355,45 @@ export async function handleApiRequest(request, response) {
       const conflict = error.code === "IDEMPOTENCY_PAYLOAD_MISMATCH";
       sendError(request, response, requestId, conflict ? 409 : validation ? 400 : 503, conflict || validation ? error.code : "ACQUISITION_SERVICE_UNAVAILABLE", conflict || validation ? error.message : "售前智能体服务暂时不可用，请稍后再试", error.details || [], rateHeaders);
     }
+    return true;
+  }
+
+  // 客户刷新或重新打开页面时，带着自己的会话凭证回读服务端确认过的消息顺序。
+  if (request.method === "POST" && url.pathname === "/api/public/acquisition-conversation") {
+    let payload;
+    try {
+      payload = await readJsonBody(request);
+    } catch (error) {
+      const tooLarge = error.code === "BODY_TOO_LARGE";
+      sendError(request, response, requestId, tooLarge ? 413 : 400, tooLarge ? "BODY_TOO_LARGE" : "INVALID_JSON", tooLarge ? "请求体不能超过64KB" : "请求体不是有效JSON");
+      return true;
+    }
+    let tenantId;
+    let session;
+    try {
+      tenantId = resolvePublicTenant(request, payload);
+      session = resolvePublicSession(request, payload, tenantId);
+    } catch (error) {
+      sendError(request, response, requestId, error.status || 400, error.code || "INVALID_SESSION", error.message || "会话凭证校验失败", error.details || []);
+      return true;
+    }
+    const record = readLocalConversationRecord(tenantId, "web", session.sessionId);
+    const limit = Math.min(Math.max(Number(payload?.limit) || 100, 1), 200);
+    const messages = (record?.messages || []).slice(-limit).map((item) => ({
+      id:item.id,
+      role:item.from === "customer" ? "customer" : item.from,
+      text:item.text,
+      at:item.at
+    }));
+    sendJson(request, response, requestId, 200, {
+      session_id:session.sessionId,
+      session_token:session.sessionToken,
+      session_expires_at:session.expiresAt,
+      conversation_id:session.sessionId,
+      projects:record?.projects || [],
+      messages,
+      request_id:requestId
+    }, { "Set-Cookie":session.setCookie, "Cache-Control":"no-store" });
     return true;
   }
 
