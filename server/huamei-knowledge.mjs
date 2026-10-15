@@ -283,6 +283,11 @@ export function computeApprovedKnowledgeRecordListChecksum(approvedRecordIds = [
   return approvedRecordListChecksumForState(options.state || loadHuameiKnowledge(), approvedRecordIds);
 }
 
+// 发布侧需要为“某个批准清单”算出可绑定的校验和：撤回或收窄发布范围时校验和
+// 随之变化，这里把同一套计算对外开放，避免只能绑定全量清单。
+export const computeApprovedRecordListChecksum = (approvedRecordIds = [], options = {}) =>
+  approvedRecordListChecksumForState(options.state || loadHuameiKnowledge(), approvedRecordIds);
+
 export function getHuameiKnowledgeBindingStatus(tenantId, options = {}) {
   const state = options.state || loadHuameiKnowledge();
   const tenant = normalizeTenantId(tenantId);

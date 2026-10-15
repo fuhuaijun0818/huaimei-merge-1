@@ -156,6 +156,26 @@ export function getActiveKnowledgeRelease(tenantId, packageVersion = "") {
     .sort((a, b) => String(b.activated_at).localeCompare(String(a.activated_at)))[0] || null;
 }
 
+// 撤回/失效证据集合：先前生效发布里批准、但当前生效发布不再包含的记录；
+// 当前没有生效发布（例如发布包已过期）时，此前批准过的记录全部视为失效。
+// 交付前用它做最终重检，避免继续引用已撤回或过期的内容。
+export function withdrawnKnowledgeRecordIds(tenantId, packageVersion = "") {
+  const tenant = normalizeTenantId(tenantId);
+  const releases = (postgresPersistenceEnabled() ? [] : store.load().releases || [])
+    .filter((item) => item.tenant_id === tenant)
+    .sort((left, right) => String(left.activated_at || "").localeCompare(String(right.activated_at || "")));
+  if (!releases.length) return new Set();
+  const current = getActiveKnowledgeRelease(tenant, packageVersion);
+  const currentIds = new Set(current?.approved_record_ids || []);
+  const withdrawn = new Set(current?.withdrawn_record_ids || []);
+  for (const release of releases) {
+    for (const id of release.approved_record_ids || []) {
+      if (!currentIds.has(id)) withdrawn.add(id);
+    }
+  }
+  return withdrawn;
+}
+
 export function approvedKnowledgeRecordIds(tenantId, packageVersion = "") {
   const release = getActiveKnowledgeRelease(tenantId, packageVersion);
   return new Set(release?.approved_record_ids || []);
