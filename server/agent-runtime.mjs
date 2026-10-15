@@ -1287,6 +1287,16 @@ function acquisitionAgent(input, context, intentAnalysis) {
   const huameiResponse = buildPublicKnowledgeResponse(responseEvidenceQuery, huameiHits);
   if (["directory_discovery", "service_information", "price_verification", "policy_verification"].includes(intent) && huameiResponse) {
     huameiResponse.intent = intent;
+    // 一条消息里同时问了项目知识和价格/政策时，先答知识再答价格；不能因为
+    // 路由到价格意图就丢掉同一轮里的项目问题。
+    const alsoAsksExplanation = /(?:原理|作用|是什么|怎么做|介绍|了解一下|有啥区别|区别)/.test(input.message);
+    if (alsoAsksExplanation && hits.length && !huameiResponse.message.startsWith(customerProjectSummary(hits[0].item).slice(0, 6))) {
+      const explanation = customerProjectSummary(hits[0].item);
+      if (explanation) {
+        huameiResponse.message = `${explanation} ${huameiResponse.message}`;
+        huameiResponse.evidence = [...(huameiResponse.evidence || []), citation(hits[0].item.project, hits[0].item)].filter(Boolean);
+      }
+    }
     if (intent === "service_information" && !/(?:地址|停车|营业|电话|院区)/.test(huameiResponse.message)) {
       huameiResponse.message = serviceUnknown;
       huameiResponse.next_questions = serviceSubject ? [] : [serviceUnknown];

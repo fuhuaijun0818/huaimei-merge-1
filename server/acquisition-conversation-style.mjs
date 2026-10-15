@@ -250,6 +250,11 @@ export function evaluateAcquisitionConversationCopy(message = "", options = {}) 
 export function leadCaptureDecision({ intent = "", status = "completed", turnCount = 0, knownSlots = {}, message = "", recommendedActions = [] } = {}) {
   if (status === "blocked") return { should_prompt:false, reason:"blocked_response" };
   if (status === "handover_required") return { should_prompt:true, reason:"handover_required" };
+  // “不要联系我”“先不联系”是拒绝语义，不能因为包含“联系我”就当成主动要人工。
+  if (/(?:不要|不用|别|不需要|先不|暂时不|暂不)(?:再)?(?:联系|打扰|回访|跟进)/.test(message)
+    || /(?:没空|不着急|以后再说|再说吧|先不考虑)/.test(message)) {
+    return { should_prompt:false, reason:"contact_deferred" };
+  }
   if (/(?:转人工|找人工|真人顾问|人工客服|联系我)/.test(message)) return { should_prompt:true, reason:"explicit_human_request" };
   if (APPOINTMENT_INTENTS.has(intent) || /(?:帮我预约|想预约|约面诊|安排到院)/.test(message)) return { should_prompt:true, reason:"appointment_intent" };
   if (/(?:核验|确认|查)(?:当前)?(?:价格|活动|排班|出诊|号源)/.test(message)) return { should_prompt:true, reason:"explicit_verification_request" };
