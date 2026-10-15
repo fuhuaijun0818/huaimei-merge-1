@@ -29,6 +29,21 @@ try{
  const first=await chat('我想了解热玛吉');assert(first.session_id,'会话ID');checks.push('server session ID');const second=await chat('一般原理',{session_id:first.session_id,session_token:first.session_token});assert(/热玛吉/.test(second.reply||JSON.stringify(second.reply_segments)),'追问应保持项目');checks.push('project followup context');
  r=await get('/api/public/acquisition-lead',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({mobile:'13800000001',name:'模拟HTTP客户',service_consent:true,session_id:first.session_id,session_token:first.session_token})});test('format-only contact save',r.status,200);const lead=await r.json();assert(!JSON.stringify(lead).includes('13800000001'),'公网回执应脱敏');checks.push('public receipt redacted');
  r=await get('/api/local/acquisition-customers',{headers:{Cookie:cookie}});test('management conversation query',r.status,200);const data=await r.json();assert(JSON.stringify(data).includes(first.session_id),'后台应存在同一会话ID');checks.push('same conversation frontend to backend');
+
+ // A 模块：刷新后回读会话、重试幂等与凭证边界。
+ const transcriptRequest=()=>get('/api/public/acquisition-conversation',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({session_id:first.session_id,session_token:first.session_token})});
+ const transcript=await transcriptRequest();test('conversation transcript restore',transcript.status,200);
+ const transcriptBody=await transcript.json();
+ assert.ok(transcriptBody.messages.length>=2,'会话回读应包含客户与AI消息');assert.equal(transcriptBody.messages[0].role,'customer');checks.push('transcript message order');
+ const retryKey='retry-client-message-0001';
+ const sendOnce=()=>get('/api/public/acquisition-chat',{method:'POST',headers:{Origin:base,'Content-Type':'application/json','Idempotency-Key':retryKey},body:JSON.stringify({message:'重试幂等检查',client_message_id:retryKey,session_id:first.session_id,session_token:first.session_token})});
+ const firstSend=await sendOnce();const firstSendBody=await firstSend.json();test('client message first send',firstSend.status,200);
+ const retrySend=await sendOnce();const retrySendBody=await retrySend.json();test('client message retry',retrySend.status,200);
+ assert.equal(retrySendBody.run_id,firstSendBody.run_id,'同一幂等键重试应返回同一回执');checks.push('client message retry is idempotent');
+ const afterRetry=await (await transcriptRequest()).json();
+ assert.equal(afterRetry.messages.filter((item)=>item.text==='重试幂等检查').length,1,'重试不得产生重复对话记录');checks.push('retry does not duplicate conversation');
+ const invalidTranscript=await get('/api/public/acquisition-conversation',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({session_id:first.session_id,session_token:'invalid-token'})});
+ assert.ok([400,401,403].includes(invalidTranscript.status),'无效凭证不得回读会话');checks.push('transcript rejects invalid credential');
  test('logout',(await get('/auth/logout',{method:'POST',headers:{Cookie:cookie,Origin:base}})).status,200);test('old session rejected',(await get('/auth/session',{headers:{Cookie:cookie}})).status,401);
  mkdirSync('.team-dev',{recursive:true});const report={scope:'isolated real Node application HTTP; LLM/member disabled; local_json; not browser or PostgreSQL acceptance',passed:true,count:checks.length,checks};writeFileSync('.team-dev/application-http-report.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }finally{

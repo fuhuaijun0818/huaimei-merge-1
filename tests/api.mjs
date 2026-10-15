@@ -3,6 +3,7 @@ process.env.HUAMEI_MEMBER_CHECK_ENABLED = "false";
 
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -147,7 +148,13 @@ try {
   assert.equal(publicChatBody.lead_capture.should_prompt, false, "首轮知识问答不应立即催促留资");
   assert.equal(publicChatBody.lead_capture.reason, "continue_ai_conversation");
   assert.ok(publicChatBody.profile_signals.projects.includes("光子嫩肤"));
-  assert.equal(publicChatBody.guardrails.knowledge_version, "v1");
+  // 公开知识子集换版后版本号来自内容包 manifest；用 manifest 独立复核，
+  // 避免把历史包名写死在断言里。
+  const knowledgeManifest = JSON.parse(readFileSync(
+    `${process.env.HUAMEI_KNOWLEDGE_ROOT || "knowledge/huamei-v1"}/manifest.json`,
+    "utf8"
+  ));
+  assert.equal(publicChatBody.guardrails.knowledge_version, knowledgeManifest.version);
   assert.equal(publicChatBody.profile_signals.turn_count, 1);
   const publicChatSession = sessionCredentialFrom(publicChat, publicChatBody);
   assert.ok(publicChatSession.sessionId);
