@@ -105,7 +105,7 @@ function KnowledgeSources({ citations = [], onPreview }) {
   return (
     <div className="knowledge-sources" aria-label="参考资料">
       <span>参考资料</span>
-      {citations.slice(0, 3).map((citation) => {
+      {citations.slice(0, 6).map((citation) => {
         const preview = citation?.preview?.url ? { ...citation.preview, url:publicMediaUrl(citation.preview.url) } : null;
         const label = String(citation.title || "项目资料").replace(/[｜|]\s*项目知识$/, "");
         const className = `source-chip ${citation.requires_verification ? "needs-verification" : ""}`;
@@ -117,6 +117,7 @@ function KnowledgeSources({ citations = [], onPreview }) {
           <span className={className} key={`${citation.knowledge_id}-${citation.source_record_id || "source"}`} title={title}>{content}</span>
         );
       })}
+      {citations.length > 6 && <span className="source-more">另有 {citations.length - 6} 条资料</span>}
     </div>
   );
 }

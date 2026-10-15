@@ -325,3 +325,4 @@ button, input, textarea { font: inherit; }
 .stream-state { margin-top: 6px; color: #9a888a; font-size: 11px; }
 .stream-state.aborted { color: #a3908f; }
 .assistant-message .stream-state::before { content: "· "; }
+.knowledge-sources .source-more { color:#998c8d; font-size:11px; align-self:center; }

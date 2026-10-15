@@ -1352,7 +1352,8 @@ function acquisitionAgent(input, context, intentAnalysis) {
       const explanation = customerProjectSummary(hits[0].item);
       if (explanation) {
         huameiResponse.message = `${explanation} ${huameiResponse.message}`;
-        huameiResponse.evidence = [...(huameiResponse.evidence || []), citation(hits[0].item.project, hits[0].item)].filter(Boolean);
+        // 项目解释类引用放在最前：它直接支撑本轮的知识点，价格/政策引用排在其后。
+        huameiResponse.evidence = [citation(hits[0].item.project, hits[0].item), ...(huameiResponse.evidence || [])].filter(Boolean);
       }
     }
     if (intent === "service_information" && !/(?:地址|停车|营业|电话|院区)/.test(huameiResponse.message)) {
