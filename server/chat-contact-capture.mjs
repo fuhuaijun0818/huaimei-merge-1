@@ -20,6 +20,21 @@ export function chatContactIntent(text = '') {
   return { mobile, name, remaining_message:remainder, valid:/^1[3-9]\d{9}$/.test(mobile) };
 }
 
+// A-019 AC4：从留资消息里识别联系时间偏好（只做承接，不宣称"已安排"）。
+export function chatContactPreference(text = '') {
+  const value = String(text).normalize('NFKC');
+  if (!value || /不要|别联系|不用联系|无需联系/.test(value)) return null;
+  const day = /周末|周六|周日|双休/.test(value) ? '周末'
+    : /工作日|上班时间|工作时间/.test(value) ? '工作日' : '';
+  const slot = /晚上|晚间|夜里|下班后/.test(value) ? '晚间'
+    : /下午/.test(value) ? '下午'
+    : /上午|早上|一早/.test(value) ? '上午'
+    : /白天/.test(value) ? '白天' : '';
+  if (!day && !slot) return null;
+  const evidence = value.match(/(?:周末|周六|周日|双休|工作日|上班时间|工作时间|晚上|晚间|夜里|下班后|上午|早上|下午|白天)[^。；;，,]{0,8}/)?.[0]?.trim() || `${day}${slot}`;
+  return { label: `${day}${slot}` || day, evidence };
+}
+
 export async function captureChatContact(envelope, saveLead) {
   if (envelope.channel !== 'web') return null;
   const intent = chatContactIntent(envelope.message.text);
@@ -30,9 +45,12 @@ export async function captureChatContact(envelope, saveLead) {
       const saved = await saveLead({ tenant_id:envelope.tenant_id, session_id:envelope.conversation_id,
         mobile:intent.mobile, name:intent.name, service_consent:true, interests:envelope.interests || [],
         messages:[{role:'user', content:envelope.message.text, at:envelope.message.timestamp}] });
+      const preference = chatContactPreference(envelope.message.text);
       receipt = { status:'accepted', masked_mobile:saved.lead.customer.mobile,
         identity:{phone_verification_status:'pending_manual'},
-        message:`收到，${intent.name ? '姓名和' : ''}手机号已保存。后续顾问联系时会人工核对，您也可以继续在这里咨询。` };
+        message:`收到，${intent.name ? '姓名和' : ''}手机号已保存。后续顾问联系时会人工核对，您也可以继续在这里咨询。`
+          + (preference ? `已记录您希望${preference.label}联系的偏好，回电安排仍需顾问人工确认。` : ''),
+        ...(preference ? { contact_preference:{ label:preference.label, evidence:preference.evidence } } : {}) };
     } catch {
       receipt = { status:'failed', message:'手机号暂未保存成功，请稍后重新发送。您可以继续在线咨询。' };
     }
