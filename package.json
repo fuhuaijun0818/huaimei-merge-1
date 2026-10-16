@@ -103,6 +103,7 @@
     "team:test:mock": "node tests/onboarding/mock-contract.mjs",
     "team:seed:postgres": "node devkit/seed-postgres.mjs",
     "team:test:http": "node tests/onboarding/application-http.mjs",
+    "team:test:journey": "node tests/onboarding/cross-module-journey.mjs",
     "team:doctor": "node devkit/doctor.mjs",
     "team:test:seed-guards": "node tests/onboarding/seed-guards.mjs",
     "team:bootstrap": "node devkit/bootstrap.mjs"
