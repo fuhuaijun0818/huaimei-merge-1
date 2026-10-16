@@ -1,0 +1,93 @@
+{
+  "generated_at": "2026-10-16T09:22:57.409Z",
+  "base": "http://127.0.0.1:62304",
+  "story": "b030",
+  "passed": 4,
+  "failed": 0,
+  "results": [
+    {
+      "id": "B-030-AC1",
+      "name": "每条旅程关联 story_id、会话 ID 和脱敏回执",
+      "status": "pass",
+      "detail": {
+        "会话ID": "ps_ZQ16cIfCOhxvsaP_5e3Rqa0Ex194diz2",
+        "消息数": 2,
+        "脱敏": true
+      }
+    },
+    {
+      "id": "B-030-AC2",
+      "name": "验证未读、顺序、焦点、人工送达及无 AI 抢答",
+      "status": "pass",
+      "detail": {
+        "接管任务": "ho_40132f79-",
+        "会话": "ps_ZQ16cIfCOhx",
+        "领取状态": "active",
+        "AI暂停": true,
+        "人工回复已送达": true,
+        "人工消息数": 1,
+        "顺序首条": "customer",
+        "无AI抢答": {
+          "接管前AI": 1,
+          "接管后AI": 1
+        },
+        "回复回执": [
+          "conversation",
+          "customer",
+          "message",
+          "delivery",
+          "replayed"
+        ],
+        "幂等重放": true,
+        "浏览器": {
+          "未读红点": 149,
+          "消息数": 6,
+          "输入框聚焦": "message-input",
+          "发送按钮禁用": false
+        }
+      }
+    },
+    {
+      "id": "B-030-AC3",
+      "name": "失败结果可定位到入站、保存、投递或页面同步环节",
+      "status": "pass",
+      "detail": [
+        {
+          "环节": "入站-非法JSON",
+          "状态": 400,
+          "错误码": "INVALID_JSON"
+        },
+        {
+          "环节": "入站-超限",
+          "状态": 413,
+          "错误码": "BODY_TOO_LARGE"
+        },
+        {
+          "环节": "凭证-无效token",
+          "状态": 401,
+          "错误码": "INVALID_SESSION_TOKEN"
+        },
+        {
+          "环节": "保存-手机号",
+          "状态": 400,
+          "错误码": "INVALID_MOBILE"
+        },
+        {
+          "环节": "入站-未知会话",
+          "状态": 200,
+          "说明": "按新会话解析（返回空记录，不泄露既有数据）",
+          "消息数": 0
+        }
+      ]
+    },
+    {
+      "id": "B-030-AC4",
+      "name": "实际浏览器操作与接口测试分别记录，不能互相冒充",
+      "status": "pass",
+      "detail": {
+        "浏览器证据": 3,
+        "接口记录文件": "b030-interface-log.json"
+      }
+    }
+  ]
+}

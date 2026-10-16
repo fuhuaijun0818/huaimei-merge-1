@@ -1,0 +1,70 @@
+{
+  "generated_at": "2026-10-16T08:56:49.957Z",
+  "base": "http://127.0.0.1:54233",
+  "story": "b006",
+  "passed": 4,
+  "failed": 0,
+  "results": [
+    {
+      "id": "B-006-AC1",
+      "name": "SSE只通知当前授权范围内变更",
+      "status": "pass",
+      "detail": {
+        "事件流": "/api/local/conversation-events",
+        "打开次数": 1,
+        "推送事件": [
+          {
+            "type": "conversations",
+            "data": "changed"
+          }
+        ],
+        "本地动作后事件数": 2
+      }
+    },
+    {
+      "id": "B-006-AC2",
+      "name": "重连通过持久化游标补齐缺失消息并去重",
+      "status": "pass",
+      "detail": {
+        "断网前消息数": 6,
+        "断网中消息数": 6,
+        "补齐后消息数": 6,
+        "唯一ID": 6,
+        "增量请求": "acquisition-customers?after_cursor=eyJ2IjoxLCJjIjp7Imh1YW1laS1zaGFuZ2h"
+      }
+    },
+    {
+      "id": "B-006-AC3",
+      "name": "推送不可用时保留有退避的轮询兜底",
+      "status": "pass",
+      "detail": {
+        "推送被拦断": 1,
+        "轮询补齐耗时秒": 2,
+        "近两次同步请求": [
+          {
+            "url": "acquisition-customers",
+            "at": 143
+          },
+          {
+            "url": "acquisition-customers?after_cursor=eyJ2IjoxLCJjIjp7Imh1YW1laS1zaGFuZ2hhaTpWLUxJVkUtNWRmZWY1YTA2MDZiNjRhNDQ1N2EiOiJwc183OXZXUUFocllDQlM0cFM4X2pTOWk5X2ZQTnBJVVozaiMyNCNLZmRFd2prT1g0Q1BsWFpOaVd0YSIsImh1YW1laS1zaGFuZ2hhaTpWLUxJVkUtODU2M2U5Y2RlMTMxNzA0NzYyNjAiOiJwc19oUDV4TWNHU2JySTZmYUhxMjNsQkZGX3RKVEtnRGpEcyM2IzgxNVdhZFN1djM2QkU3aFRRZ1R6IiwiaHVhbWVpLXNoYW5naGFpOlYtTElWRS02OThhNDQ1MzZkOTFkZjVmYTM4YiI6InBzX2hjSE1OSnh3ZnQzcnRseHptU0p1QmtKOVR1OHFGZ0V4IzQjb2U3eEZRVWp1MF9VSVlKWDRsZHYiLCJodWFtZWktc2hhbmdoYWk6Vi1MSVZFLWI0MDllZDAzNGJkYTYxZDQ4ZjI5IjoicHNfNE04RkI5cXFCNHVUMVlpNkRHb1pjNlRmaEliT0xVbVQjNCN0XzN0V0preUVQQ3NKU0N5eTdJZiIsImh1YW1laS1zaGFuZ2hhaTpWLUxJVkUtNDQwNjE0ZDliNmZiYWVkNDlmMzciOiJwc19BYmhia0tIWXp6TGlIeEhYbjNRQ1ZZN1dHMmFDTWIwVCM0I3lxd0ZOVUdwWEFnWHp2d0ZKR2I5IiwiaHVhbWVpLXNoYW5naGFpOlYtTElWRS1lOTA0YjcyYjE4ZTgyZjczNGFjMyI6InBzX1dPdHNYRjNGQzkxbDBlc05tM00yVHdjUGY0RTNCV0IzIzIwIzZxNkZQWnA5OENIWHA4OVA3dXdDIiwiaHVhbWVpLXNoYW5naGFpOlYtTElWRS0yYjlkOTJlNzllMmI0MzJlMGE4MiI6InBzX1RXMG56ZHdSLU5zQXcxdDVxZkY2UXg3Zm44WWpmVWI0IzYjR1ZtVVVCclF1ZzJlVHN5bF9VcWwiLCJodWFtZWktc2hhbmdoYWk6Vi1MSVZFLTQzZmQ2NzFkOGE3OWUyMGE1MjY0IjoicHNfcFRLaVk0S1BLcTVvX2xDWjJBekswRFBBU0VCT1lKV3EjMjQjNWRRaldDd1lkUDNrRUdYQ1oxLTMiLCJodWFtZWktc2hhbmdoYWk6Vi1MSVZFLThiMTI5MWI1NmUwZDhhYWM0NDJiIjoicHNfWFhFd2taY1k0U1k4R2l4ZWtHVUh6TGREZE9BV1pkZjgjNiNxVlZZeVFydGNuRzFzYmxUbmdGMiIsImh1YW1laS1zaGFuZ2hhaTpWLUxJVkUtNmMzM2Q4YmJlOTNmMGNjYzA3YWQiOiJwc19GWkVpY1BzWTN4ajdNTGZxU3hKV29FdkpiNFRDTVBRdSM2I0gxcjdUNmR0cTJBb3p6OUVIZzYzIiwiaHVhbWVpLXNoYW5naGFpOlYtTElWRS0yM2I5NTdjN2RkNDRhYjQ0ZDdkNyI6InBzX2hCQ01FTXlsX2xVRFJ4bmtkRzkwd0pGaHBxbDV5QUQtIzI0IzI0T0E4SE5iX2NyR3N1SDJTVmVGIiwiaHVhbWVpLXNoYW5naGFpOlYtTElWRS0wNTllMjQ4YWRkYjg1MGFiYjc2NSI6InBzXzRXUENZdVpHSERkZkExSmpWd0FRRGdYWENtTUZjRHpPIzYjaEFJTHpKaTBaS3IxVkVaTnNzNWEiLCJodWFtZWktc2hhbmdoYWk6Vi1MSVZFLTE2YmNhOTA0ODljZTcwYjQ2MmIwIjoicHNfMmc1aktyVmlYZDdDTXB3dFZUeE00czN5amtBYVYzbzIjNiNXcFQ1OW14b3drZ3ROOU5YczlVOSIsImh1YW1laS1zaGFuZ2hhaTpWLUxJVkUtOGNjZGM3Y2Y4MjdjMjQ2MjVmOGEiOiJwc181YmNNYk5Ic3JiekNWMTBiWkRpQUV0SjZnSEtjUVd0aCM0I1JEY1NRdUQzTXdUNDBianpiOWpZIiwiaHVhbWVpLXNoYW5naGFpOlYtTElWRS04OTZiZWM5Yjc2YzMxMzZiOTJmYSI6InBzX3pFdWVtaWZuWV9BWTNnM0ZRY2l1ckpiSFpOYkRiYTFOIzIwI2dpRkFNeVV1MkU0TDhKek5OWkdOIiwiaHVhbWVpLXNoYW5naGFpOlYtTElWRS01MDQ5ODljOGZmZmRiYmZjNDU5NiI6InBzXy05cGsyS2tuQ3BYU3dsY2k4MDBrdXlkZk5hc2NGdm41IzYjLS1oUnk3QWJYdUxXdTk4TU1icHgiLCJodWFtZWktc2hhbmdoYWk6Vi1MSVZFLTQxOGU5ZDY0MDk3YjkyNDk4M2QxIjoicHNfTVA2S2F6ajk2VEZ3b3lBUDBsYlZyVVdxN001cWpEaFAjNCNUUktIdllYQmx6ZXRfVE9xdFZhWCIsImh1YW1laS1zaGFuZ2hhaTpWLUxJVkUtYWVmNzIxYWViN2E2NjdhMDg2ZjEiOiJwc19SWG5nN0xPckxUMXY5Mko4bVU1Z0QyZ3o1aVBXeGtrTiMyMCNDVTcxbVItbU11Uzk4U2NhMklhSyIsImh1YW1laS1zaGFuZ2hhaTpWLUxJVkUtMjViYmU1MmFjNTllZWI3ZjdjMWMiOiJwc19TWTN6S2g4VE5FTVlfeUxQT0s0OEtrSXdHN212T3l0YyM2I1F6S0RwTkVPUldfeHdaOGFLVU5qIiwiaHVhbWVpLXNoYW5naGFpOlYtTElWRS05ZmZmNjBlMTEyNzI1N2JhODg1OCI6InBzX0ZUaU5VYXdHaUNtcTBqYnhvd1RSYTNuX0hxM0ZXX0MwIzQjX3FsOTF1cU5jSF8yM0F1NXQ0MzgiLCJodWFtZWktc2hhbmdoYWk6Vi1MSVZFLTE1YTA4NjI5YTc5NGRkNGM0YTkzIjoicHNfMEJKOUNuOU05NHhGR25GWVJRU0hFNWlfR0xRWlBrSTEjMjAjZ0pHczZ3clUtZ2s3TkNLSFdmQ0UiLCJodWFtZWktc2hhbmdoYWk6Vi1MSVZFLTYyNzNmYzNjNTNkNWE1NWU5NTkzIjoicHNfNkdzUy1FUHBzSUhjTTVxY3ZIdzhHaE1QajVkWVBmTFUjNCM0REhZMm04SzJmOU5lTWtzZ3Q4RCIsImh1YW1laS1zaGFuZ2hhaTpWLUxJVkUtZWQ2M2MzNzM3ZjBmMWY4NTZkOTEiOiJwc19ZUG5DRWo3NmQzYXZTUEVibk5JVE9oU3NIYlAzd3dfZSM0I3ItZXB1ZW5ndmQtLU8wLWdDbzZKIiwiaHVhbWVpLXNoYW5naGFpOlYtTElWRS1lYWZmNDZmNDczZDgyMTZkZWYwZCI6InBzX01JanFkZmZXekxFcmlIRm51X1FYZ0lQeExnYk9HYUFkIzIwI2lCYjBIWUY5bEcxWFlWOXgyUU1iIiwiaHVhbWVpLXNoYW5naGFpOlYtTElWRS0wOGI2OTQwOTM0ZTAyZjljZWM1ZCI6InBzX1h3ZzNJR2RHeWJHbmw3NTJjLVJRMndkSFEtd2xqSnRzIzYjemtRMFlxbGswWi16TzZ0OUR2bi0iLCJodWFtZWktc2hhbmdoYWk6Vi1MSVZFLWQzNzRlNDQwMzZjYjdkNDY2MTBlIjoicHNfRFY0dHBXYXJFMjZabDl2d0NBQklEMm9qTnprR2o0R1ojNCNYWWJrenBpNnh6dlFUekZBR1RTSSIsImh1YW1laS1zaGFuZ2hhaTpWLUxJVkUtZGFhYjA5Njg0NTM4OWY5NTUzMTgiOiJwc19lcDNXS1ZmRUlLVWgyUHFZdXN3X09YLXRwMG9saXFmOSMyMCNJdlV2TGFqYjg3RnFPZkM1Zm1FcyIsImh1YW1laS1zaGFuZ2hhaTpWLUxJVkUtMzJhODI2YzUzN2JhZTQ1Mzc3OWUiOiJwc19ZS3ZyRnA3WHlOdDRVREhYU1duVVY2MGhFTkxtSWVybSM0I1JYZWQxZm5CMWZISkFKSmJPV0RoIn19",
+            "at": 4536
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-006-AC4",
+      "name": "登录失效、离开页面或权限撤回后关闭连接并停止无权限拉取",
+      "status": "pass",
+      "detail": {
+        "可见时closed": 0,
+        "隐藏后closed": 1,
+        "重连后opened": 2,
+        "pagehide后closed": 2,
+        "失效期拉取尝试": 1,
+        "失效状态": "会话同步失败，请重新同步",
+        "登出后拉取": 0
+      }
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "generated_at": "2026-10-16T08:50:56.513Z",
+  "base": "http://127.0.0.1:62531",
+  "story": "b001",
+  "passed": 4,
+  "failed": 0,
+  "results": [
+    {
+      "id": "B-001-AC1",
+      "name": "有权限菜单可点击，路由与页面标题一致",
+      "status": "pass",
+      "detail": [
+        {
+          "菜单": "客户与会员",
+          "路由": "#/customers",
+          "标题": "客户经营",
+          "子入口": 5
+        },
+        {
+          "菜单": "会话与接待",
+          "路由": "#/conversations",
+          "标题": "会话与接待",
+          "子入口": 5
+        },
+        {
+          "菜单": "知识与合规",
+          "路由": "#/knowledge",
+          "标题": "知识与合规",
+          "子入口": 0
+        },
+        {
+          "菜单": "#/conversations",
+          "路由": "#/conversations",
+          "标题": "会话与接待"
+        },
+        {
+          "菜单": "#/conversations/takeovers",
+          "路由": "#/conversations/takeovers",
+          "标题": "人工接管队列"
+        },
+        {
+          "菜单": "#/conversations/quality",
+          "路由": "#/conversations/quality",
+          "标题": "会话质检"
+        },
+        {
+          "菜单": "#/conversations/bad-cases",
+          "路由": "#/conversations/bad-cases",
+          "标题": "Bad Case库"
+        },
+        {
+          "菜单": "#/conversations/templates",
+          "路由": "#/conversations/templates",
+          "标题": "常用话术库"
+        }
+      ]
+    },
+    {
+      "id": "B-001-AC2",
+      "name": "刷新和浏览器前进后退保留有效路由",
+      "status": "pass",
+      "detail": {
+        "点击后": "#/conversations/templates",
+        "刷新后": "#/conversations/templates",
+        "后退": "#/conversations",
+        "前进": "#/conversations/templates",
+        "标题": "常用话术库"
+      }
+    },
+    {
+      "id": "B-001-AC3",
+      "name": "无权限页面显示明确拒绝或可访问入口，不出现空白页",
+      "status": "pass",
+      "detail": [
+        {
+          "路由": "#/conversations",
+          "标题": "今日工作台",
+          "说明": "美时代之美客户全生命周期智能经营平台 总览今日工作台经营治理系统配置组织与权限 服务状态详情本地持久化服务部分服务异常最后保存 从未 系本地管理会话 · 系统管理员尚未绑定后台用户",
+          "数据行": 0
+        },
+        {
+          "路由": "#/customers",
+          "标题": "今日工作台",
+          "说明": "美时代之美客户全生命周期智能经营平台 总览今日工作台经营治理系统配置组织与权限 服务状态详情本地持久化服务部分服务异常最后保存 从未 系本地管理会话 · 系统管理员尚未绑定后台用户",
+          "数据行": 0
+        },
+        {
+          "路由": "#/administration",
+          "标题": "人员与岗位",
+          "说明": "可用入口正常渲染",
+          "数据行": null
+        }
+      ]
+    },
+    {
+      "id": "B-001-AC4",
+      "name": "页面初始加载、空列表、失败重试分别呈现",
+      "status": "pass",
+      "detail": {
+        "初始加载": {
+          "present": true,
+          "len": 62727,
+          "status": "会话实时同步",
+          "skeleton": false,
+          "items": 98
+        },
+        "放行后会话数": 98,
+        "失败提示": "会话同步失败，请重新同步",
+        "恢复状态": "会话实时同步",
+        "空列表": "没有匹配的会话，请调整搜索或分组。",
+        "暂停拦截数": 0
+      }
+    }
+  ]
+}

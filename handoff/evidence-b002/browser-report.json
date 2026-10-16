@@ -1,0 +1,97 @@
+{
+  "generated_at": "2026-10-16T08:50:23.424Z",
+  "base": "http://127.0.0.1:59973",
+  "story": "b002",
+  "passed": 4,
+  "failed": 0,
+  "results": [
+    {
+      "id": "B-002-AC1",
+      "name": "左侧列表、中间对话与输入区、右侧资料/常用语职责清楚",
+      "status": "pass",
+      "detail": {
+        "三栏": {
+          "list": {
+            "top": 190,
+            "bottom": 868,
+            "left": 277,
+            "right": 525,
+            "width": 248,
+            "height": 678
+          },
+          "chat": {
+            "top": 190,
+            "bottom": 868,
+            "left": 525,
+            "right": 1131,
+            "width": 606,
+            "height": 678
+          },
+          "tools": {
+            "top": 190,
+            "bottom": 868,
+            "left": 1131,
+            "right": 1411,
+            "width": 280,
+            "height": 678
+          }
+        },
+        "职责": {
+          "list": true,
+          "chat": true,
+          "tools": true
+        }
+      }
+    },
+    {
+      "id": "B-002-AC2",
+      "name": "接管、发送、结束等关键动作状态明确",
+      "status": "pass",
+      "detail": {
+        "未接管": {
+          "发送禁用": true,
+          "原因提示": "回复草稿 · 接管后可发送请先从人工接管队列领取会话发送人工回复受接管状态和渠道权限控制发送说明仅已实名接管的会话可发送；消息会写入统一会话记录并同步到前台。企业微信、抖音、小红书在完成官方凭证、回调验签和发送验收前，不会把草稿或话术标记为“已发送”。"
+        },
+        "说明": "待人工分组未出现可接管入口，仅验证未接管状态说明"
+      }
+    },
+    {
+      "id": "B-002-AC3",
+      "name": "窄屏提供可切换面板，不遮挡输入和发送",
+      "status": "pass",
+      "detail": {
+        "窄屏": {
+          "toolsTop": 1460,
+          "chatBottom": 1099,
+          "输入": {
+            "exists": true,
+            "scrollTop": 521,
+            "width": 444,
+            "height": 100,
+            "blocked": false
+          },
+          "发送": {
+            "exists": true,
+            "scrollTop": 597,
+            "width": 44,
+            "height": 30,
+            "blocked": false
+          }
+        },
+        "面板切换": {
+          "phrasesVisible": true,
+          "customerHidden": true
+        }
+      }
+    },
+    {
+      "id": "B-002-AC4",
+      "name": "改变列表筛选不清空当前未发送草稿",
+      "status": "pass",
+      "detail": {
+        "草稿": "筛选前后草稿保留检查",
+        "筛选后": "筛选前后草稿保留检查"
+      }
+    }
+  ]
+}

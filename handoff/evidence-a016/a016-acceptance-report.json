@@ -1,0 +1,24 @@
+{
+  "story": "A-016 抗衰类需求的有效介绍",
+  "generated_at": "2026-10-16T09:56:24.4465098Z",
+  "legacy_test_update": "tests/acquisition-broad-goal.mjs 的“广目标零引用”旧断言按 A-016 AC2 更新为：引用≤2 且必须带来源记录号，仍禁止把目录标题当推荐与疗效承诺",
+  "fix": "server/agent-runtime.mjs 广目标分支：方向名与引用改为取自检索命中的 item（记录本体），引用补齐 knowledge_id/source_record_id/version/source_relative_path/record_type/requires_verification/usage；无资料时补“具体情况需要医生面诊确认”口径",
+  "runs": [
+    {
+      "name": "真实本机应用验收（acquisition-real-app-acceptance）",
+      "result": "pass 78 / fail 0"
+    },
+    {
+      "name": "广目标套件（acquisition-broad-goal）",
+      "result": "pass"
+    },
+    {
+      "name": "npm run test:turn-planning",
+      "result": "pass"
+    },
+    {
+      "name": "npm run test:presales-dialogue",
+      "result": "pass"
+    }
+  ]
+}

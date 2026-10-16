@@ -1,0 +1,138 @@
+{
+  "base": "http://127.0.0.1:4173",
+  "checks": {
+    "AC1-第一轮用Enter发出": {
+      "requests": 1,
+      "state": {
+        "value": "",
+        "disabled": false,
+        "buttonDisabled": true,
+        "active": "TEXTAREA:咨询内容",
+        "reCount": 0,
+        "bubbleTexts": [
+          "我想了解热玛吉"
+        ]
+      }
+    },
+    "AC1-草稿在同一轮内保留": {
+      "draftDuring": "这个大概",
+      "draftAfter": {
+        "value": "这个大概",
+        "disabled": false,
+        "buttonDisabled": false,
+        "active": "TEXTAREA:咨询内容",
+        "reCount": 0,
+        "bubbleTexts": [
+          "我想了解热玛吉",
+          "这个大概"
+        ]
+      }
+    },
+    "AC1-回复结束后可继续输入并可再发送": {
+      "requests": 1,
+      "value": "",
+      "disabled": false
+    },
+    "AC2-组合态Enter不误发": {
+      "requests": 0,
+      "imeActive": true,
+      "state": {
+        "value": "re",
+        "disabled": false,
+        "buttonDisabled": false,
+        "active": "TEXTAREA:咨询内容",
+        "reCount": 1,
+        "bubbleTexts": [
+          "我想了解热玛吉",
+          "这个大概",
+          "re"
+        ]
+      }
+    },
+    "AC2-ShiftEnter换行": {
+      "valueBeforeShift": "re",
+      "valueAfterShift": "re",
+      "newline": false
+    },
+    "AC2-普通Enter发送": {
+      "requests": 0,
+      "value": "re"
+    },
+    "闪烁-静置10秒消息列表稳定性": {
+      "stable": true,
+      "samples": [
+        [
+          "我想了解热玛吉",
+          "这个大概",
+          "re"
+        ],
+        [
+          "我想了解热玛吉",
+          "这个大概",
+          "re"
+        ],
+        [
+          "我想了解热玛吉",
+          "这个大概",
+          "re"
+        ],
+        [
+          "我想了解热玛吉",
+          "这个大概",
+          "re"
+        ],
+        [
+          "我想了解热玛吉",
+          "这个大概",
+          "re"
+        ],
+        [
+          "我想了解热玛吉",
+          "这个大概",
+          "re"
+        ],
+        [
+          "我想了解热玛吉",
+          "这个大概",
+          "re"
+        ],
+        [
+          "我想了解热玛吉",
+          "这个大概",
+          "re"
+        ],
+        [
+          "我想了解热玛吉",
+          "这个大概",
+          "re"
+        ],
+        [
+          "我想了解热玛吉",
+          "这个大概",
+          "re"
+        ]
+      ]
+    },
+    "AC3-空白不发送": {
+      "buttonDisabled": false,
+      "requests": 1
+    },
+    "AC3-连点5次只产生一条请求": {
+      "requests": 1,
+      "value": ""
+    },
+    "AC4-不移开焦点被抢回": {
+      "afterMove": "BUTTON:赞：回答有帮助",
+      "afterReply": "BUTTON:赞：回答有帮助"
+    }
+  },
+  "shots": [
+    "A-002-浏览器-AC1-草稿保留.png",
+    "A-002-浏览器-AC1-发送后输入框可用.png",
+    "A-002-浏览器-AC2-ShiftEnter换行.png",
+    "A-002-浏览器-AC2-Enter发送.png",
+    "A-002-浏览器-闪烁复验.png",
+    "A-002-浏览器-AC4-焦点与发送中状态.png"
+  ],
+  "consoleErrors": 0
+}

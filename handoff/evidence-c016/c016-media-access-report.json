@@ -1,0 +1,55 @@
+{
+  "generated_at": "2026-10-16T09:43:29.668Z",
+  "fixture_root": "临时夹具包（不提交）",
+  "checks": [
+    {
+      "id": "C-016-AC1",
+      "name": "链接只指向已批准且当前可访问对象",
+      "detail": {
+        "已批准图片": "asset_fx00000000000001",
+        "类型": "image/png"
+      }
+    },
+    {
+      "id": "C-016-AC2",
+      "name": "服务端校验对象范围，不接受任意文件路径",
+      "detail": {
+        "待审核": "not_found",
+        "聊天记录": null,
+        "路径穿越": null
+      }
+    },
+    {
+      "id": "C-016-AC3",
+      "name": "过期、撤回和不存在分别提供适当用户提示",
+      "detail": {
+        "撤回": {
+          "status": 410,
+          "code": "PUBLIC_MEDIA_WITHDRAWN",
+          "message": "该资料已由院方撤回，不再对外发送；如需最新版本请联系顾问"
+        },
+        "过期": {
+          "status": 410,
+          "code": "PUBLIC_MEDIA_EXPIRED",
+          "message": "该资料已过期，不再对外发送；如需最新版本请联系顾问"
+        },
+        "不存在": null
+      }
+    },
+    {
+      "id": "C-016-AC4",
+      "name": "对象存储凭据不暴露到前端或可下载清单",
+      "detail": {
+        "状态摘要": [
+          "version",
+          "manifest_loaded",
+          "eligible_assets",
+          "expired_assets",
+          "withdrawn_assets",
+          "policy"
+        ],
+        "暴露检查": "通过"
+      }
+    }
+  ]
+}

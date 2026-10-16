@@ -1,0 +1,134 @@
+{
+  "generated_at": "2026-10-16T09:22:41.785Z",
+  "base": "http://127.0.0.1:62601",
+  "story": "b028",
+  "passed": 4,
+  "failed": 0,
+  "results": [
+    {
+      "id": "B-028-AC1",
+      "name": "列表、详情、发送、领取、改期、联系方式查看均做服务端授权",
+      "status": "pass",
+      "detail": {
+        "未登录": [
+          {
+            "接口": "客户列表",
+            "状态": 401
+          },
+          {
+            "接口": "接管队列",
+            "状态": 401
+          },
+          {
+            "接口": "接管详情",
+            "状态": 401
+          },
+          {
+            "接口": "领取",
+            "状态": 401
+          },
+          {
+            "接口": "人工回复",
+            "状态": 401
+          },
+          {
+            "接口": "联系方式查看",
+            "状态": 401
+          }
+        ],
+        "已登录": [
+          {
+            "接口": "客户列表",
+            "状态": 200
+          },
+          {
+            "接口": "接管队列",
+            "状态": 200,
+            "任务数": 100
+          },
+          {
+            "接口": "真实任务详情",
+            "状态": 200,
+            "任务": "ho_0efee81d-"
+          }
+        ]
+      }
+    },
+    {
+      "id": "B-028-AC2",
+      "name": "不能通过ID枚举绕过本人/科室限制",
+      "status": "pass",
+      "detail": [
+        {
+          "接口": "猜测试详情",
+          "状态": 404,
+          "错误码": "HANDOVER_NOT_FOUND"
+        },
+        {
+          "接口": "猜测领取",
+          "状态": 404,
+          "错误码": "HANDOVER_NOT_FOUND"
+        },
+        {
+          "接口": "猜测完结",
+          "状态": 400,
+          "错误码": "IDEMPOTENCY_KEY_REQUIRED"
+        },
+        {
+          "接口": "猜测联系方式",
+          "状态": 404,
+          "错误码": "HANDOVER_NOT_FOUND"
+        },
+        {
+          "接口": "另一个猜测ID详情",
+          "状态": 404,
+          "错误码": "HANDOVER_NOT_FOUND"
+        }
+      ]
+    },
+    {
+      "id": "B-028-AC3",
+      "name": "超级管理员仍限定本机构",
+      "status": "pass",
+      "detail": [
+        {
+          "接口": "客户列表",
+          "状态": 403,
+          "错误码": "OIDC_TENANT_FORBIDDEN"
+        },
+        {
+          "接口": "接管队列",
+          "状态": 400,
+          "错误码": "ADMIN_IDENTITY_OVERRIDE_FORBIDDEN"
+        }
+      ]
+    },
+    {
+      "id": "B-028-AC4",
+      "name": "无权限与不存在采用一致安全响应，日志保留审计标识",
+      "status": "pass",
+      "detail": {
+        "不存在的对象": [
+          {
+            "status": 404,
+            "code": "HANDOVER_NOT_FOUND",
+            "hasData": false,
+            "requestId": "req_30db7a92-0c8c-49aa-b672-ce4618b2518f"
+          },
+          {
+            "status": 404,
+            "code": "HANDOVER_NOT_FOUND",
+            "hasData": false,
+            "requestId": "req_0c77ac94-da9a-4056-b477-2aa02c6d82b8"
+          }
+        ],
+        "无权限": {
+          "status": 403,
+          "code": "PHASE_ONE_CAPABILITY_FORBIDDEN",
+          "hasData": false,
+          "requestId": "req_158546ac-29a3-4823-b2b4-d5da8162bb67"
+        }
+      }
+    }
+  ]
+}

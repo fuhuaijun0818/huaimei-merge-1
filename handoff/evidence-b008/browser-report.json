@@ -1,0 +1,59 @@
+{
+  "generated_at": "2026-10-16T08:30:59.503Z",
+  "base": "http://127.0.0.1:51414",
+  "story": "b008",
+  "passed": 4,
+  "failed": 0,
+  "results": [
+    {
+      "id": "B-008-AC1",
+      "name": "搜索与状态筛选可组合，筛选条件可清除",
+      "status": "pass",
+      "detail": {
+        "搜索命中": 1,
+        "组合筛选": 1,
+        "清除后": 10
+      }
+    },
+    {
+      "id": "B-008-AC2",
+      "name": "分页有稳定排序，不重复或跳漏",
+      "status": "pass",
+      "detail": {
+        "首页": 6,
+        "加载后": 12,
+        "加载器": "加载更早消息（还有 8 条）"
+      }
+    },
+    {
+      "id": "B-008-AC3",
+      "name": "历史加载不把当前阅读位置跳到底部",
+      "status": "pass",
+      "detail": {
+        "加载前": {
+          "id": "msg-4b7b95d0-5b0e-497f-a174-2363a55507c6",
+          "top": 0,
+          "height": 1078,
+          "client": 305,
+          "nearBottom": false
+        },
+        "加载后": {
+          "id": "reply_ce413994ebe33e6b971d216d0c36e6f3b2382ab2b871fa8eff8f12a145665dd0",
+          "top": 491,
+          "height": 1568,
+          "client": 305,
+          "nearBottom": false
+        }
+      }
+    },
+    {
+      "id": "B-008-AC4",
+      "name": "无结果与接口错误区分，搜索不绕过授权范围",
+      "status": "pass",
+      "detail": {
+        "空提示": true,
+        "未登录接口": 401
+      }
+    }
+  ]
+}

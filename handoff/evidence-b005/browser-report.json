@@ -1,0 +1,66 @@
+{
+  "generated_at": "2026-10-16T08:28:26.083Z",
+  "base": "http://127.0.0.1:62933",
+  "story": "b005",
+  "passed": 4,
+  "failed": 0,
+  "results": [
+    {
+      "id": "B-005-AC1",
+      "name": "只更新受影响列表项与消息区域，不全页重绘",
+      "status": "pass",
+      "detail": {
+        "inputSame": true,
+        "itemsSame": {
+          "V-LIVE-93cbeea9438dcf4631c8": true,
+          "V-LIVE-e02cc45973ffdefdd224": true,
+          "V-LIVE-806124ba2b34d070d953": true,
+          "V-LIVE-111d36c6b94eae87f19c": true,
+          "V-LIVE-98beb327e6d127778da0": true,
+          "V-LIVE-26bc5441a80f37732f74": true,
+          "V-LIVE-2a9febe0acb2e0d27766": true,
+          "V-LIVE-3e0f388e18a3c2f37896": true,
+          "V-LIVE-0ac70be78aed5703ceec": true,
+          "V-LIVE-3ed42e86c74c9719f184": true,
+          "V-LIVE-26d365bea132d86236ba": true,
+          "V-LIVE-7cb17c539649b7deb5c9": true,
+          "V-LIVE-122c30eeadeb3bb66d8a": true,
+          "V-LIVE-b362af719805a58d72ad": true,
+          "V-LIVE-a4208ff69a059ed84deb": true,
+          "V-LIVE-d02af14c91babba9308e": true,
+          "V-LIVE-962454c5cd4e7486b0c3": true,
+          "V-LIVE-4f5cace9fa9a635bb564": true,
+          "V-LIVE-3cf9b1068a38f5e4ad50": true,
+          "V-LIVE-3616407437735e3fba66": true
+        }
+      }
+    },
+    {
+      "id": "B-005-AC2",
+      "name": "草稿、焦点与滚动位置保持",
+      "status": "pass",
+      "detail": {
+        "draft": "草稿保留检查",
+        "focused": true,
+        "scroll": 20
+      }
+    },
+    {
+      "id": "B-005-AC3",
+      "name": "底部跟随后保持跟随，阅读历史时保留位置并给出提示",
+      "status": "pass",
+      "detail": {
+        "底部跟随": true,
+        "历史时未读": 1
+      }
+    },
+    {
+      "id": "B-005-AC4",
+      "name": "其他会话新消息不强制切换当前选中客户",
+      "status": "pass",
+      "detail": {
+        "选中会话": "V-LIVE-806124ba2b34d070d953"
+      }
+    }
+  ]
+}

@@ -1,0 +1,161 @@
+{
+  "generated_at": "2026-10-16T08:24:30.739Z",
+  "scope": "B-020 / B-021 / B-022 查重适配器四态验收（本地模拟院方接口，真实 HTTP 传输）",
+  "transport": "http://127.0.0.1 本地 mock provider（不连真实院方，无真实密钥）",
+  "mock_provider_calls": 21,
+  "checks": [
+    {
+      "id": "B-020-AC1",
+      "name": "严格布尔 true 显示已有客户记录",
+      "detail": {
+        "status": "checked",
+        "label": "院方已有客户记录"
+      }
+    },
+    {
+      "id": "B-020-AC2",
+      "name": "严格布尔 false 显示未找到客户记录",
+      "detail": {
+        "status": "checked",
+        "label": "院方未找到客户记录"
+      }
+    },
+    {
+      "id": "B-020-AC3",
+      "name": "四态展示互不相同（已有/未找到/待查/失败）",
+      "detail": {
+        "已有记录": "院方已有客户记录",
+        "未找到": "院方未找到客户记录",
+        "待查": "手机号已保存，院方查询待完成",
+        "失败": "院方接口暂不可用，可稍后重试"
+      }
+    },
+    {
+      "id": "B-020-AC3",
+      "name": "isSuccess 失败、缺项、错号、非法类型都不能当 false",
+      "detail": [
+        {
+          "case": "业务失败 isSuccess=false",
+          "reason_code": "PROVIDER_REJECTED",
+          "label": "核验未完成，待重试"
+        },
+        {
+          "case": "data 缺项",
+          "reason_code": "INVALID_RESPONSE",
+          "label": "核验未完成，待重试"
+        },
+        {
+          "case": "返回错号",
+          "reason_code": "INVALID_RESPONSE",
+          "label": "核验未完成，待重试"
+        },
+        {
+          "case": "isRepeat 非法类型（字符串 false）",
+          "reason_code": "INVALID_RESPONSE",
+          "label": "核验未完成，待重试"
+        },
+        {
+          "case": "HTTP 错误页",
+          "reason_code": "INVALID_RESPONSE",
+          "label": "核验未完成，待重试"
+        },
+        {
+          "case": "超大响应体",
+          "reason_code": "INVALID_RESPONSE",
+          "label": "核验未完成，待重试"
+        }
+      ]
+    },
+    {
+      "id": "B-020-AC4",
+      "name": "不将已有记录称为手机号归属已验证或拥有某会员权益",
+      "detail": {
+        "labels": [
+          "院方已有客户记录",
+          "院方未找到客户记录"
+        ],
+        "member_status": "unknown"
+      }
+    },
+    {
+      "id": "B-021-AC1",
+      "name": "失败、超时、未查询、查询中和已完成分别表示",
+      "detail": {
+        "失败": "院方接口暂不可用，可稍后重试",
+        "超时": "院方核验超时，可稍后重试",
+        "未查询": "手机号已保存，院方查询待完成",
+        "已完成": "院方已有客户记录"
+      }
+    },
+    {
+      "id": "B-021-AC2",
+      "name": "重试受限且可观察，不无限调用",
+      "detail": {
+        "provider_calls": 2,
+        "retry_count": 2,
+        "label": "院方核验失败，已达到重试上限"
+      }
+    },
+    {
+      "id": "B-021-AC3",
+      "name": "旧号码或旧版本结果不能覆盖当前客户状态",
+      "detail": {
+        "旧号码结论": "院方已有客户记录",
+        "当前号码结论": "院方未找到客户记录"
+      }
+    },
+    {
+      "id": "B-021-AC4",
+      "name": "失败不丢失留资和会话，可按权限手动重查",
+      "detail": {
+        "留资状态": "pending_manual",
+        "失败后": "failed",
+        "手动重查": "院方已有客户记录"
+      }
+    },
+    {
+      "id": "B-022-AC1",
+      "name": "超时、HTTP失败、JSON错误、业务失败分别归类",
+      "detail": {
+        "超时": "TIMEOUT",
+        "HTTP失败": "PROVIDER_UNAVAILABLE",
+        "JSON错误": "INVALID_RESPONSE",
+        "业务失败": "PROVIDER_REJECTED"
+      }
+    },
+    {
+      "id": "B-022-AC2",
+      "name": "只发送合同必需字段，缺失字段不伪造示例值",
+      "detail": {
+        "fields": [
+          "date_time",
+          "hospital",
+          "hospitalcode",
+          "name",
+          "phone",
+          "timestamp"
+        ],
+        "phone_field": [
+          "13600000001"
+        ]
+      }
+    },
+    {
+      "id": "B-022-AC3",
+      "name": "日志包含请求标识和耗时，不输出明文电话或凭据",
+      "detail": {
+        "request_id": "member_check_fe7feed3-ce69-47de-95e1-f8be9e149e44",
+        "duration_ms": 26,
+        "audit_lines": 20
+      }
+    },
+    {
+      "id": "B-022-AC4",
+      "name": "接口地址和配置由服务端管理，前端不能指定任意目标",
+      "detail": {
+        "actual_url": "/query",
+        "configured_url": "http://127.0.0.1:57567/query"
+      }
+    }
+  ]
+}

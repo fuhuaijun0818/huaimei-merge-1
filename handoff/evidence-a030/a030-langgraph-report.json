@@ -1,0 +1,35 @@
+{
+  "generated_at": "2026-10-16T09:57:00.657Z",
+  "python_runtime": ".\\agent-orchestrator\\.venv\\bin\\python.exe",
+  "note": "Windows 下 uvloop 无可用 wheel，安装依赖时按平台过滤该 POSIX-only 包；不影响编排契约与 checkpoint 验证。",
+  "checks": [
+    {
+      "label": "Node 编排契约（shadow 准入、脱敏线程、非副作用中断、turn 协议迁移）",
+      "command": "node tests/langgraph-orchestrator-contract.mjs",
+      "exit_code": 0,
+      "duration_ms": 135,
+      "tail": "✓ LangGraph P0 契约、脱敏线程标识、服务令牌、非副作用中断与 Turn 协议迁移通过"
+    },
+    {
+      "label": "真实 LangGraph 服务 live 契约（服务令牌、契约闭环、shadow 决策比较）",
+      "command": "node tests/langgraph-orchestrator-live-contract.mjs",
+      "exit_code": 0,
+      "duration_ms": 3793,
+      "tail": "✓ Node 与真实 LangGraph 服务的服务令牌、契约和安全决策闭环通过"
+    },
+    {
+      "label": "Python 编排单测（引擎版本/schema/回滚路径）",
+      "command": "\"C:\\Users\\fuhuaijun\\AppData\\Local\\Temp\\huamei-acc-20261016\\agent-orchestrator\\.venv\\bin\\python.exe\" -m unittest discover -s tests -v",
+      "exit_code": 0,
+      "duration_ms": 1691,
+      "tail": "OK"
+    },
+    {
+      "label": "隔离库 Turn 协议（顺序、租约、fencing、prepared/commit 重放、无外发边界）",
+      "command": "node --env-file=deploy/local/.env tests/postgres-langgraph-turn-protocol-integration.mjs",
+      "exit_code": 0,
+      "duration_ms": 30447,
+      "tail": "✓ PostgreSQL LangGraph turn 协议：顺序、租约、fencing、prepared/commit 重放与 P0 无外发边界通过"
+    }
+  ]
+}
