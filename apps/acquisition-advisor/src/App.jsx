@@ -10,9 +10,124 @@ const QUICK_QUESTIONS = [
 const SESSION_STORAGE_KEY = "huamei.advisor.session.v1";
 
 const emptyConversation = () => [];
+const APPOINTMENT_LEAD_CAPTURE_PROMPT = Object.freeze({
+  title:"请先保存联系方式",
+  description:"为便于顾问与您确认到院安排，请留下本次咨询的联系方式。手机号将由顾问回电时人工核对。",
+  consent_text:"我同意顾问仅为本次到院安排和咨询服务使用以上联系方式"
+});
+const appointmentLeadCaptureRequired = (message) => message?.orchestration?.action_proposal?.type === "appointment_request";
+const appointmentProjectFromMessage = (value) => {
+  const text = String(value || "").replace(/\s+/g, "").trim();
+  const match = text.match(/(?:预约|约面诊|安排到院)(?:一下)?[，,：:]?([^，。！？!?]{2,24})/);
+  return String(match?.[1] || "").replace(/(?:面诊|咨询|项目)$/g, "").trim().slice(0, 80);
+};
+// 与服务端同一套规范化：+86 / 0086 / 空格 / 短横线都归一为本地号码，并且按整串
+// 处理。绝不能截断超过 11 位的输入，否则无效号码会被改写成有效号码后保存。只在离开输入框和提交时调用，
+// 输入过程中不做整体重写，否则粘贴/快速输入会被 React 的受控更新吃掉字符。
+const normalizeMobileInput = (value) => {
+  const digits = String(value || "").normalize("NFKC").replace(/\D/g, "");
+  const local = /^1[3-9]\d{9}$/.test(digits) ? digits : digits.replace(/^(?:00)?86/, "");
+  return local;
+};
+const isValidMainlandMobileInput = (value) => /^1[3-9]\d{9}$/.test(normalizeMobileInput(value));
+
+// 输入过程中只做轻量清洗：保留数字和开头的一个 +，其余分隔符由失焦时统一归一。
+// 输入框不能用 maxLength=11：粘贴 "0086 138-0000-0001" 会被浏览器先截成
+// "0086 138-00"，再归一就只剩 "13800"。
+const cleanMobileTyping = (value) => {
+  const text = String(value || "").normalize("NFKC");
+  const digits = text.replace(/\D/g, "");
+  return `${text.trim().startsWith("+") ? "+" : ""}${digits}`.slice(0, 20);
+};
+const restoreConversationMessages = (items) => collapseImmediateCustomerDuplicates(Array.isArray(items) ? [...items]
+  .sort((left, right) => (Number(left?.seq) || 0) - (Number(right?.seq) || 0))
+  .map((item) => {
+    const id = String(item?.id || `restored-${item?.seq || Math.random()}`);
+    const role = item?.from === "customer" ? "user" : item?.from === "staff" ? "staff" : "assistant";
+    const content = String(item?.text || "");
+    return {
+      id,
+      role,
+      content,
+      at:item?.at || undefined,
+      status:item?.status === "failed" ? "failed" : undefined,
+      isFinalSegment:item?.from !== "customer",
+      // The API persists one canonical AI reply while the public UI presents
+      // the same turn as short bubbles. Retain the canonical identity so a
+      // poll that wins the race against the POST can be replaced in-place.
+      ...(role === "assistant" ? { serverReplyId:id, serverReplyText:content } : {})
+    };
+  })
+  .filter((item) => item.content) : []);
+const duplicateCustomerWindowMs = 15_000;
+const customerMessageFingerprint = (message) => `${message?.role || ""}\u0000${String(message?.content || "").trim().replace(/\s+/g, " ")}`;
+const occurredAt = (message) => {
+  const value = Date.parse(message?.at || "");
+  return Number.isFinite(value) ? value : 0;
+};
+// A gateway retry can return the same customer turn with a different server
+// ID. Keep the first copy rendered when its content and timestamp prove it is
+// the same immediate submission; later, intentional repeated questions remain
+// separate turns.
+const collapseImmediateCustomerDuplicates = (items) => {
+  const seen = new Map();
+  return items.filter((message) => {
+    if (message?.role !== "user") return true;
+    const key = customerMessageFingerprint(message);
+    const previous = seen.get(key);
+    const currentAt = occurredAt(message);
+    if (previous && currentAt && Math.abs(currentAt - previous) <= duplicateCustomerWindowMs) return false;
+    seen.set(key, currentAt || Date.now());
+    return true;
+  });
+};
+const mergeConversationMessages = (current, incoming) => {
+  // Only locally-created presentation segments replace the server's canonical
+  // reply. A restored history row also carries serverReplyId for later
+  // reconciliation, but it is not itself a segment and must never filter out
+  // itself on the next history poll.
+  const byId = new Map(current.filter((message) => message?.id).map((message) => [message.id, message]));
+  const displayedServerReplyIds = new Set();
+  const displayedOptimisticCustomers = new Map();
+  for (const message of current) {
+    if (message?.groupId && message?.serverReplyId) displayedServerReplyIds.add(message.serverReplyId);
+    if (message?.optimistic && message?.role === "user") {
+      displayedOptimisticCustomers.set(customerMessageFingerprint(message), occurredAt(message));
+    }
+  }
+  for (const message of incoming) {
+    // A just-sent answer is displayed as short segments, while history stores
+    // the same answer as one canonical reply row. Keep the short segments and
+    // do not append that canonical row a second time on the next poll.
+    const isDisplayedReply = displayedServerReplyIds.has(message?.id);
+    const optimisticAt = displayedOptimisticCustomers.get(customerMessageFingerprint(message));
+    const isOptimisticCustomerReplay = message?.role === "user" && !message?.optimistic
+      && optimisticAt && occurredAt(message)
+      && Math.abs(occurredAt(message) - optimisticAt) <= duplicateCustomerWindowMs;
+    if (message?.id && !byId.has(message.id) && !isDisplayedReply && !isOptimisticCustomerReplay) byId.set(message.id, message);
+  }
+  return collapseImmediateCustomerDuplicates([...byId.values()])
+    .sort((left, right) => Date.parse(left.at || 0) - Date.parse(right.at || 0));
+};
+
+// A history poll can observe the server's canonical reply just before the
+// corresponding POST resolves in this tab. Replace that canonical row with
+// the presentation segments, rather than rendering both versions of one turn.
+const mergeReplySegments = (current, segments) => {
+  if (!segments.length) return current;
+  const serverReplyId = segments[0]?.serverReplyId;
+  const existingSegment = current.some((message) => message?.serverReplyId === serverReplyId && message?.groupId);
+  if (existingSegment) return current;
+  const canonicalIndex = current.findIndex((message) => message?.role === "assistant" && message.id === serverReplyId);
+  if (canonicalIndex < 0) return [...current, ...segments];
+  return [
+    ...current.slice(0, canonicalIndex),
+    ...segments,
+    ...current.slice(canonicalIndex + 1)
+  ];
+};
 const createSessionId = () => globalThis.crypto?.randomUUID?.() || `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const trimTrailingSlashes = (value = "") => String(value).replace(/\/+$/, "");
-const normalizeForCompare = (value = "") => String(value).replace(/\s+/g, "");
 const joinBaseUrl = (baseUrl, path) => {
   const normalizedBaseUrl = trimTrailingSlashes(baseUrl);
   if (!normalizedBaseUrl) return path;
@@ -232,6 +347,7 @@ function KnowledgeMediaPreview({ preview, onClose }) {
 function LeadCaptureCard({ prompt, status, error, result, onSubmit, handover }) {
   const [name, setName] = useState("");
   const [mobile, setMobile] = useState("");
+  const [mobileError, setMobileError] = useState("");
   const [serviceConsent, setServiceConsent] = useState(false);
   if (result) return (
     <section className="lead-capture-card lead-success" aria-live="polite">
@@ -245,7 +361,15 @@ function LeadCaptureCard({ prompt, status, error, result, onSubmit, handover }) 
   );
   const submit = (event) => {
     event.preventDefault();
-    onSubmit({ name:name.trim(), mobile:mobile.trim(), service_consent:serviceConsent });
+    // 提交前再归一一次，避免用户直接点提交（未触发失焦）时把 +86/0086 原样送出。
+    const normalizedMobile = normalizeMobileInput(mobile);
+    if (!isValidMainlandMobileInput(mobile)) {
+      setMobileError("请输入有效的11位中国大陆手机号");
+      return;
+    }
+    setMobileError("");
+    setMobile(normalizedMobile);
+    onSubmit({ name:name.trim(), mobile:normalizedMobile, service_consent:serviceConsent });
   };
   const urgent = handover?.reason === "medical_emergency";
   const requiresHandover = handover?.required === true;
@@ -261,10 +385,11 @@ function LeadCaptureCard({ prompt, status, error, result, onSubmit, handover }) 
       <div className="lead-card-kicker">{kicker}</div>
       <h3>{title}</h3>
       <p>{description}</p>
-      <form className="lead-form" onSubmit={submit}>
+      <form className="lead-form" onSubmit={submit} noValidate>
         <label><span>怎么称呼您 <em>选填</em></span><input value={name} onChange={(event) => setName(event.target.value)} maxLength={40} autoComplete="name" placeholder="您的称呼" /></label>
-        <label><span>手机号</span><input value={mobile} onChange={(event) => setMobile(event.target.value.replace(/\D/g, "").replace(/^86(?=1)/, "").slice(0, 11))} required minLength={11} maxLength={11} pattern="1[3-9][0-9]{9}" inputMode="tel" autoComplete="tel" placeholder="11位手机号" aria-invalid={Boolean(error)} /></label>
+        <label><span>手机号</span><input value={mobile} onChange={(event) => { setMobile(cleanMobileTyping(event.target.value)); setMobileError(""); }} onBlur={() => setMobile(normalizeMobileInput(mobile))} required maxLength={20} pattern="(?:00)?(?:\+?86)?1[3-9][0-9]{9}" inputMode="tel" autoComplete="tel" placeholder="11位手机号，可粘贴 +86 或 0086" aria-invalid={Boolean(error || mobileError)} aria-describedby={mobileError ? "lead-mobile-error" : undefined} /></label>
         <label className="lead-consent"><input type="checkbox" checked={serviceConsent} onChange={(event) => setServiceConsent(event.target.checked)} required /><span>{prompt.consent_text || "请阅读并同意本次咨询联系授权"}</span></label>
+        {mobileError && <div id="lead-mobile-error" className="lead-error" role="alert">{mobileError}</div>}
         {error && <div className="lead-error" role="alert">{error}</div>}
         <button className="lead-submit" type="submit" disabled={status === "submitting" || !serviceConsent}>{status === "submitting" ? submittingLabel : submitLabel}</button>
       </form>
@@ -296,19 +421,22 @@ function AppointmentTimeFields({ value, onChange }) {
 const blankAppointmentTime = () => ({ preferred_date:"", precision:"date", time_period:"afternoon", preferred_time:"" });
 const appointmentTimePayload = (value) => ({ preferred_date:value.preferred_date, preferred_time:value.precision === "minute" ? value.preferred_time : "", time_period:value.precision === "period" ? value.time_period : "" });
 
-function AppointmentActionCard({ proposal, profileSignals, leadCaptured, state, onSubmit }) {
+function AppointmentActionCard({ proposal, profileSignals, leadCaptured, state, onSubmit, allowSubjectEntry = false }) {
   const [time, setTime] = useState(blankAppointmentTime);
   const [confirmed, setConfirmed] = useState(false);
+  const [subject, setSubject] = useState("");
   if (!proposal || proposal.type !== "appointment_request" || state?.intake?.status === "registered") return null;
-  const projects = profileSignals?.projects || [];
+  const projects = Array.isArray(profileSignals?.projects) ? profileSignals.projects.filter(Boolean) : [];
   const doctor = profileSignals?.doctors?.[0];
-  const subjectReady = projects.length || doctor;
+  const selectedProjects = projects.length ? projects : subject.trim() ? [subject.trim()] : [];
+  const subjectReady = selectedProjects.length || doctor;
   return <section className="lead-capture-card appointment-action-card">
     <div className="lead-card-kicker">到院时间登记</div><h3>确认您希望到院的时间</h3>
-    <p>院区：上海华美医疗美容医院<br />咨询内容：{projects.join("、") || "项目待补充"}{doctor ? ` · ${doctor}医生` : ""}</p>
+    <p>院区：上海华美医疗美容医院<br />咨询内容：{selectedProjects.join("、") || "项目待补充"}{doctor ? ` · ${doctor}医生` : ""}</p>
     <p>{leadCaptured ? "使用本次咨询已保存的联系方式，顾问后续回电核对手机号与到院安排。" : "请先保存本次咨询的联系方式。"}</p>
-    {!subjectReady && <p className="appointment-hint">请先在对话中确认想咨询的项目或医生。</p>}
-    <form className="lead-form" onSubmit={(e) => { e.preventDefault(); if (confirmed) onSubmit(proposal, profileSignals, appointmentTimePayload(time)); }}>
+    {!subjectReady && !allowSubjectEntry && <p className="appointment-hint">请先在对话中确认想咨询的项目或医生。</p>}
+    <form className="lead-form" onSubmit={(e) => { e.preventDefault(); if (confirmed) onSubmit(proposal, { ...profileSignals, projects:selectedProjects }, appointmentTimePayload(time)); }}>
+      {allowSubjectEntry && !projects.length && !doctor && <label><span>咨询项目或医生</span><input required maxLength={80} value={subject} onChange={(event) => { setSubject(event.target.value); setConfirmed(false); }} placeholder="例如：热玛吉" /></label>}
       <AppointmentTimeFields value={time} onChange={(value) => { setTime(value); setConfirmed(false); }} />
       <label className="lead-consent"><input type="checkbox" required checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} /><span>我确认以上院区、咨询内容和到院时间，并同意顾问使用已留联系方式跟进。本登记不代表指定医生或接诊名额已锁定。</span></label>
       {state?.error && state.actionId === proposal.id && <div className="lead-error" role="alert">{state.error}</div>}
@@ -341,6 +469,14 @@ function AppointmentRegistrationCard({ state, onChange }) {
     {state.error && <div className="lead-error" role="alert">{state.error}</div>}
   </section>;
 }
+
+const shouldApplyAppointmentResponse = (current, submitted, incoming) => {
+  if (!incoming || current?.id !== submitted?.id) return false;
+  const currentVersion = Number(current.version) || 0;
+  const incomingVersion = Number(incoming.version) || 0;
+  if (incomingVersion < currentVersion) return false;
+  return current.status !== "cancelled" || incoming.status === "cancelled";
+};
 
 function ConversationFeedback({ feedback, onFeedback }) {
   const saving = feedback?.status === "saving";
@@ -375,10 +511,22 @@ function ChatMessage({ message, showLeadCapture, leadState, appointmentState, on
       )}
     </div>
   );
+  // 历史回读里的人工顾问回复（B 的会话留档）：与 AI 气泡分开显示，
+  // 客户能一眼看出哪一条是人发的。
+  if (message.role === "staff") return (
+    <article className="assistant-message human-agent-message">
+      <div className="assistant-label"><span className="assistant-avatar">顾</span><span>人工顾问</span></div>
+      <div className="assistant-copy">{message.content}</div>
+    </article>
+  );
   const medicalHandover = ["medical_emergency", "medical_safety", "medical_boundary"].includes(message.handover?.reason);
   const source = message.source || "ai";
   const sourceLabel = source === "human" ? "人工顾问" : source === "system" ? "系统提示" : "小美 · AI获客顾问";
   const sourceAvatar = source === "human" ? "顾" : source === "system" ? "系" : "美";
+  // 预约提案会先要求联系方式；B 的专用留资提示与提案一起渲染。
+  const leadPrompt = appointmentLeadCaptureRequired(message)
+    ? { ...APPOINTMENT_LEAD_CAPTURE_PROMPT, ...(message.leadCapture || {}) }
+    : message.leadCapture;
   return (
     <article className={`assistant-message source-${source} ${message.isContinuation ? "continuation" : ""} ${message.status === "handover_required" ? "handover" : ""}`}>
       {!message.isContinuation && <div className="assistant-label"><span className="assistant-avatar">{sourceAvatar}</span><span>{sourceLabel}</span></div>}
@@ -391,8 +539,8 @@ function ChatMessage({ message, showLeadCapture, leadState, appointmentState, on
       <PublicKnowledgeMedia media={message.media} onPreview={onPreview} />
       <KnowledgeSources citations={message.citations} onPreview={onPreview} />
       {message.isFinalSegment && <ConversationFeedback feedback={feedback} onFeedback={onFeedback} />}
-      {showLeadCapture && <LeadCaptureCard prompt={{ ...message.leadCapture, consent_text:leadState.consentText || message.leadCapture?.consent_text }} status={leadState.status} error={leadState.error} result={leadState.result} onSubmit={onLeadSubmit} handover={message.handover} />}
-      {message.isFinalSegment && <AppointmentActionCard proposal={message.orchestration?.action_proposal} profileSignals={message.profileSignals} leadCaptured={Boolean(leadState.result)} state={appointmentState} onSubmit={onAppointmentSubmit} />}
+      {showLeadCapture && <LeadCaptureCard prompt={{ ...leadPrompt, consent_text:leadState.consentText || leadPrompt?.consent_text }} status={leadState.status} error={leadState.error} result={leadState.result} onSubmit={onLeadSubmit} handover={message.handover} />}
+      {message.isFinalSegment && <AppointmentActionCard proposal={message.orchestration?.action_proposal} profileSignals={message.profileSignals} leadCaptured={Boolean(leadState.result)} state={appointmentState} onSubmit={onAppointmentSubmit} allowSubjectEntry={message.handover?.required === true} />}
     </article>
   );
 }
@@ -408,7 +556,6 @@ export function App() {
   const [knowledgePreview, setKnowledgePreview] = useState(null);
   const inputRef = useRef(null);
   const questionInFlightRef = useRef(false);
-  const messageEndRef = useRef(null);
   const sessionIdRef = useRef(createSessionId());
   const sessionTokenRef = useRef("");
   const sessionEpochRef = useRef(0);
@@ -416,6 +563,8 @@ export function App() {
   const stoppedByUserRef = useRef(false);
   const scrollerRef = useRef(null);
   const atBottomRef = useRef(true);
+  // 公开会话凭证就绪后才开始历史轮询与送达确认，避免首次加载时打空请求。
+  const publicSessionReadyRef = useRef(false);
   const [restoringSession, setRestoringSession] = useState(true);
   const [restoreFailed, setRestoreFailed] = useState(false);
   const [unseenCount, setUnseenCount] = useState(0);
@@ -458,12 +607,14 @@ export function App() {
     clearPersistedSessionCredential();
     sessionIdRef.current = createSessionId();
     sessionTokenRef.current = "";
+    publicSessionReadyRef.current = false;
     try {
       const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/appointment-intakes/current"), { method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ session_id:sessionIdRef.current }) });
       const body = await response.json();
       if (epoch !== sessionEpochRef.current) return;
       if (!response.ok) throw new Error(body?.error?.message || "新对话暂时无法建立，请重试。");
       updateSessionCredential(body);
+      publicSessionReadyRef.current = true;
     } catch (err) { if (epoch === sessionEpochRef.current) setError(err.message); }
     finally { if (epoch === sessionEpochRef.current) setRestoringSession(false); }
   };
@@ -529,48 +680,15 @@ export function App() {
     }
   };
 
-  const transcriptMessage = (item) => {
-    const id = String(item?.id || `history-${item?.at || ""}-${Math.random().toString(16).slice(2)}`);
-    if (item?.role === "customer" || item?.role === "user") {
-      return { id, role:"user", content:item.text, at:item.at, status:"confirmed" };
-    }
-    return {
-      id,
-      groupId:id,
-      role:"assistant",
-      source:["human", "system"].includes(item?.role) ? item.role : "ai",
-      content:item.text,
-      at:item.at,
-      isFinalSegment:true,
-      citations:[],
-      status:"completed"
-    };
-  };
-
-  // 刷新后带着本机会话凭证回读服务端确认过的消息顺序；失败时给出重试与
-  // 新对话入口，不把旧消息挂到新客户身上。
-  // 轮询补齐只追加真正的新消息：同一条消息在本地渲染和服务端记录里的 id
-  // 不同，只按 id 去重会把同一轮再加一遍，所以要同时比对角色与文本内容。
-  const isRenderedAlready = (message, current) => {
-    const text = normalizeForCompare(message.content);
-    if (!text) return true;
-    const sameRole = current.filter((item) => item.role === message.role);
-    if (sameRole.some((item) => normalizeForCompare(item.content) === text)) return true;
-    if (message.role !== "assistant") return false;
-    // 服务端把一轮答复存成一条整文本，本地按分段渲染成多个气泡，用包含关系判断。
-    const joinedAssistant = normalizeForCompare(current.filter((item) => item.role === "assistant").map((item) => item.content).join(""));
-    return joinedAssistant.includes(text);
-  };
-
-  const restoreConversation = async (options = {}) => {
+  // A-025：上传等能力位由服务端下发。这个接口同时会按本机保存的会话凭证续签
+  // 本机会话，因此刷新后仍能拿到同一会话的能力开关；取不到时按"未启用上传"处理。
+  const loadUploadCapability = async () => {
     const epoch = sessionEpochRef.current;
     const stored = readStoredSessionCredential();
     if (stored) {
       sessionIdRef.current = stored.session_id;
       sessionTokenRef.current = stored.session_token || "";
     }
-    // 没有历史会话时也要取一次能力位（服务端会顺带签发本机会话凭证），
-    // 否则前台拿不到"是否允许上传"等能力开关。
     try {
       const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-conversation"), {
         method:"POST",
@@ -579,59 +697,108 @@ export function App() {
         body:JSON.stringify({
           session_id:sessionIdRef.current,
           ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {}),
-          limit:200
+          limit:1
         })
+      });
+      const body = await response.json();
+      if (epoch !== sessionEpochRef.current) return;
+      if (!response.ok) return;
+      updateSessionCredential(body);
+      if (body?.capabilities?.customer_upload) setUploadCapability(body.capabilities.customer_upload);
+    } catch {
+      // 能力位取不到时按"上传未启用"处理，不阻塞对话本身。
+    }
+  };
+
+  // 历史回读：客户与 AI 消息来自会话存储，人工顾问回复来自留档，由服务端合并后
+  // 一并返回。首次加载失败时页面给出重试入口，绝不把旧消息挂到新客户身上。
+  const reloadHistory = async () => {
+    const epoch = sessionEpochRef.current;
+    try {
+      const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-history"), {
+        method:"GET",
+        credentials:"include",
+        headers:publicHeaders()
       });
       const body = await response.json();
       if (epoch !== sessionEpochRef.current) return;
       if (!response.ok) throw new Error(body?.error?.message || "无法恢复上次的咨询记录");
       updateSessionCredential(body);
-      if (body?.capabilities?.customer_upload) setUploadCapability(body.capabilities.customer_upload);
-      const restored = Array.isArray(body.messages) ? body.messages.map(transcriptMessage) : [];
-      if (restored.length && !options.silent) setMessages(restored);
-      else if (restored.length && options.silent) {
-        setMessages((current) => {
-          const known = new Set(current.map((item) => item.id));
-          const additions = restored.filter((item) => !known.has(item.id) && !isRenderedAlready(item, current));
-          return additions.length ? [...current, ...additions] : current;
-        });
-      }
+      const restored = restoreConversationMessages(body.messages);
+      if (restored.length) setMessages(restored);
       setRestoreFailed(false);
     } catch (restoreError) {
       if (epoch !== sessionEpochRef.current) return;
-      if (!options.silent) {
-        setRestoreFailed(true);
-        setError(restoreError.message);
-      }
-    } finally {
-      if (epoch === sessionEpochRef.current && !options.silent) setRestoringSession(false);
+      setRestoreFailed(true);
+      setError(restoreError.message || "无法恢复当前会话，请刷新重试。");
     }
   };
 
   useEffect(() => {
     let cancelled = false;
     const epoch = sessionEpochRef.current;
-    void restoreConversation();
-    fetch(joinBaseUrl(API_BASE_URL, "/api/public/appointment-intakes/current"), { method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" }, body:"{}" })
-      .then(async (response) => { if (!response.ok) throw new Error("无法恢复到院登记，请刷新重试。"); return response.json(); })
-      .then((body) => {
-        if (cancelled || epoch !== sessionEpochRef.current) return;
-        updateSessionCredential(body);
-        if (body.intake) setAppointmentState({ status:"accepted", error:"", actionId:"", message:"", intake:body.intake });
-      }).catch((err) => { if (!cancelled && epoch === sessionEpochRef.current) setError(err.message); })
-      .finally(() => { if (!cancelled) setRestoringSession(false); });
+    (async () => {
+      let appointmentRestoreError = null;
+      try {
+        const currentResponse = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/appointment-intakes/current"), { method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" }, body:"{}" });
+        const current = await currentResponse.json();
+        if (!currentResponse.ok) throw new Error(current?.error?.message || "无法恢复到院登记");
+        if (!cancelled && epoch === sessionEpochRef.current) {
+          updateSessionCredential(current);
+          publicSessionReadyRef.current = true;
+          if (current.intake) setAppointmentState({ status:"accepted", error:"", actionId:"", message:"", intake:current.intake });
+        }
+      } catch (err) {
+        appointmentRestoreError = err;
+      }
+      // 能力位与历史回读都不阻塞“恢复到院登记”的结果：能力位失败只影响上传按钮。
+      if (!cancelled && epoch === sessionEpochRef.current) await loadUploadCapability();
+      if (!cancelled && epoch === sessionEpochRef.current) await reloadHistory();
+      if (cancelled || epoch !== sessionEpochRef.current) return;
+      if (appointmentRestoreError) setError(appointmentRestoreError.message);
+      setRestoringSession(false);
+    })();
     return () => { cancelled = true; };
   }, []);
 
-  // 人工接管时客户页没有推送通道，按可见性轮询补齐人工回复与系统事件。
+  // The public client confirms delivery only after it has fetched the staff
+  // message through its session-scoped history endpoint. This is not a read
+  // receipt: the server keeps read_status as not_reported.
   useEffect(() => {
-    if (!chatStarted) return undefined;
-    const timer = window.setInterval(() => {
-      if (globalThis.document?.visibilityState === "hidden") return;
-      void restoreConversation({ silent:true });
-    }, 5_000);
-    return () => window.clearInterval(timer);
-  }, [chatStarted]);
+    let cancelled = false;
+    const poll = async () => {
+      if (!publicSessionReadyRef.current) return;
+      try {
+        const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-history"), {
+          method:"GET", credentials:"include", headers:publicHeaders()
+        });
+        const history = await response.json();
+        if (!response.ok || cancelled) return;
+        updateSessionCredential(history);
+        const restored = restoreConversationMessages(history.messages);
+        if (restored.length) setMessages((current) => mergeConversationMessages(current, restored));
+        const pendingStaff = (history.messages || []).filter((message) =>
+          message?.from === "staff" && message?.delivery?.delivery_status !== "delivered"
+        );
+        await Promise.all(pendingStaff.map(async (message) => {
+          const deliveryResponse = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-deliveries"), {
+            method:"POST",
+            credentials:"include",
+            headers:publicHeaders(),
+            body:JSON.stringify({ message_id:message.id, session_id:sessionIdRef.current })
+          });
+          const delivery = await deliveryResponse.json();
+          if (deliveryResponse.ok) updateSessionCredential(delivery);
+        }));
+      } catch {
+        // Background delivery confirmation must never replace a usable chat UI
+        // with an error. The next poll safely retries the idempotent receipt.
+      }
+    };
+    const timer = window.setInterval(poll, 2_000);
+    void poll();
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
 
   const changeAppointment = async (action, time) => {
     const intake = appointmentState.intake;
@@ -650,7 +817,10 @@ export function App() {
         }
         throw new Error(body?.error?.message || "更新失败，请稍后重试。");
       }
-      setAppointmentState((current) => ({ ...current, status:"accepted", error:"", intake:body.intake, message:body.message }));
+      setAppointmentState((current) => {
+        if (!shouldApplyAppointmentResponse(current.intake, intake, body.intake)) return current;
+        return { ...current, status:"accepted", error:"", intake:body.intake, message:body.message };
+      });
     } catch (err) { if (epoch === sessionEpochRef.current) setAppointmentState((current) => ({ ...current, status:"accepted", error:err.message })); }
   };
 
@@ -760,6 +930,7 @@ export function App() {
       body:JSON.stringify({
         message:question,
         client_message_id:messageKey,
+        message_id:messageKey,
         since_seq:since,
         session_id:sessionIdRef.current,
         ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {})
@@ -802,7 +973,7 @@ export function App() {
       method:"POST",
       credentials:"include",
       headers:{ ...publicHeaders(), "Idempotency-Key":messageKey },
-      body:JSON.stringify({ message:question, client_message_id:messageKey, session_id:sessionIdRef.current, ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {}) }),
+      body:JSON.stringify({ message:question, client_message_id:messageKey, message_id:messageKey, session_id:sessionIdRef.current, ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {}) }),
       signal:controller.signal
     });
     const body = await response.json();
@@ -811,40 +982,64 @@ export function App() {
   };
 
   // 最终回执为准：未提交的流式片段在这里被丢弃，替换成服务端确认过的分段答复。
-  const applyReplyReceipt = (body, messageKey) => {
+  // 同时保留 B 的“服务端整段答复 ↔ 本地分段气泡”对账信息，历史轮询命中同一轮
+  // 时替换而不是重复渲染。
+  const applyReplyReceipt = (body, messageKey, question = "") => {
     updateSessionCredential(body);
     if (body.lead_receipt?.status === "accepted") setLeadState({ status:"captured", error:"", result:body.lead_receipt, consentText:"" });
     const segments = Array.isArray(body.reply_segments)
       ? body.reply_segments.map((item) => String(item || "").trim()).filter(Boolean)
       : [];
     const replySegments = segments.length ? segments : [String(body.reply || "").trim()].filter(Boolean);
+    // 预约提案可能带“先留联系方式”的要求一起回来；项目名按客户原话兜底。
+    const bookingProject = appointmentProjectFromMessage(question);
+    const responseProfileSignals = {
+      ...(body.profile_signals || {}),
+      projects:bookingProject ? [bookingProject] : (body.profile_signals?.projects || [])
+    };
+    const handoverAppointmentProposal = body.delivery?.suppress_ai === true && body.orchestration?.action_proposal?.type === "appointment_request"
+      ? body.orchestration.action_proposal : null;
+    if (handoverAppointmentProposal) {
+      setAppointmentState((current) => ({
+        ...current,
+        proposal:handoverAppointmentProposal,
+        profileSignals:responseProfileSignals
+      }));
+    }
     const replyGroupId = body.run_id || `assistant-${Date.now()}`;
+    const serverReplyId = String(body.assistant_message_id || `${messageKey}:reply`);
+    const serverReplyText = String(body.reply || replySegments.join("\n")).trim();
     const replyAt = new Date().toISOString();
-    setMessages((current) => current
-      .filter((item) => item.id !== `stream-${messageKey}`)
-      .map((item) => item.id.startsWith("user-") && item.clientMessageId === messageKey
-        ? { ...item, status:"confirmed", runId:replyGroupId, confirmedAt:replyAt }
-        : item)
-      .concat(replySegments.map((content, index) => {
-        const isFinalSegment = index === replySegments.length - 1;
-        return {
-          id:`${replyGroupId}-${index + 1}`,
-          groupId:replyGroupId,
-          role:"assistant",
-          source:body.handover?.required ? "system" : "ai",
-          content,
-          isContinuation:index > 0,
-          isFinalSegment,
-          citations:isFinalSegment ? body.citations || [] : [],
-          media:isFinalSegment ? body.media || [] : [],
-          status:body.status,
-          handover:isFinalSegment ? body.handover : null,
-          profileSignals:isFinalSegment ? body.profile_signals : null,
-          leadCapture:isFinalSegment ? body.lead_capture : null,
-          orchestration:isFinalSegment ? body.orchestration : null,
-          at:replyAt
-        };
-      })));
+    const presentationSegments = replySegments.map((content, index) => {
+      const isFinalSegment = index === replySegments.length - 1;
+      return {
+        id:`${replyGroupId}-${index + 1}`,
+        groupId:replyGroupId,
+        serverReplyId,
+        serverReplyText,
+        role:"assistant",
+        source:body.handover?.required ? "system" : "ai",
+        content,
+        isContinuation:index > 0,
+        isFinalSegment,
+        citations:isFinalSegment ? body.citations || [] : [],
+        media:isFinalSegment ? body.media || [] : [],
+        status:body.status,
+        handover:isFinalSegment ? body.handover : null,
+        profileSignals:isFinalSegment ? responseProfileSignals : null,
+        leadCapture:isFinalSegment ? body.lead_capture : null,
+        orchestration:isFinalSegment ? body.orchestration : null,
+        at:replyAt
+      };
+    });
+    setMessages((current) => {
+      const confirmed = current
+        .filter((item) => item.id !== `stream-${messageKey}`)
+        .map((item) => item.clientMessageId === messageKey
+          ? { ...item, status:"confirmed", runId:replyGroupId, confirmedAt:replyAt, optimistic:false }
+          : item);
+      return mergeReplySegments(confirmed, presentationSegments);
+    });
   };
 
   // A-025 AC2：客户上传图片/资料（受服务端能力位控制；失败可重试，客户附件不进知识引用）。
@@ -904,7 +1099,9 @@ export function App() {
     inputRef.current?.focus({ preventScroll:true });
     setMessages((current) => retryOfId
       ? current.map((item) => item.id === retryOfId ? { ...item, status:"sending", error:"" } : item)
-      : [...current, { id:`user-${Date.now()}`, clientMessageId:messageKey, role:"user", content:question, at:new Date().toISOString(), status:"sending", error:"" }]);
+      // 本地消息 id 与服务端 message_id 用同一个标识：历史轮询回来时是替换
+      // 这条乐观消息，而不是再追加一遍。
+      : [...current, { id:messageKey, clientMessageId:messageKey, role:"user", content:question, at:new Date().toISOString(), status:"sending", error:"", optimistic:true }]);
     if (!retryOfId) setInput("");
     setError("");
     setIsLoading(true);
@@ -920,7 +1117,7 @@ export function App() {
         // 流式通道不可用时回落到普通接口，保证客户仍能拿到回执。
         receipt = await requestReplyReceipt({ question, messageKey, controller });
       }
-      applyReplyReceipt(receipt, messageKey);
+      applyReplyReceipt(receipt, messageKey, question);
     } catch (requestError) {
       const stopped = stoppedByUserRef.current;
       const timedOut = requestError.name === "AbortError" && !stopped;
@@ -929,7 +1126,7 @@ export function App() {
         : timedOut
           ? "本次咨询响应时间较长，请稍后重新提问。"
           : requestError.message;
-      setMessages((current) => current.map((item) => item.id.startsWith("user-") && item.clientMessageId === messageKey
+      setMessages((current) => current.map((item) => item.clientMessageId === messageKey
         ? { ...item, status:stopped ? "stopped" : "failed", error:stopped ? "" : failure }
         : item));
       if (stopped) setError("");
@@ -963,7 +1160,8 @@ export function App() {
     void sendQuestion({ question:message.content, clientMessageId:message.clientMessageId, retryOfId:message.id });
   };
 
-  const leadPromptMessageId = [...messages].reverse().find((message) => message.role === "assistant" && message.leadCapture?.should_prompt)?.id;
+  const leadPromptMessageId = [...messages].reverse().find((message) => message.role === "assistant"
+    && (message.leadCapture?.should_prompt || appointmentLeadCaptureRequired(message)))?.id;
 
   return (
     <div className={`advisor-shell ${chatStarted ? "chat-mode" : "welcome-mode"}`}>
@@ -1007,12 +1205,13 @@ export function App() {
             return <ChatMessage key={message.id} message={message} showLeadCapture={message.id === leadPromptMessageId && !leadState.result} leadState={leadState} appointmentState={appointmentState} onLeadSubmit={submitLead} onAppointmentSubmit={submitAppointment} feedback={feedbackByReply[feedbackKey]} onFeedback={(rating) => submitFeedback(message, rating)} onPreview={setKnowledgePreview} onRetry={retryQuestion} />;
           })}
           {leadState.result && <LeadCaptureCard result={leadState.result} status={leadState.status} error="" prompt={{}} onSubmit={submitLead} />}
+          {appointmentState.proposal && !appointmentState.intake && <AppointmentActionCard proposal={appointmentState.proposal} profileSignals={appointmentState.profileSignals} leadCaptured={Boolean(leadState.result)} state={appointmentState} onSubmit={submitAppointment} allowSubjectEntry />}
           <AppointmentRegistrationCard state={appointmentState} onChange={changeAppointment} />
           {restoreFailed && (
             <div className="restore-failed" role="alert">
               <p>上次的咨询记录暂时无法恢复，可以重试或直接开始新的咨询。</p>
               <div className="restore-actions">
-                <button type="button" onClick={() => { setRestoringSession(true); void restoreConversation(); }}>重试恢复</button>
+                <button type="button" onClick={() => { setRestoringSession(true); void reloadHistory().finally(() => setRestoringSession(false)); }}>重试恢复</button>
                 <button type="button" onClick={resetConversation}>开始新对话</button>
               </div>
             </div>
@@ -1030,7 +1229,6 @@ export function App() {
             </article>
           )}
           {error && <span className="sr-only">{error}</span>}
-          <div ref={messageEndRef} />
         </div>
         <Composer value={input} onChange={setInput} onSubmit={submitQuestion} disabled={isLoading || restoringSession} restoringSession={restoringSession} inputRef={inputRef} onStop={stopWaiting} waiting={isLoading} uploadCapability={uploadCapability} onUpload={submitUpload} uploadError={uploadError} onRetryUpload={() => submitUpload(pendingUploadRef.current)} />
       </main>

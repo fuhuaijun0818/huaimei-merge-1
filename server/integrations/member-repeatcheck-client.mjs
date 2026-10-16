@@ -1,11 +1,20 @@
-import { createHash, createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { memberRepeatCheckSigner, memberRepeatCheckSigningConfigured } from "./member-repeatcheck-signing.mjs";
+import { getObservability, getRequestContext } from "../observability/index.mjs";
 
 export const MEMBER_REPEATCHECK_METHOD = "meb.sync.client.repeatcheck";
 const SCHEMA = "huamei.member-repeatcheck.v1";
 const MAX_RESPONSE_BYTES = 16 * 1024;
 const PROVIDED_HEADERS_ENDPOINT = "https://scrm.shhmwz.cn/api/thirdApi/checkPhoneExists";
-const normalizeMobile = (value) => String(value || "").replace(/^\+?86/, "").replace(/[\s()-]/g, "");
+const memberCheckObservability = getObservability({
+  service:process.env.HUAMEI_SERVICE_NAME || "huamei-acquisition",
+  environment:process.env.HUAMEI_RUNTIME_ENV || process.env.NODE_ENV || "development"
+});
+const normalizeMobile = (value) => {
+  const digits = String(value ?? "").normalize("NFKC").replace(/\D/g, "");
+  if (/^1[3-9]\d{9}$/.test(digits)) return digits;
+  return digits.replace(/^(?:00)?86/, "");
+};
 const clean = (value, limit = 100) => String(value || "").trim().slice(0, limit);
 const fingerprint = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 const failure = (code) => Object.assign(new Error(code), { code });
@@ -82,12 +91,13 @@ async function readBoundedJson(response, signal) {
 // Injectable signer and transport are server-only dependencies, never HTTP input.
 export function createMemberRepeatCheckClient({
   env = process.env, signRequest = memberRepeatCheckSigner,
-  fetchImpl = globalThis.fetch, now = () => Date.now()
+  fetchImpl = globalThis.fetch, now = () => Date.now(), logger = memberCheckObservability.logger
 } = {}) {
   const config = memberRepeatCheckConfiguration(env, signRequest);
   const timeoutMs = Math.min(5_000, Math.max(100, Number(env.HUAMEI_MEMBER_CHECK_TIMEOUT_MS) || 2_000));
   const configuredCacheMs = Number(env.HUAMEI_MEMBER_CHECK_CACHE_MS ?? 60_000);
   const cacheMs = Math.min(300_000, Math.max(0, Number.isFinite(configuredCacheMs) ? configuredCacheMs : 60_000));
+  const maxAttempts = Math.min(5, Math.max(1, Number(env.HUAMEI_MEMBER_CHECK_MAX_ATTEMPTS) || 3));
   const tenantBinding = clean(env.HUAMEI_MEMBER_CHECK_TENANT_ID);
   const policyFingerprint = fingerprint([
     env.HUAMEI_MEMBER_CHECK_URL, tenantBinding, env.HUAMEI_MEMBER_CHECK_HOSPITAL_CODE,
@@ -97,6 +107,21 @@ export function createMemberRepeatCheckClient({
       env.HUAMEI_MEMBER_CHECK_PROVIDED_NONCE, env.HUAMEI_MEMBER_CHECK_PROVIDED_SIGN] : [])
   ]);
   const inFlight = new Map();
+  const logProviderRequest = ({ requestId, outcome, durationMs, errorCode = null }) => {
+    // request_id / trace_id are injected from the trusted request context by
+    // the structured logger. Never include endpoint, contact data, headers,
+    // signatures or credentials in this audit event.
+    try {
+      logger?.info?.("member_check.request.completed", {
+        request_id:requestId,
+        provider:"huamei_repeatcheck",
+        operation:"member_check",
+        outcome,
+        duration_ms:Math.max(0, Math.round(Number(durationMs) || 0)),
+        ...(errorCode ? { error_code:errorCode } : {})
+      });
+    } catch { /* Observability must not alter a member-check outcome. */ }
+  };
   const record = (status, reason, at, extra = {}) => ({
     schema:SCHEMA, provider:"huamei_repeatcheck", auth_mode:config.auth_mode, status,
     is_repeat:null, member_status:"unknown", result_semantics:config.result_semantics,
@@ -104,8 +129,12 @@ export function createMemberRepeatCheckClient({
     reason_code:reason, policy_fingerprint:policyFingerprint, ...extra
   });
 
-  async function check({ tenantId, sessionId, mobile, subjectReferenceHmac, verification, name, previous } = {}) {
+  async function check({ tenantId, sessionId, mobile, subjectReferenceHmac, verification, name, previous, forceRefresh = false } = {}) {
     const at = now();
+    // Lead persistence may finish the HTTP response before the provider call.
+    // Preserve the inbound identifier for that asynchronous continuation; a
+    // server-generated identifier still makes background runs auditable.
+    const requestId = getRequestContext()?.requestId || `member_check_${randomUUID()}`;
     const phone = normalizeMobile(mobile);
     try {
       const identity = createHmac("sha256", String(env.HUAMEI_IDENTITY_PEPPER || "times-beauty-local-mvp-v1"))
@@ -122,7 +151,7 @@ export function createMemberRepeatCheckClient({
     if (tenantId !== tenantBinding) return record("not_configured", "TENANT_NOT_CONFIGURED", at);
 
     const age = at - Date.parse(previous?.checked_at || "");
-    if (previous?.schema === SCHEMA && previous.provider === "huamei_repeatcheck"
+    if (!forceRefresh && previous?.schema === SCHEMA && previous.provider === "huamei_repeatcheck"
         && previous.status === "checked" && typeof previous.is_repeat === "boolean"
         && previous.policy_fingerprint === policyFingerprint && age >= 0 && age < cacheMs) {
       return record("checked", null, Date.parse(previous.attempted_at) || at, {
@@ -131,11 +160,24 @@ export function createMemberRepeatCheckClient({
         checked_at:previous.checked_at
       });
     }
+    const previousAttempts = Number(previous?.retry_count) || 0;
+    if (previous?.schema === SCHEMA && previous.provider === "huamei_repeatcheck"
+        && previous.status === "failed" && previousAttempts >= maxAttempts) {
+      return record("failed", "RETRY_EXHAUSTED", at, { retry_count:previousAttempts, next_retry_at:null });
+    }
+    const retryAt = Date.parse(previous?.next_retry_at || "");
+    if (previous?.schema === SCHEMA && previous.provider === "huamei_repeatcheck"
+        && previous.status === "failed" && Number.isFinite(retryAt) && retryAt > at) {
+      return record("failed", previous.reason_code || "PROVIDER_UNAVAILABLE", at, {
+        retry_count:previousAttempts, next_retry_at:previous.next_retry_at
+      });
+    }
     const key = `${tenantId}:${subjectReferenceHmac}`;
     if (inFlight.has(key)) return structuredClone(await inFlight.get(key));
 
     const controller = new AbortController();
     let timer;
+    const startedAt = Date.now();
     const perform = async () => {
       const suppliedHeaders = config.auth_mode === "provided_headers";
       const unsigned = config.auth_mode === "none";
@@ -183,9 +225,25 @@ export function createMemberRepeatCheckClient({
     const pending = Promise.race([
       Promise.resolve().then(perform),
       new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(failure("TIMEOUT")); }, timeoutMs); })
-    ]).catch((error) => record("failed",
-      ["TIMEOUT", "SIGNATURE_UNAVAILABLE", "PROVIDER_UNAVAILABLE", "PROVIDER_REJECTED", "PROVIDER_SIGNATURE_REQUIRED", "INVALID_RESPONSE"].includes(error?.code) ? error.code : "PROVIDER_UNAVAILABLE", at
-    )).finally(() => { clearTimeout(timer); controller.abort(); inFlight.delete(key); });
+    ]).then((result) => {
+      logProviderRequest({ requestId, outcome:"success", durationMs:Date.now() - startedAt });
+      return result;
+    }).catch((error) => {
+      const reason = ["TIMEOUT", "SIGNATURE_UNAVAILABLE", "PROVIDER_UNAVAILABLE", "PROVIDER_REJECTED", "PROVIDER_SIGNATURE_REQUIRED", "INVALID_RESPONSE"].includes(error?.code) ? error.code : "PROVIDER_UNAVAILABLE";
+      const retryCount = previousAttempts + 1;
+      const delayMs = Math.min(60_000, 500 * (2 ** Math.max(0, retryCount - 1)));
+      const result = record("failed", reason, at, {
+        retry_count:retryCount,
+        next_retry_at:new Date(at + delayMs).toISOString()
+      });
+      logProviderRequest({
+        requestId,
+        outcome:reason === "TIMEOUT" ? "timeout" : "failed",
+        durationMs:Date.now() - startedAt,
+        errorCode:reason
+      });
+      return result;
+    }).finally(() => { clearTimeout(timer); controller.abort(); inFlight.delete(key); });
     inFlight.set(key, pending);
     return structuredClone(await pending);
   }

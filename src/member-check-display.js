@@ -6,6 +6,9 @@ export function memberCheckPresentation(check) {
   if (check.status === "not_configured") return { label:"待接入院方接口", tone:"warning", checkedAt:null };
   if (check.status === "capture_required") return { label:"手机号尚未有效保存", tone:"warning", checkedAt:null };
   if (check.status === "failed" && check.reason_code === "PROVIDER_SIGNATURE_REQUIRED") return {label:"手机号已保存；院方接口验签配置待确认",tone:"warning",checkedAt:null};
+  if (check.status === "failed" && check.reason_code === "TIMEOUT") return {label:"院方核验超时，可稍后重试",tone:"warning",checkedAt:null};
+  if (check.status === "failed" && check.reason_code === "RETRY_EXHAUSTED") return {label:"院方核验失败，已达到重试上限",tone:"danger",checkedAt:null};
+  if (check.status === "failed" && check.reason_code === "PROVIDER_UNAVAILABLE") return {label:"院方接口暂不可用，可稍后重试",tone:"warning",checkedAt:null};
   if (check.status !== "checked" || typeof check.is_repeat !== "boolean" || !Number.isFinite(Date.parse(check.checked_at))) {
     return { label:"核验未完成，待重试", tone:"warning", checkedAt:null };
   }

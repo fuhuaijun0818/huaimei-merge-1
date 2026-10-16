@@ -30,6 +30,19 @@ assert.equal(migratedRoleOverlay.managementUsers.find((item) => item.id === "U-l
 assert.equal(migratedRoleOverlay.managementUsers.find((item) => item.id === "U-legacy-sales")?.roleId, "R-PRESALES");
 assert.equal(migratedRoleOverlay.managementUsers.find((item) => item.id === "U-legacy-medical")?.roleId, "R-PRESALES");
 
+store.hydrateManagementOverlay({
+  revision:7,
+  overlay:{
+    currentRole:"管理者",
+    managementUsers:[], managementRoles:[], customers:[], tasks:[], conversations:[],
+    journeys:[], agents:[], connectors:[], audit:[], handovers:[], configurationRecords:[],
+    productOverrides:[], physicianOverrides:[], knowledgeOverrides:[]
+  }
+});
+const overlayAfterRoleNormalization = store.managementOverlay();
+assert.deepEqual(overlayAfterRoleNormalization.managementRoles, [], "话术保存不得把页面重建的固定角色目录回写到受保护的服务端字段");
+assert.deepEqual(overlayAfterRoleNormalization.managementUsers, [], "话术保存不得改写服务端用户集合");
+
 // Local management runtime no longer ships fictional customers. Add an
 // operator-created record to validate the real write path in isolation.
 store.state.customers.push({
@@ -117,21 +130,38 @@ assert.ok(store.state.audit.some((item) => item.action === "更新运营配置" 
 store.upsertAcquisitionSnapshot({
   customers:[
     { id:"C-acquisition-test", origin:"acquisition_advisor", dataClassification:"test", name:"留资测试客户" },
-    { id:"C-acquisition-operational", origin:"acquisition_advisor", dataClassification:"production", name:"真实咨询客户" }
+    { id:"C-acquisition-operational", origin:"acquisition_advisor", dataClassification:"production", name:"真实咨询客户" },
+    { id:"C-acquisition-production-named-test", origin:"acquisition_advisor", dataClassification:"production", name:"测试6321" }
   ],
   conversations:[
     { id:"V-acquisition-test", customerId:"C-acquisition-test" },
-    { id:"V-acquisition-operational", customerId:"C-acquisition-operational" }
+    { id:"V-acquisition-operational", customerId:"C-acquisition-operational" },
+    { id:"V-acquisition-production-named-test", customerId:"C-acquisition-production-named-test" }
   ],
   tasks:[
     { id:"T-acquisition-test", customerId:"C-acquisition-test" },
-    { id:"T-acquisition-operational", customerId:"C-acquisition-operational" }
+    { id:"T-acquisition-operational", customerId:"C-acquisition-operational" },
+    { id:"T-acquisition-production-named-test", customerId:"C-acquisition-production-named-test" }
   ]
 });
 assert.equal(store.state.customers.some((item) => item.id === "C-acquisition-test"), false, "明确标记的测试留资不得进入运营客户列表");
 assert.equal(store.state.conversations.some((item) => item.id === "V-acquisition-test"), false, "测试留资关联会话必须同步隔离");
 assert.equal(store.state.tasks.some((item) => item.id === "T-acquisition-test"), false, "测试留资关联任务必须同步隔离");
 assert.equal(store.state.customers.some((item) => item.id === "C-acquisition-operational"), true, "生产留资必须继续进入运营客户列表");
+assert.equal(store.state.customers.some((item) => item.id === "C-acquisition-production-named-test"), true, "生产客户名称含测试字样时不得被隐藏");
+assert.equal(store.state.conversations.some((item) => item.id === "V-acquisition-production-named-test"), true, "生产客户名称含测试字样时关联会话必须可见");
+assert.equal(store.state.tasks.some((item) => item.id === "T-acquisition-production-named-test"), true, "生产客户名称含测试字样时关联任务必须可见");
+
+store.upsertAcquisitionSnapshot({
+  customers:[],
+  conversations:[],
+  tasks:[],
+  meta:{ authoritative:true, incremental:false }
+});
+assert.equal(store.state.customers.some((item) => item.id === "C-acquisition-operational"), false, "正式全量快照不含的获客客户不得残留在新实例中");
+assert.equal(store.state.conversations.some((item) => item.id === "V-acquisition-operational"), false, "正式全量快照不含的获客会话不得在刷新后继续显示");
+assert.equal(store.state.tasks.some((item) => item.id === "T-acquisition-operational"), false, "正式全量快照不含的获客任务不得在刷新后继续显示");
+assert.equal(store.state.customers.some((item) => item.id === "C-test-local"), true, "非获客的本地运营数据不得被获客全量同步清除");
 
 const product = store.addProduct({ name:"测试产品", department:"皮肤美容科", category:"测试分类" });
 assert.ok(product?.id, "creating a product must return a product");
@@ -155,6 +185,11 @@ assert.doesNotMatch(subpagesSource, /\[\["overview", "产品管理"\], \["prices
 assert.doesNotMatch(subpagesSource, /function catalogPrices\(/, "pricing page renderer must be removed when price is a product field");
 assert.match(subpagesSource, /常用话术库/, "sales staff need a dedicated phrase-library entry");
 assert.match(subpagesSource, /会话窗口可插入/, "enabled phrases must be marked as insertable in the conversation workspace");
+assert.match(subpagesSource, /\["系统管理员", "管理员", "管理者", "超级管理员"\]/, "标准化后的系统管理员和超级管理员都必须拥有话术目录维护入口");
+assert.match(appSource, /const persisted = await flushManagementOverlay\(\);[\s\S]{0,260}话术模板尚未保存到本地服务/, "话术创建必须等待服务端持久化，不能仅显示浏览器内成功状态");
+assert.match(appSource, /if \(managementPersistInFlight\) \{\s*const priorSaved = await managementPersistPromise;\s*return priorSaved \? flushManagementOverlay\(\) : false;/, "保存中的旧快照完成后必须继续保存最新话术，而不能向操作人误报失败");
+assert.match(appSource, /if \(!ui\.managementDataReady \|\| ui\.managementDataLoading\) \{\s*toast\("正在读取本地服务中的话术配置，请稍候再创建"/, "服务端revision水合完成前不得创建浏览器临时话术");
+assert.match(appSource, /ui\.managementDataReady=handoverOnlyMode;/, "启动阶段必须等服务端overlay水合后才允许管理写入");
 assert.match(subpagesSource, /一期角色说明（只读）/, "role management must describe the fixed phase-one model");
 assert.doesNotMatch(subpagesSource, /data-action="new-management-role"/, "the role page must not render a create-role action");
 assert.doesNotMatch(subpagesSource, /data-action="edit-management-role"/, "the role page must not render role edit actions");

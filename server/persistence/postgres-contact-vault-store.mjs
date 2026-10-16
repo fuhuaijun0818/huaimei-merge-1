@@ -18,9 +18,11 @@ const contactError = (code, message, status = 409, details = []) => {
   return error;
 };
 
-const normalizedMobile = (value) => String(value || "")
-  .replace(/^\+?86/, "")
-  .replace(/[\s()-]/g, "");
+const normalizedMobile = (value) => {
+  const digits = String(value ?? "").normalize("NFKC").replace(/\D/g, "");
+  if (/^1[3-9]\d{9}$/.test(digits)) return digits;
+  return digits.replace(/^(?:00)?86/, "");
+};
 const maskMobile = (mobile) => `${mobile.slice(0, 3)}****${mobile.slice(-4)}`;
 const productionEnvironment = (env) => ["prod", "production"].includes(String(
   env.HUAMEI_RUNTIME_ENV || env.HUAMEI_DEPLOYMENT_ENV || env.NODE_ENV || "development"
@@ -82,7 +84,7 @@ export async function persistContactInLeadTransaction(client, options = {}) {
      FOR UPDATE`,
     [tenantId, leadRecordId]
   );
-  if (current.rowCount && current.rows[0].subject_reference_hmac !== subjectReferenceHmac) {
+  if (current.rowCount && current.rows[0].subject_reference_hmac !== subjectReferenceHmac && options.allowSubjectRotation !== true) {
     throw contactError(
       "CONTACT_VAULT_SUBJECT_CONFLICT",
       "The lead contact vault is already bound to another captured subject",
@@ -108,6 +110,7 @@ export async function persistContactInLeadTransaction(client, options = {}) {
      VALUES ($1,$2,$3,$4,'mobile','service_callback',$5::jsonb,$6,$7,$8,$9,NULL,$10,'active')
      ON CONFLICT (tenant_id,lead_record_id,contact_type)
      DO UPDATE SET
+       subject_reference_hmac=EXCLUDED.subject_reference_hmac,
        encrypted_value=EXCLUDED.encrypted_value,
        masked_value=EXCLUDED.masked_value,
        encryption_key_id=EXCLUDED.encryption_key_id,
@@ -363,6 +366,56 @@ export function createPostgresContactVaultStore(options = {}) {
     return result.data;
   };
 
+  // Server-internal decrypt used by the audited manual member re-check.  The
+  // plaintext never leaves the server: the caller only forwards it to the member
+  // directory client, and every read is recorded as its own audit event.
+  const readMobileForMemberCheck = async ({
+    client, tenantId, leadRecordId, subjectReferenceHmac, actor, requestId = null
+  } = {}) => {
+    const normalizedTenant = String(tenantId || "").trim().toLowerCase();
+    const normalizedActor = String(actor || "").trim();
+    if (!normalizedTenant || !leadRecordId || !actorPattern.test(normalizedActor)) {
+      throw contactError("CONTACT_MEMBER_CHECK_REQUEST_INVALID", "Member re-check request is invalid", 400);
+    }
+    const result = await client.query(
+      `SELECT contact_reference,lead_record_id,subject_reference_hmac,contact_type,status,
+              encrypted_value,masked_value,encryption_key_id
+       FROM contact_vault_entries
+       WHERE tenant_id=$1 AND lead_record_id=$2 AND contact_type='mobile'
+       FOR UPDATE`,
+      [normalizedTenant, leadRecordId]
+    );
+    const row = result.rows[0];
+    if (!row || row.status !== "active") {
+      throw contactError("CONTACT_VAULT_UNAVAILABLE", "该客户没有可用的手机号保存记录", 409);
+    }
+    if (row.subject_reference_hmac !== subjectReferenceHmac) {
+      throw contactError("CONTACT_VAULT_SUBJECT_MISMATCH", "联系方式主体绑定校验失败", 409);
+    }
+    let mobile;
+    try {
+      mobile = encryption.decryptMobile(
+        jsonValue(row.encrypted_value, {}),
+        contactContext({ ...row, tenant_id:normalizedTenant })
+      );
+    } catch {
+      await appendAuditEvent(client, {
+        tenantId:normalizedTenant, action:"contact.member_check_read_failed",
+        resourceType:"contact_vault_entry", resourceId:row.contact_reference,
+        actorType:"human", actorId:normalizedActor, requestId, outcome:"failure",
+        details:{ reason_code:"CONTACT_VAULT_DECRYPTION_FAILED", purpose:"member_check" }
+      });
+      throw contactError("CONTACT_VAULT_DECRYPTION_FAILED", "联系方式保险库暂时不可用", 503);
+    }
+    await appendAuditEvent(client, {
+      tenantId:normalizedTenant, action:"contact.member_check_read",
+      resourceType:"contact_vault_entry", resourceId:row.contact_reference,
+      actorType:"human", actorId:normalizedActor, requestId, outcome:"success",
+      details:{ purpose:"member_check", reason:"manual_member_recheck", masking:row.masked_value }
+    });
+    return mobile;
+  };
+
   const readiness = async (tenantId) => {
     if (!encryption.enabled) {
       return { ok:false, status:"not_ready", encryption:"missing", storage:"postgres" };
@@ -387,6 +440,7 @@ export function createPostgresContactVaultStore(options = {}) {
 
   return Object.freeze({
     persistInTransaction,
+    readMobileForMemberCheck,
     revealForClaimedHandover,
     revealForClaimedAppointment:(input) => revealForClaimedHandover({ ...input, handoverId:undefined }),
     readiness,

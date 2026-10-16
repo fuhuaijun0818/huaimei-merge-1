@@ -147,6 +147,7 @@ assert.match(routerSource, /MANAGEMENT_ROLES\.runsRead/);
 assert.match(routerSource, /\/api\/admin\/knowledge\/governance/);
 assert.match(routerSource, /MANAGEMENT_ROLES\.knowledgeRead/);
 assert.match(routerSource, /actorId:principal\.subject/, "管理访问审计必须保留OIDC subject");
+assert.match(routerSource, /postgresPersistenceEnabled\(\)/, "隔离PostgreSQL也必须写入管理访问审计，不能只在productionRuntime写入");
 assert.match(serverSource, /adminAuthenticated\s*&&\s*!productionRuntime/, "生产不得把Basic标记为管理身份");
 assert.match(caddySource, /@management_api[\s\S]*\/api\/admin\/\*[\s\S]*\/api\/local\/\*[\s\S]*\/api\/v1\/runs/);
 assert.match(openApiSource, /OidcBearerAuth/, "OpenAPI必须声明管理端OIDC Bearer认证");

@@ -1,0 +1,36 @@
+{
+  "role": "B",
+  "task_id": "B-D02-phone-profile-001",
+  "summary": "修复手机号规范化与客户资料更正：支持带空格/国家码手机号，资料保存写回服务端并使用版本控制；电话变更独立触发会员状态查询。",
+  "acceptance_steps": [
+    "客户360选择客户并点击编辑画像，姓名、联系偏好、禁止联系、标签可提交；手机号不变时留空，变更时输入规范化号码。",
+    "服务端通过 PATCH /api/admin/acquisition/customers/{customerId} 保存，返回资料版本和会员查询状态；旧版本提交返回 PROFILE_VERSION_CONFLICT。",
+    "手机号格式先去除空格、括号和 +86/86，再按11位大陆手机号校验；不增加OTP。"
+  ],
+  "tests": [
+    { "command": "node tests/lead-store.mjs", "status": "passed", "evidence": "本地输出：手机号格式、客户资料更新、电话变更会员重查、版本冲突通过" },
+    { "command": "node tests/member-repeatcheck.mjs", "status": "passed", "evidence": "本地输出：会员查重动态请求、失败/超时和脱敏通过" },
+    { "command": "node tests/customer-presentation.mjs", "status": "passed", "evidence": "本地输出：customer presentation passed" },
+    { "command": "npm run team:build", "status": "passed", "evidence": "Vite build completed; Sites build prepared" },
+    { "command": "npm run team:test:mock", "status": "passed", "evidence": "54 Mock contract checks passed; recorded as Mock only" },
+    { "command": "npm run team:test:http", "status": "passed", "evidence": "14 isolated real Node HTTP checks passed; local_json, member/LLM disabled" },
+    { "command": "npm run team:verify", "status": "passed", "evidence": "13 baseline suites passed" }
+  ],
+  "shared_changes": [
+    { "path": "server/api-router.mjs", "reason": "新增受管理端鉴权保护的客户资料 PATCH 入口" },
+    { "path": "server/openapi.mjs", "reason": "登记客户资料 PATCH 接口契约" },
+    { "path": "src/app.js", "reason": "客户360编辑表单和禁止联系展示；共享入口变更" },
+    { "path": "src/operations-client.js", "reason": "新增管理端客户资料更新客户端" }
+  ],
+  "api_changes": [
+    "PATCH /api/admin/acquisition/customers/{customerId}: body={expected_version,patch}; 需要客户读取权限；成功返回版本化客户资料和会员查询状态。"
+  ],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "本轮未连接隔离 PostgreSQL，数据库端代码仅完成静态检查；真实数据库/RLS/加密接入仍需独立验收。",
+    "会员接口仍按现有配置运行；真实院方接口未调用，Mock 与真实本机 HTTP 证据分开记录。"
+  ],
+  "rollback": "回退本任务涉及的 lead-store、Postgres lead/contact-vault、api-router/openapi、operations-client、app 与 lead-store 测试增量；不回退其他协作者未相关改动。"
+}

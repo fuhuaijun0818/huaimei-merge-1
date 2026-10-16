@@ -116,7 +116,9 @@ const runtimeAgentMetrics = () => new Map((store.state.agents || []).map((agent)
 const percent = (part, total) => total ? Math.round(part / total * 100) : 0;
 
 const configurationRecords = (kind) => (store.state.configurationRecords || []).filter((item) => item.kind === kind);
-const isPhaseOneAdministrator = () => ["管理员", "管理者"].includes(store.state.currentRole);
+// 超级管理员拥有平台范围的管理员能力；不能因为这里仍沿用一期
+// “管理员”文案而把其排除在话术、分群等运营配置维护入口之外。
+const isPhaseOneAdministrator = () => ["系统管理员", "管理员", "管理者", "超级管理员"].includes(store.state.currentRole);
 
 const segmentMembers = (segment, customers = store.state.customers || []) => {
   const criteria = segment.criteria || {};

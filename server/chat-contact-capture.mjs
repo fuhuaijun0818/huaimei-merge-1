@@ -51,8 +51,14 @@ export async function captureChatContact(envelope, saveLead) {
         message:`收到，${intent.name ? '姓名和' : ''}手机号已保存。后续顾问联系时会人工核对，您也可以继续在这里咨询。`
           + (preference ? `已记录您希望${preference.label}联系的偏好，回电安排仍需顾问人工确认。` : ''),
         ...(preference ? { contact_preference:{ label:preference.label, evidence:preference.evidence } } : {}) };
-    } catch {
-      receipt = { status:'failed', message:'手机号暂未保存成功，请稍后重新发送。您可以继续在线咨询。' };
+    } catch (error) {
+      // A stored 禁止联系 preference is an explicit refusal, not a storage
+      // failure: never claim the number was captured or that a call is coming.
+      // A 的联系偏好回执（上一段）与 B 的拒绝语义（本段）都保留：被拒绝联系时按
+      // “已按偏好处理”回执，而不是谎称保存失败；真正的保存失败仍保留重试文案。
+      receipt = error?.code === 'PRIVACY_CONTACT_SUPPRESSED'
+        ? { status:'failed', message:'已按您之前设置的联系偏好处理，不会安排电话回访；我们可以继续在这里在线咨询。' }
+        : { status:'failed', message:'手机号暂未保存成功，请稍后重新发送。您可以继续在线咨询。' };
     }
   }
   return { receipt, remaining_message:intent.remaining_message, result:{ status:'completed', run_id:`contact-${randomUUID()}`,

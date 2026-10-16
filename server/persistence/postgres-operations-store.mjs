@@ -714,6 +714,18 @@ export function createPostgresOperationsStore(options = {}) {
     return handoverFromRow(result.rows[0], fieldEncryption);
   };
 
+  // The reply boundary needs the latest task, including a completed task, so
+  // that a stale browser cannot treat an old conversation as still claimed.
+  const getHandoverForConversation = async ({ tenantId, conversationId }) => {
+    const result = await database.tenantQuery(tenantId,
+      `${handoverSelect}
+       WHERE h.tenant_id=$1 AND s.external_conversation_id=$2
+       ORDER BY h.created_at DESC LIMIT 1`,
+      [tenantId, conversationId]
+    );
+    return handoverFromRow(result.rows[0], fieldEncryption);
+  };
+
   const listTasks = async ({ tenantId, status = "", limit = 100 }) => {
     const values = [tenantId];
     const mappedStatus = status === "active" ? "in_progress" : status;
@@ -793,6 +805,7 @@ export function createPostgresOperationsStore(options = {}) {
     recordHumanWork,
     listHandovers,
     getHandover,
+    getHandoverForConversation,
     listTasks,
     metrics,
     status

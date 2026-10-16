@@ -2,11 +2,17 @@ import { applyManagementAccount, listManagementAccounts, saveManagementAccount }
 import { listKnowledgePublications, createKnowledgePublication, mutateKnowledgePublication } from "./knowledge-publication.mjs";
 import { memberRepeatCheckConfiguration } from "./integrations/member-repeatcheck-client.mjs";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { safeHandoverObjectError } from "./platform/object-authorization-response.mjs";
 import { AGENT_DEFINITIONS, getRun, invokeAgentAsync, listRuns, routeAgent, validateInvocation } from "./agent-runtime.mjs";
 import { callAcquisitionAdminOperation, callAcquisitionChannel, callAcquisitionLegacyInvocation, getAcquisitionServiceRun, getAcquisitionServiceStatus, listAcquisitionServiceChannels, listAcquisitionServiceRuns, submitAcquisitionConversationFeedback } from "./acquisition-service-client.mjs";
 import {
-  acquisitionCustomerSnapshot, getCapturedLeadReferenceForSession, upsertAcquisitionLead
+  acquisitionCustomerSnapshot, appendAcquisitionConversationReply, getAcquisitionConversationStaffMessages,
+  getCapturedLeadReferenceForSession, recordAcquisitionConversationDelivery,
+  recheckAcquisitionCustomerMember, updateAcquisitionCustomer, upsertAcquisitionLead
 } from "./lead-store.mjs";
+import { assertHandoverReplyAuthorization, ensureHandoverTask } from "./acquisition-operations-store.mjs";
+import { readLocalConversationRecord, readPersistedConversations, readLocalConversationReadReceipts, writeLocalConversationReadReceipt } from "./local-conversation-store.mjs";
+import { conversationSyncSignaturePayload, messagesChangedSinceCursor } from "./acquisition-sync-cursor.mjs";
 import { revealContactForClaimedAppointment } from "./contact-vault.mjs";
 import { appointmentDateRecommendations } from "./appointment-time.mjs";
 import {
@@ -42,9 +48,7 @@ import {
 } from "./platform/request-security.mjs";
 import { getPostgresClient } from "./platform/postgres.mjs";
 import { createProductionReadiness } from "./platform/production-readiness.mjs";
-import { appendAuditEvent } from "./persistence/postgres-helpers.mjs";
-import { appendLocalConversationMessage, readLocalConversationRecord } from "./local-conversation-store.mjs";
-import { getHandover } from "./acquisition-operations-store.mjs";
+import { appendAuditEvent, postgresPersistenceEnabled } from "./persistence/postgres-helpers.mjs";
 import {
   authorizeManagementPrincipal,
   createManagementAuthorizer,
@@ -272,7 +276,11 @@ const authorizeManagementRequest = async (request, requirements = {}) => {
         displayName:subject,
         roles:["development:admin", configuredRole, ...phaseOneTechnicalRolesFor(configuredRole)],
         phaseOneRole:configuredRole,
-        tenantIds:[requirements.tenantId ? normalizeTenantId(requirements.tenantId) : PUBLIC_TENANT_ID],
+        // A local development identity is server-owned and single-tenant.
+        // `requirements.tenantId` can originate from a browser query string;
+        // using it here would let a caller construct a new tenant scope before
+        // authorizeManagementPrincipal has a chance to validate that scope.
+        tenantIds:[PUBLIC_TENANT_ID],
         departmentIds:["*"],
         issuer:"urn:huamei:local-management"
       }, requirements),
@@ -305,6 +313,115 @@ const assertManagementPayloadTenant = (payload, principal) => {
   }
 };
 
+const managementReadTenants = (principal) => {
+  const tenants = Array.isArray(principal?.tenantIds) ? principal.tenantIds.filter(Boolean) : [];
+  return hasPhaseOneCapability(principal, PHASE_ONE_CAPABILITIES.superadminManage)
+    ? [...new Set(tenants.length ? tenants : [principal.tenantId])]
+    : [principal.tenantId];
+};
+
+const acquisitionAggregate = async (principal) => {
+  const tenants = managementReadTenants(principal);
+  const snapshots = await Promise.all(tenants.map((tenantId) => acquisitionCustomerSnapshot(tenantId, {
+    operationalOnly:true,
+    principal:{ ...principal, tenantId },
+    includeLiveConversations:true
+  })));
+  const withTenant = (items, tenantId) => items.map((item) => ({ ...item, tenant_id:item.tenant_id || tenantId }));
+  return {
+    customers:snapshots.flatMap((snapshot, index) => withTenant(snapshot.customers, tenants[index])),
+    conversations:snapshots.flatMap((snapshot, index) => withTenant(snapshot.conversations, tenants[index])),
+    tasks:snapshots.flatMap((snapshot, index) => withTenant(snapshot.tasks, tenants[index])),
+    meta:{
+      tenant_ids:tenants,
+      total:snapshots.reduce((sum, snapshot) => sum + Number(snapshot.meta?.total || 0), 0),
+      source_total:snapshots.reduce((sum, snapshot) => sum + Number(snapshot.meta?.source_total || 0), 0),
+      operational_only:true,
+      // This endpoint is the authoritative full snapshot for the current
+      // management identity.  The browser must remove records absent from it
+      // instead of retaining an old process's in-memory acquisition queue.
+      authoritative:true,
+      scope:"platform_superadministrator"
+    }
+  };
+};
+
+// The inbox reconnects with an opaque map of the last durable cursor it saw
+// for each authorized conversation.  Keep the token bounded: an invalid or
+// oversized token deliberately falls back to a complete, safe snapshot.
+// This cursor is passed in a URL query parameter.  Keep it below the
+// smallest common HTTP request-header limit, not merely Node's default.
+const ACQUISITION_CURSOR_MAX_BYTES = 4 * 1024;
+const ACQUISITION_CURSOR_MAX_CONVERSATIONS = 500;
+const acquisitionCursorKey = (conversation = {}) => `${String(conversation.tenant_id || "").slice(0, 120)}:${String(conversation.id || "").slice(0, 180)}`;
+const cursorSequence = (cursor, fallbackExternalId = "") => {
+  const value = String(cursor || "");
+  const prefix = String(fallbackExternalId || "");
+  if (prefix && !value.startsWith(`${prefix}#`)) return 0;
+  const matched = value.match(/#(\d+)(?:#[A-Za-z0-9_-]{8,64})?$/);
+  const sequence = Number(matched?.[1]);
+  return Number.isSafeInteger(sequence) && sequence >= 0 ? sequence : 0;
+};
+const parseAcquisitionCursor = (value) => {
+  const token = String(value || "").trim();
+  if (!token || token.length > ACQUISITION_CURSOR_MAX_BYTES) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
+    if (parsed?.v !== 1 || !parsed?.c || typeof parsed.c !== "object" || Array.isArray(parsed.c)) return null;
+    const entries = Object.entries(parsed.c);
+    if (entries.length > ACQUISITION_CURSOR_MAX_CONVERSATIONS
+      || entries.some(([key, cursor]) => key.length > 320 || typeof cursor !== "string" || cursor.length > 280)) return null;
+    return Object.fromEntries(entries);
+  } catch {
+    return null;
+  }
+};
+const conversationSyncCursor = (conversation = {}) => {
+  const durableCursor = String(conversation.cursor || `${conversation.externalConversationId || conversation.id || "conversation"}#0`);
+  // Staff delivery state does not always advance the session sequence. Include
+  // message identity/state in the opaque suffix so it is never skipped during
+  // a reconnect while the numeric cursor still drives customer/AI backfill.
+  const signature = createHash("sha256")
+    .update(JSON.stringify(conversationSyncSignaturePayload(conversation, durableCursor)))
+    .digest("base64url").slice(0, 20);
+  return `${durableCursor}#${signature}`;
+};
+const acquisitionAggregateSinceCursor = (snapshot, cursors) => {
+  const currentCursors = {};
+  const incremental = Boolean(cursors);
+  const conversations = (snapshot.conversations || []).flatMap((conversation) => {
+    const key = acquisitionCursorKey(conversation);
+    if (!conversation?.id || !key) return [];
+    const syncCursor = conversationSyncCursor(conversation);
+    currentCursors[key] = syncCursor;
+    const knownCursor = cursors?.[key];
+    if (!incremental || !knownCursor) return [{ ...conversation, sync_cursor:syncCursor }];
+    if (knownCursor === syncCursor) return [];
+    const afterSequence = cursorSequence(knownCursor, conversation.externalConversationId || conversation.id);
+    return [{
+      ...conversation,
+      sync_cursor:syncCursor,
+      // An inbound customer message and the resulting AI reply deliberately
+      // share one durable turn sequence.  A reconnect can therefore have
+      // already seen the inbound row at sequence N while the reply is
+      // committed later at that same N.  Retain non-customer messages at the
+      // cursor boundary; the client merges them by stable message ID.  This
+      // also keeps unsequenced staff replies from the lead archive visible.
+      messages:messagesChangedSinceCursor(conversation.messages, afterSequence)
+    }];
+  });
+  return {
+    ...snapshot,
+    conversations,
+    meta:{
+      ...(snapshot.meta || {}),
+      incremental,
+      cursor_format:"conversation-sync-v1",
+      cursor:currentCursors
+    }
+  };
+};
+
 const recordManagementAccess = async ({
   principal,
   requestId,
@@ -314,7 +431,10 @@ const recordManagementAccess = async ({
   resourceId = "",
   outcome = "success"
 }) => {
-  if (!productionRuntime) return;
+  // Local JSON deliberately has no audit table.  An isolated PostgreSQL
+  // environment does, and must exercise the same actor/request/outcome audit
+  // path as production rather than silently omitting authorization evidence.
+  if (!postgresPersistenceEnabled()) return;
   const database = getPostgresClient({ env:process.env });
   try {
     await database.tenantTransaction(principal.tenantId, (client) => appendAuditEvent(client, {
@@ -663,7 +783,7 @@ export async function handleApiRequest(request, response) {
   }
   if (url.pathname === "/api/admin/identity" && request.method === "GET") {
     try { const p=await authorizeManagementRequest(request,{tenantId:PUBLIC_TENANT_ID});
-      sendJson(request,response,requestId,200,{data:{subject:p.subject,role:p.phaseOneRole,capabilities:p.phaseOneCapabilities,departments:p.departmentIds}});
+      sendJson(request,response,requestId,200,{data:{subject:p.subject,tenant_id:p.tenantId,tenant_ids:p.tenantIds,scope:p.phaseOneCapabilities.includes(PHASE_ONE_CAPABILITIES.superadminManage)?"platform":"tenant",role:p.phaseOneRole,capabilities:p.phaseOneCapabilities,departments:p.departmentIds}});
     } catch(e) {sendManagementAuthorizationError(request,response,requestId,e);}
     return true;
   }
@@ -992,7 +1112,7 @@ export async function handleApiRequest(request, response) {
     }
     try {
       if (listAppointments) {
-        sendJson(request, response, requestId, 200, { data:await listAppointmentIntakes({ tenant_id:principal.tenantId, actor:principal.subject, assigned_only:!hasPhaseOneCapability(principal, PHASE_ONE_CAPABILITIES.appointmentsManage), status:url.searchParams.get("status") || "", limit:url.searchParams.get("limit") }), request_id:requestId });
+        sendJson(request, response, requestId, 200, { data:await listAppointmentIntakes({ tenant_id:principal.tenantId, actor:principal.subject, assigned_only:!hasPhaseOneCapability(principal, PHASE_ONE_CAPABILITIES.appointmentsManage), status:url.searchParams.get("status") || "", followup_status:url.searchParams.get("followup_status") || "", preferred_date:url.searchParams.get("preferred_date") || "", assignee:url.searchParams.get("assignee") || "", limit:url.searchParams.get("limit") }), request_id:requestId });
         return true;
       }
       if (appointmentDetail) {
@@ -1038,65 +1158,234 @@ export async function handleApiRequest(request, response) {
     return true;
   }
 
-  // A-023 AC2：人工顾问把消息发回客户会话（后台 → 客户，落在同一条会话记录里）。
-  const handoverReplyMatch = url.pathname.match(/^\/api\/admin\/acquisition\/handovers\/(ho_[a-f0-9-]+)\/reply$/i);
-  if (request.method === "POST" && handoverReplyMatch) {
-    const humanIdempotencyKey = String(request.headers["idempotency-key"] || "").trim();
-    if (humanIdempotencyKey.length < 8 || humanIdempotencyKey.length > 128) {
-      sendError(request, response, requestId, 400, "IDEMPOTENCY_KEY_REQUIRED", "发送人工消息必须提供8–128字符的Idempotency-Key");
-      return true;
-    }
-    let humanPayload;
+  // 人工回复客户会话的唯一入口。A 分支曾同时新增一条
+  // `POST /api/admin/acquisition/handovers/:id/reply`，但两条路由做同一件事，
+  // 且各自带一套鉴权/写入实现；按合并规范“不得复制第二套鉴权、路由或状态
+  // 存储”，此处只保留 B 的入口（它具备幂等键、接管版本校验、送达回执与
+  // PostgreSQL 持久化，前台管理端调用的也是这一条）。
+  const acquisitionReplyMatch = request.method === "POST"
+    ? url.pathname.match(/^\/api\/admin\/acquisition\/conversations\/([^/]+)\/reply$/i)
+    : null;
+  if (acquisitionReplyMatch) {
+    let principal;
     try {
-      humanPayload = await readJsonBody(request);
-    } catch (error) {
-      sendError(request, response, requestId, error.code === "BODY_TOO_LARGE" ? 413 : 400, error.code || "INVALID_JSON", "请求体不是有效JSON");
-      return true;
-    }
-    const humanText = String(humanPayload?.text || "").trim();
-    if (!humanText || humanText.length > 1000) {
-      sendError(request, response, requestId, 400, "VALIDATION_ERROR", "人工消息不能为空且不能超过1000字符");
-      return true;
-    }
-    let humanPrincipal;
-    try {
-      humanPrincipal = await authorizeManagementRequest(request, {
+      principal = await authorizeManagementRequest(request, {
         requiredRoles:[MANAGEMENT_ROLES.operationsAgent],
-        requiredCapabilities:[PHASE_ONE_CAPABILITIES.conversationsTakeover],
+        requiredCapabilities:[PHASE_ONE_CAPABILITIES.conversationsReply],
         tenantId:PUBLIC_TENANT_ID,
         tenantField:"token.tenant_ids"
       });
+      await recordManagementAccess({ principal, requestId, request, action:"management.conversation.reply", resourceType:"conversation", resourceId:acquisitionReplyMatch[1] });
     } catch (error) {
       sendManagementAuthorizationError(request, response, requestId, error);
       return true;
     }
-    // 接管任务由智能体服务进程写入，getHandover 会重新读盘，保证跨进程可见。
-    const humanHandover = getHandover(handoverReplyMatch[1], PUBLIC_TENANT_ID);
-    if (!humanHandover) {
-      sendError(request, response, requestId, 404, "HANDOVER_NOT_FOUND", "未找到指定接管任务");
+    let payload;
+    try { payload = await readJsonBody(request); }
+    catch (error) {
+      sendError(request, response, requestId, error.code === "BODY_TOO_LARGE" ? 413 : 400, error.code || "INVALID_JSON", error.message);
       return true;
     }
-    if (humanHandover.status !== "active") {
-      sendError(request, response, requestId, 409, "HANDOVER_NOT_CLAIMED", "只有已接管的人工会话可以发送消息");
-      return true;
+    let replyScope = "";
+    let claim = null;
+    let replyWritten = false;
+    try {
+      const conversationId = decodeURIComponent(acquisitionReplyMatch[1]);
+      const idempotencyKey = String(request.headers["idempotency-key"] || "").trim();
+      if (idempotencyKey.length < 8 || idempotencyKey.length > 128) {
+        sendError(request, response, requestId, 400, "IDEMPOTENCY_KEY_REQUIRED", "人工回复必须提供8–128字符的Idempotency-Key");
+        return true;
+      }
+      replyScope = scopedKey("management", "conversation-reply", principal.tenantId, principal.subject, conversationId, idempotencyKey);
+      const replyPayloadHash = canonicalPayloadHash({
+        conversation_id:conversationId,
+        text:payload?.text,
+        handover_version:payload?.handover_version
+      });
+      try { claim = await idempotencyStore.claim(replyScope, replyPayloadHash); }
+      catch {
+        sendError(request, response, requestId, 503, "IDEMPOTENCY_STORE_UNAVAILABLE", "发送协调服务暂时不可用，请使用相同发送标识重试");
+        return true;
+      }
+      if (claim.status === "conflict") {
+        sendError(request, response, requestId, 409, "IDEMPOTENCY_PAYLOAD_MISMATCH", "同一发送标识不能用于不同的人工回复内容");
+        return true;
+      }
+      if (claim.status === "pending") {
+        sendError(request, response, requestId, 409, "IDEMPOTENCY_IN_PROGRESS", "相同人工回复正在处理中，请稍后使用相同发送标识重试", [], { "Retry-After":"1" });
+        return true;
+      }
+      if (claim.status === "replay") {
+        sendJson(request, response, requestId, 200, claim.value, { "X-Idempotent-Replay":"true" });
+        return true;
+      }
+      await assertHandoverReplyAuthorization({
+        tenant_id:principal.tenantId,
+        conversation_id:conversationId,
+        actor:principal.subject,
+        expected_handover_version:payload?.handover_version
+      });
+      const result = await appendAcquisitionConversationReply({
+        tenant_id:principal.tenantId,
+        conversation_id:conversationId,
+        text:payload?.text,
+        actor:principal.subject,
+        idempotency_key:idempotencyKey
+      });
+      replyWritten = true;
+      const responsePayload = { data:result, request_id:requestId };
+      let completed = false;
+      try { completed = await idempotencyStore.complete(replyScope, responsePayload, claim.token); }
+      catch { /* 保留 claim；稍后可由持久化消息键安全重试。 */ }
+      if (!completed) {
+        sendError(request, response, requestId, 503, "IDEMPOTENCY_RESULT_UNCONFIRMED", "回复已提交但回执暂时无法确认，请使用相同发送标识重试");
+        return true;
+      }
+      sendJson(request, response, requestId, 200, responsePayload, result.replayed ? { "X-Idempotent-Replay":"true" } : {});
+    } catch (error) {
+      // Validation, authorization and write failures have not created a
+      // message, so the same key remains safely retryable.
+      if (claim?.token && !replyWritten) {
+        try { await idempotencyStore.release(replyScope, claim.token); } catch {}
+      }
+      sendError(request, response, requestId, error.status || 400, error.code || "CONVERSATION_REPLY_FAILED", error.message);
     }
-    if (String(humanHandover.assignee || "") !== String(humanPrincipal.subject || "")) {
-      sendError(request, response, requestId, 403, "HANDOVER_ASSIGNMENT_FORBIDDEN", "只有当前接管人可以发送消息");
-      return true;
+    return true;
+  }
+
+  const acquisitionReadReceiptMatch = request.method === "POST"
+    ? url.pathname.match(/^\/api\/admin\/acquisition\/conversations\/([^/]+)\/read-receipt$/i)
+    : null;
+  const acquisitionReadReceiptList = request.method === "GET"
+    && url.pathname === "/api/admin/acquisition/conversation-read-receipts";
+  if (acquisitionReadReceiptMatch || acquisitionReadReceiptList) {
+    let principal;
+    try {
+      principal = await authorizeManagementRequest(request, {
+        requiredRoles:[MANAGEMENT_ROLES.customerRead],
+        requiredAnyCapabilities:[PHASE_ONE_CAPABILITIES.customersReadAll, PHASE_ONE_CAPABILITIES.customersReadAssigned],
+        tenantId:PUBLIC_TENANT_ID,
+        tenantField:"token.tenant_ids"
+      });
+      if (acquisitionReadReceiptMatch) {
+        const payload = await readJsonBody(request, 64 * 1024);
+        const conversationId = decodeURIComponent(acquisitionReadReceiptMatch[1]);
+        const receipt = writeLocalConversationReadReceipt({
+          tenant_id:principal.tenantId,
+          subject:principal.subject,
+          conversation_id:conversationId,
+          message_ids:payload?.message_ids
+        });
+        sendJson(request, response, requestId, 200, { data:receipt, request_id:requestId });
+      } else {
+        sendJson(request, response, requestId, 200, {
+          data:readLocalConversationReadReceipts({tenant_id:principal.tenantId,subject:principal.subject}),
+          request_id:requestId
+        });
+      }
+    } catch (error) {
+      const status = Number(error.status) || (error.code === "BODY_TOO_LARGE" ? 413 : 400);
+      if (error.code === "INVALID_CONVERSATION_READ_RECEIPT" || error.code === "BODY_TOO_LARGE") {
+        sendError(request, response, requestId, status, error.code, error.message);
+      } else sendManagementAuthorizationError(request, response, requestId, error);
     }
-    const humanMessage = appendLocalConversationMessage({
-      tenant:humanHandover.tenant_id,
-      channel:humanHandover.channel,
-      conversationId:humanHandover.conversation_id,
-      from:"human",
-      text:humanText,
-      messageId:`human-${humanIdempotencyKey}`
-    });
-    sendJson(request, response, requestId, 200, { message:humanMessage, handover_id:humanHandover.id });
     return true;
   }
 
   if (url.pathname.startsWith("/api/admin/acquisition/")) {
+    const memberRecheckMatch = url.pathname.match(/^\/api\/admin\/acquisition\/customers\/([^/]+)\/member-check$/i);
+    if (memberRecheckMatch && ["POST", "PUT"].includes(request.method)) {
+      const customerId = decodeURIComponent(memberRecheckMatch[1]);
+      let principal;
+      try {
+        principal = await authorizeManagementRequest(request, {
+          requiredRoles:[MANAGEMENT_ROLES.customerRead],
+          requiredAnyCapabilities:[PHASE_ONE_CAPABILITIES.customersReadAll, PHASE_ONE_CAPABILITIES.customersReadAssigned],
+          tenantId:PUBLIC_TENANT_ID,
+          tenantField:"token.tenant_ids"
+        });
+        // The plaintext number stays server-side; the audit trail records who
+        // triggered the hospital query, for which customer and with what result.
+        await recordManagementAccess({ principal, requestId, request, action:"management.customer.member_check_recheck", resourceType:"customer", resourceId:customerId });
+      } catch (error) {
+        sendManagementAuthorizationError(request, response, requestId, error);
+        return true;
+      }
+      try {
+        const result = await recheckAcquisitionCustomerMember({
+          tenant_id:principal.tenantId,
+          customer_id:customerId,
+          actor:principal.subject,
+          request_id:requestId
+        });
+        const check = result.member_check || {};
+        sendJson(request, response, requestId, 200, {
+          data:{
+            customer_id:result.lead?.customer?.id || customerId,
+            status:result.status,
+            member_check_status:result.member_check_status,
+            member_check:{
+              status:check.status || "unknown",
+              reason_code:check.reason_code || null,
+              is_repeat:typeof check.is_repeat === "boolean" ? check.is_repeat : null,
+              member_status:check.member_status || "unknown",
+              result_semantics:check.result_semantics || "duplicate_only",
+              checked_at:check.checked_at || null,
+              retry_count:Number(check.retry_count) || 0
+            }
+          },
+          request_id:requestId
+        });
+      } catch (error) {
+        sendError(request, response, requestId, Number(error.status) || 400,
+          error.code || "MEMBER_CHECK_RECHECK_FAILED", error.message || "会员状态重查失败");
+      }
+      return true;
+    }
+    const customerUpdateMatch = url.pathname.match(/^\/api\/admin\/acquisition\/customers\/([^/]+)$/i);
+    if (customerUpdateMatch && ["PATCH", "PUT"].includes(request.method)) {
+      let payload;
+      try { payload = await readJsonBody(request); }
+      catch (error) {
+        sendError(request, response, requestId, error.code === "BODY_TOO_LARGE" ? 413 : 400,
+          error.code === "BODY_TOO_LARGE" ? "BODY_TOO_LARGE" : "INVALID_JSON", "请求体不是有效JSON");
+        return true;
+      }
+      const forbiddenIdentity = ["tenant_id", "tenantId", "actor", "staff_id", "assignee"]
+        .filter((key) => Object.hasOwn(payload || {}, key));
+      if (forbiddenIdentity.length) {
+        sendError(request, response, requestId, 400, "ADMIN_IDENTITY_OVERRIDE_FORBIDDEN", "租户和操作人只能来自已验证的OIDC令牌", forbiddenIdentity.map((field) => ({ field })));
+        return true;
+      }
+      let principal;
+      try {
+        principal = await authorizeManagementRequest(request, {
+          requiredRoles:[MANAGEMENT_ROLES.customerRead],
+          requiredAnyCapabilities:[PHASE_ONE_CAPABILITIES.customersReadAll, PHASE_ONE_CAPABILITIES.customersReadAssigned],
+          tenantId:PUBLIC_TENANT_ID,
+          tenantField:"token.tenant_ids"
+        });
+        await recordManagementAccess({ principal, requestId, request, action:"management.customer.profile_update", resourceType:"customer", resourceId:decodeURIComponent(customerUpdateMatch[1]) });
+      } catch (error) {
+        sendManagementAuthorizationError(request, response, requestId, error);
+        return true;
+      }
+      try {
+        const updated = await updateAcquisitionCustomer({
+          tenant_id:principal.tenantId,
+          customer_id:decodeURIComponent(customerUpdateMatch[1]),
+          patch:payload.patch && typeof payload.patch === "object" ? payload.patch : payload,
+          expected_version:payload.expected_version,
+          actor:principal.subject,
+          source:"management"
+        });
+        sendJson(request, response, requestId, 200, { data:updated, request_id:requestId });
+      } catch (error) {
+        const status = Number(error.status) || (/CONFLICT|MOBILE_ALREADY_LINKED|PROFILE_VERSION/.test(String(error.code || "")) ? 409 : 400);
+        sendError(request, response, requestId, status, error.code || "CUSTOMER_PROFILE_UPDATE_FAILED", error.message || "客户资料保存失败", error.details || []);
+      }
+      return true;
+    }
     const listRoute = request.method === "GET" && url.pathname === "/api/admin/acquisition/handovers";
     const listBadCasesRoute = request.method === "GET" && url.pathname === "/api/admin/acquisition/bad-cases";
     const detailMatch = url.pathname.match(/^\/api\/admin\/acquisition\/handovers\/(ho_[a-f0-9-]+)$/i);
@@ -1183,23 +1472,6 @@ export async function handleApiRequest(request, response) {
         tenantField:"token.tenant_ids"
       });
       if((listBadCasesRoute||badCaseReviewMatch)&&!principal.departmentIds.includes("*"))throw Object.assign(new Error("未归属科室的反馈仅向机构范围质检开放"),{status:403,code:"FEEDBACK_DEPARTMENT_SCOPE_REQUIRED"});
-      await recordManagementAccess({
-        principal,
-        requestId,
-        request,
-        action:contactRevealMatch
-          ? "management.contact.reveal_authorized"
-          : listBadCasesRoute
-            ? "management.conversation_feedback.read"
-            : badCaseReviewMatch
-              ? "management.conversation_feedback.write"
-          : request.method === "GET"
-            ? "management.handover.read"
-            : "management.handover.write",
-        resourceType:humanWorkRoute ? "human_work" : (listBadCasesRoute || badCaseReviewMatch ? "conversation_feedback" : "handover"),
-        resourceId:detailMatch?.[1] || claimMatch?.[1] || completeMatch?.[1] || contactRevealMatch?.[1] || badCaseReviewMatch?.[1] || "",
-        outcome:contactRevealMatch ? "authorized" : "success"
-      });
     } catch (error) {
       sendManagementAuthorizationError(request, response, requestId, error);
       return true;
@@ -1220,20 +1492,52 @@ export async function handleApiRequest(request, response) {
               : badCaseReviewMatch
                 ? "feedback.bad-cases.review"
                 : "human-work.create";
+    const handoverObjectId = detailMatch?.[1] || claimMatch?.[1] || completeMatch?.[1] || contactRevealMatch?.[1] || "";
+    const recordHandoverOperation = (outcome) => recordManagementAccess({
+      principal,
+      requestId,
+      request,
+      action:contactRevealMatch
+        ? "management.contact.reveal_authorized"
+        : listBadCasesRoute
+          ? "management.conversation_feedback.read"
+          : badCaseReviewMatch
+            ? "management.conversation_feedback.write"
+        : request.method === "GET"
+          ? "management.handover.read"
+          : "management.handover.write",
+      resourceType:humanWorkRoute ? "human_work" : (listBadCasesRoute || badCaseReviewMatch ? "conversation_feedback" : "handover"),
+      resourceId:handoverObjectId || badCaseReviewMatch?.[1] || "",
+      outcome
+    });
     try {
-      const result = await callAcquisitionAdminOperation({
+      const operationTenants = listRoute && hasPhaseOneCapability(principal, PHASE_ONE_CAPABILITIES.superadminManage)
+        ? managementReadTenants(principal) : [principal.tenantId];
+      const results = await Promise.all(operationTenants.map((tenantId) => callAcquisitionAdminOperation({
         operation,
         handoverId:detailMatch?.[1] || claimMatch?.[1] || completeMatch?.[1] || contactRevealMatch?.[1] || badCaseReviewMatch?.[1] || "",
-        tenantId:principal.tenantId,
+        tenantId,
         authorization:request.headers.authorization,
         developmentSubject:productionRuntime ? "" : principal.subject,
         payload:operationPayload,
         query:{ status:url.searchParams.get("status"), limit:url.searchParams.get("limit") },
         requestId,
         idempotencyKey:adminIdempotencyKey.slice(0, 128)
-      });
-      if(listRoute && !hasPhaseOneCapability(principal, PHASE_ONE_CAPABILITIES.conversationsReadAll)){result.data=(result.data||[]).filter(item=>(!item.assignee||item.assignee===principal.subject)&&(principal.departmentIds.includes("*")||principal.departmentIds.includes(item.department))).map(item=>item.assignee?item:{id:item.id,status:item.status,created_at:item.created_at,assignee:null}); if(result.meta)result.meta={total:result.data.length};}
+      })));
+      const result = results.length===1 ? results[0] : {
+        data:results.flatMap((item,index)=>(item.data||[]).map(row=>({...row,tenant_id:row.tenant_id||operationTenants[index]}))),
+        meta:{total:results.reduce((sum,item)=>sum+Number(item.meta?.total||item.data?.length||0),0),tenant_ids:operationTenants}
+      };
+      if(listRoute && !hasPhaseOneCapability(principal, PHASE_ONE_CAPABILITIES.conversationsReadAll)){result.data=(result.data||[]).filter(item=>(!item.assignee||item.assignee===principal.subject)&&(principal.departmentIds.includes("*")||!item.department||principal.departmentIds.includes(item.department))).map(item=>item.assignee?item:{
+        // Keep the queue item claimable and linkable from the conversation
+        // inbox while withholding the customer snapshot until it is claimed.
+        id:item.id,status:item.status,created_at:item.created_at,assignee:null,
+        conversation_id:item.conversation_id||null,channel:item.channel||null,
+        team:item.team||null,reason:item.reason||null,priority:item.priority||null,
+        sla_due_at:item.sla_due_at||null
+      }); if(result.meta)result.meta={total:result.data.length};}
       if(detailMatch && result.data && !hasPhaseOneCapability(principal, PHASE_ONE_CAPABILITIES.conversationsReadAll) && (result.data.assignee!==principal.subject || !(principal.departmentIds.includes("*")||principal.departmentIds.includes(result.data.department))))throw Object.assign(new Error("会话不属于当前接待人或科室"),{status:403,code:"HANDOVER_ASSIGNMENT_FORBIDDEN"});
+      await recordHandoverOperation(contactRevealMatch ? "authorized" : "success");
       sendJson(
         request,
         response,
@@ -1243,6 +1547,21 @@ export async function handleApiRequest(request, response) {
         contactRevealMatch ? { Pragma:"no-cache", Expires:"0" } : {}
       );
     } catch (error) {
+      const safeError = handoverObjectId ? safeHandoverObjectError(error) : null;
+      try {
+        // audit_events permits success/denied/failure/unknown.  A hidden
+        // object lookup is deliberately recorded as denied, whether the ID
+        // existed or not, so the audit record cannot reintroduce an existence
+        // oracle through an unsupported outcome value.
+        await recordHandoverOperation(safeError ? "denied" : "failure");
+      } catch (auditError) {
+        sendManagementAuthorizationError(request, response, requestId, auditError);
+        return true;
+      }
+      if (safeError) {
+        sendError(request, response, requestId, safeError.status, safeError.code, safeError.message);
+        return true;
+      }
       const status = Number(error.status) || (/CONFLICT|ALREADY|MISMATCH|NOT_CLAIMED/.test(String(error.code || "")) ? 409 : 502);
       sendError(
         request,
@@ -1411,6 +1730,7 @@ export async function handleApiRequest(request, response) {
       const result = await callAcquisitionChannel("web", {
         tenant_id:tenantId,
         message,
+        message_id:typeof payload.message_id === "string" ? payload.message_id : "",
         session_id:session.sessionId,
         interests:Array.isArray(payload.interests) ? payload.interests.slice(0, 3) : []
       }, { requestId, caller:"huamei_web_gateway", idempotencyKey:String(request.headers["idempotency-key"] || "").trim() });
@@ -1661,6 +1981,94 @@ export async function handleApiRequest(request, response) {
     return true;
   }
 
+  // 客户侧按会话凭证回读历史（B 归属）：会话存储里的客户/AI 消息与留档里的
+  // 人工回复合并成一条时间序，并给出游标以便断线补齐。
+  if (request.method === "GET" && url.pathname === "/api/public/acquisition-history") {
+    let tenantId;
+    let session;
+    try {
+      tenantId = resolvePublicTenant(request, {});
+      session = resolvePublicSession(request, {}, tenantId);
+    } catch (error) {
+      sendError(request, response, requestId, error.status || 401, error.code || "INVALID_SESSION", error.message || "会话凭证校验失败", error.details || []);
+      return true;
+    }
+    const conversation = (await readPersistedConversations(tenantId))
+      .find((item) => item.channel === "web" && item.externalId === session.sessionId);
+    const currentCursor = conversation?.cursor || `${session.sessionId}#0`;
+    const requestedCursor = String(url.searchParams.get("after_cursor") || "").trim();
+    const cursorPrefix = `${session.sessionId}#`;
+    const requestedSequence = requestedCursor.startsWith(cursorPrefix)
+      ? Number(requestedCursor.slice(cursorPrefix.length))
+      : 0;
+    const afterSequence = Number.isInteger(requestedSequence) && requestedSequence >= 0 ? requestedSequence : 0;
+    const limit = Math.min(Math.max(Number(url.searchParams.get("limit")) || 200, 1), 200);
+    const sessionMessages = (conversation?.messages || []).filter((item) => Number(item?.seq) > afterSequence).slice(0, limit);
+    // Human replies live in the captured-lead archive. Merge only those rows
+    // into this session-scoped response; the session credential above prevents
+    // this from becoming a cross-customer message lookup.
+    const staffMessages = await getAcquisitionConversationStaffMessages({
+      tenant_id:tenantId,
+      conversation_id:session.sessionId
+    });
+    const messageById = new Map();
+    for (const item of [...sessionMessages, ...staffMessages]) {
+      if (item?.id && !messageById.has(item.id)) messageById.set(item.id, item);
+    }
+    const messages = [...messageById.values()].sort((left, right) =>
+      Date.parse(left?.at || 0) - Date.parse(right?.at || 0)
+    );
+    sendJson(request, response, requestId, 200, {
+      session_id:session.sessionId,
+      session_token:session.sessionToken,
+      session_expires_at:session.expiresAt,
+      cursor:currentCursor,
+      next_cursor:currentCursor,
+      has_more:messages.length < (conversation?.messages || []).filter((item) => Number(item?.seq) > afterSequence).length,
+      messages,
+      request_id:requestId
+    }, { "Set-Cookie":session.setCookie });
+    return true;
+  }
+
+  // 客户确认人工消息已经收到（送达回执，不是已读回执）。
+  if (request.method === "POST" && url.pathname === "/api/public/acquisition-deliveries") {
+    let payload;
+    try { payload = await readJsonBody(request); }
+    catch (error) {
+      sendError(request, response, requestId, error.code === "BODY_TOO_LARGE" ? 413 : 400, error.code || "INVALID_JSON", error.message);
+      return true;
+    }
+    let tenantId;
+    let session;
+    try {
+      tenantId = resolvePublicTenant(request, payload);
+      session = resolvePublicSession(request, payload, tenantId);
+    } catch (error) {
+      sendError(request, response, requestId, error.status || 401, error.code || "INVALID_SESSION", error.message || "会话凭证校验失败", error.details || []);
+      return true;
+    }
+    try {
+      const receipt = await recordAcquisitionConversationDelivery({
+        tenant_id:tenantId,
+        conversation_id:session.sessionId,
+        message_id:payload?.message_id
+      });
+      sendJson(request, response, requestId, 200, {
+        message_id:receipt.message.id,
+        delivery:receipt.message.delivery,
+        meta:{ replayed:receipt.replayed === true },
+        session_id:session.sessionId,
+        session_token:session.sessionToken,
+        session_expires_at:session.expiresAt,
+        request_id:requestId
+      }, { "Set-Cookie":session.setCookie });
+    } catch (error) {
+      sendError(request, response, requestId, error.status || 400, error.code || "CONVERSATION_DELIVERY_FAILED", error.message, error.details || [], { "Set-Cookie":session.setCookie });
+    }
+    return true;
+  }
+
   if (request.method === "POST" && url.pathname === "/api/public/acquisition-feedback") {
     let payload;
     try { payload = await readJsonBody(request); }
@@ -1779,7 +2187,7 @@ export async function handleApiRequest(request, response) {
           idempotency_key:request.headers["idempotency-key"] });
         if (!result) sendError(request, response, requestId, 404, "APPOINTMENT_NOT_FOUND", "未找到当前咨询的到院登记。", [], rateHeaders);
         else sendJson(request, response, requestId, 200, { intake:customerView(result.intake), replayed:result.replayed,
-          message:change[2] === "cancel" ? "到院登记已取消。" : `已更新您希望到院的时间：${result.intake.time_preference}。` }, rateHeaders);
+          message:result.intake.status === "cancelled" ? "到院登记已取消。" : `已更新您希望到院的时间：${result.intake.time_preference}。` }, rateHeaders);
         return true;
       }
       const capturedLead = await getCapturedLeadReferenceForSession({ tenant_id:tenantId, session_id:session.sessionId });
@@ -1880,6 +2288,25 @@ export async function handleApiRequest(request, response) {
         interests:Array.isArray(payload.interests) ? payload.interests.slice(0, 10) : [],
         messages:Array.isArray(payload.messages) ? payload.messages.slice(-16) : []
       });
+      // A submitted handover form is an explicit human-assistance request. Keep
+      // it in the shared operations queue so both the presales workspace and
+      // the superadministrator workspace can see the same conversation.
+      await ensureHandoverTask({
+        envelope:{
+          tenant_id:tenantId,
+          channel:"web",
+          conversation_id:session.sessionId,
+          actor:{ external_user_id:session.sessionId },
+          message:{ id:`lead-${session.sessionId}`, text:"客户已提交人工协助申请" },
+          context:{ source_channel:"web", service_consent:true }
+        },
+        result:{
+          status:"handover_required",
+          handover:{ required:true, reason:"human_requested", summary:"客户提交人工协助申请" }
+        },
+        session_snapshot:{ conversation_summary:"客户已提交人工协助申请", known_projects:payload.interests || [] },
+        contact_initiation:"proactive"
+      });
       sendJson(request, response, requestId, 200, {
         request_id:requestId,
         receipt_id:`lead_${randomUUID()}`,
@@ -1914,12 +2341,20 @@ export async function handleApiRequest(request, response) {
     let managementPrincipal;
     try {
       managementPrincipal = await authorizeManagementRequest(request, {
-        requiredRoles:[MANAGEMENT_ROLES.customerRead],
-        requiredAnyCapabilities:[PHASE_ONE_CAPABILITIES.customersReadAll, PHASE_ONE_CAPABILITIES.customersReadAssigned],
+        requiredAnyCapabilities:[
+          PHASE_ONE_CAPABILITIES.customersReadAll,
+          PHASE_ONE_CAPABILITIES.customersReadAssigned,
+          PHASE_ONE_CAPABILITIES.conversationsReadRedacted
+        ],
         tenantId:url.searchParams.get("tenant_id") || "",
         tenantField:"query.tenant_id"
       });
-      await recordManagementAccess({ principal:managementPrincipal, requestId, request, action:"management.customer.read", resourceType:"customer_snapshot" });
+      await recordManagementAccess({ principal:managementPrincipal, requestId, request,
+        action:hasPhaseOneCapability(managementPrincipal, PHASE_ONE_CAPABILITIES.conversationsReadRedacted)
+          && !hasPhaseOneCapability(managementPrincipal, PHASE_ONE_CAPABILITIES.customersReadAll)
+          && !hasPhaseOneCapability(managementPrincipal, PHASE_ONE_CAPABILITIES.customersReadAssigned)
+          ? "management.conversation.read_redacted" : "management.customer.read",
+        resourceType:"customer_snapshot" });
     } catch (error) {
       sendManagementAuthorizationError(request, response, requestId, error);
       return true;
@@ -1933,7 +2368,7 @@ export async function handleApiRequest(request, response) {
       response.on('close',close);
       const tick=async()=>{
         try {
-          const data=await acquisitionCustomerSnapshot(managementPrincipal.tenantId,{operationalOnly:true,principal:managementPrincipal,includeLiveConversations:true});
+          const data=await acquisitionAggregate(managementPrincipal);
           const next=createHash('sha256').update(JSON.stringify(data.conversations)).digest('hex');
           if(!closed&&next!==signature){signature=next;response.write('event: conversations\ndata: changed\n\n');}
         }catch{if(!closed){response.write('event: sync-error\ndata: unavailable\n\n');close();response.end();}}
@@ -1942,8 +2377,9 @@ export async function handleApiRequest(request, response) {
       void tick();return true;
     }
     try {
+      const cursors = parseAcquisitionCursor(url.searchParams.get("after_cursor"));
       sendJson(request, response, requestId, 200, {
-        data:await acquisitionCustomerSnapshot(managementPrincipal.tenantId, { operationalOnly:true, principal:managementPrincipal, includeLiveConversations:true }),
+        data:acquisitionAggregateSinceCursor(await acquisitionAggregate(managementPrincipal), cursors),
         request_id:requestId
       });
     } catch (error) {

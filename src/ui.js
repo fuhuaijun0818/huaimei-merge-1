@@ -33,10 +33,13 @@ export const relativeTime = (value) => {
 
 export const badge = (text, variant = text) => `<span class="badge ${escapeHtml(variant)}">${escapeHtml(text)}</span>`;
 
+// 未填写称呼的客户只显示中性占位，不用号码或推断姓名代替；真实姓名始终以服务端字段为准。
+export const customerDisplayName = (customer) => String(customer?.name || "").trim() || "未填写称呼";
+
 export const avatar = (customer, size = "") => {
   const hidden = customer.photoConsent === "已撤回";
   const photo = safeImageSource(customer.photo);
-  if (!photo) return `<span class="avatar avatar-placeholder ${escapeHtml(size)}" role="img" aria-label="${escapeHtml(customer.name)}尚未上传照片">${escapeHtml(customer.name?.slice(0, 1) || "客")}</span>`;
+  if (!photo) return `<span class="avatar avatar-placeholder ${escapeHtml(size)}" role="img" aria-label="${escapeHtml(customerDisplayName(customer))}尚未上传照片">${escapeHtml(String(customer?.name || "").trim().slice(0, 1) || "客")}</span>`;
   return `<img class="avatar ${escapeHtml(size)} ${hidden ? "photo-mask" : ""}" src="${escapeHtml(photo)}" alt="${hidden ? "照片授权已撤回" : `${escapeHtml(customer.name)}的演示头像`}" />`;
 };
 
@@ -50,8 +53,8 @@ export const physicianAvatar = (physician, size = "") => {
 
 export const customerCell = (customer) => `<div class="customer-cell">
   ${avatar(customer, "sm")}
-  <div><button class="link customer-name" data-customer="${escapeHtml(customer.id)}">${escapeHtml(customer.name)}</button>
-  <div class="customer-meta">${escapeHtml(customer.id)} · ${escapeHtml(customer.mobile)}</div></div>
+  <div><button class="link customer-name" data-customer="${escapeHtml(customer.id)}">${escapeHtml(customerDisplayName(customer))}</button>
+  <div class="customer-meta">${escapeHtml(customer.id)} · ${escapeHtml(customer.mobile)}${customer.stageEnteredAt ? ` · 建档 ${escapeHtml(relativeTime(customer.stageEnteredAt))}` : ""}</div></div>
 </div>`;
 
 export const card = (title, body, options = {}) => `<section class="card ${options.className || ""}">

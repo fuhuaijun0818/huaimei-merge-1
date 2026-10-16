@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { routeAcquisitionAnswer } from "../server/acquisition-answer-routing.mjs";
-import { buildAcquisitionOrchestration } from "../server/acquisition-orchestration.mjs";
+import { buildAcquisitionOrchestration, buildHandoverAppointmentProposal } from "../server/acquisition-orchestration.mjs";
 
 const scheduleRoute = routeAcquisitionAnswer({
   message:"李健院长本周六有排班吗？",
@@ -72,5 +72,14 @@ const externalSearch = buildAcquisitionOrchestration({
 assert.equal(externalSearch.routing.external_search.required, true);
 assert.equal(externalSearch.routing.external_search.provider_status, "not_configured");
 assert.ok(externalSearch.task_plan.steps.some((step) => step.type === "authorized_web_search"));
+
+const handoverAppointment = buildHandoverAppointmentProposal({
+  tenantId:"huamei-shanghai", conversationId:"handover-conversation", messageId:"handover-book-1", message:"我想预约热玛吉"
+});
+assert.equal(handoverAppointment?.type, "appointment_request", "人工接管期间的明确预约请求仍应提供待确认登记动作");
+assert.match(handoverAppointment?.id || "", /^act_[a-f0-9]{24}$/);
+assert.equal(buildHandoverAppointmentProposal({
+  tenantId:"huamei-shanghai", conversationId:"handover-conversation", messageId:"handover-book-2", message:"我暂时不想预约"
+}), null, "客户明确拒绝预约时不得展示登记入口");
 
 console.log("✓ 动态检索路由、会话任务状态、证据声明与待确认业务动作通过");

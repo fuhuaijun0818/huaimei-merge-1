@@ -1,7 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { spawn } from "node:child_process";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { createPostgresClient } from "../server/platform/postgres.mjs";
+
+const repositoryRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 
 // This runner deliberately provisions a disposable database rather than using
 // the developer's huamei database. It never drops an existing database or
@@ -28,7 +32,9 @@ const databaseUrl = ({ user, password, database }) => {
 const quoteIdentifier = (value) => `"${String(value).replaceAll("\"", "\"\"")}"`;
 const run = (command, args, env) => new Promise((resolve, reject) => {
   const child = spawn(command, args, {
-    cwd:new URL("..", import.meta.url),
+    // `spawn` accepts a filesystem path, but Node on Windows rejects a file URL
+    // here with EINVAL after the disposable database has been provisioned.
+    cwd:repositoryRoot,
     env,
     stdio:"inherit"
   });
@@ -98,21 +104,32 @@ try {
     HUAMEI_DATABASE_URL:bootstrapTestUrl
   });
   const focused = process.argv.includes("--three-modules");
+  const contactVaultOnly = process.argv.includes("--contact-vault");
+  if(focused && contactVaultOnly)
+    throw new Error("Choose either --three-modules or --contact-vault for isolated PostgreSQL integration");
   const verificationEnvironment = {
     ...integrationEnv,
     HUAMEI_DATABASE_URL:runtimeUrl
   };
-  if(focused){
+  if(contactVaultOnly){
+    await run(process.execPath,["tests/postgres-contact-vault-integration.mjs"],verificationEnvironment);
+  }else if(focused){
     for(const test of ["postgres-migration-integration", "postgres-five-role-publication-integration", "postgres-five-role-http-integration"])
       await run(process.execPath,[`tests/${test}.mjs`],verificationEnvironment);
-  }else await run(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "test:postgres:ci"],verificationEnvironment);
+  }else if(process.platform === "win32"){
+    // npm sets npm_execpath for package scripts. Invoking that JS entry point
+    // through node avoids Windows' inability to spawn a .cmd file directly.
+    const npmCli = String(process.env.npm_execpath || "").trim();
+    if(!npmCli) throw new Error("Windows isolated PostgreSQL integration requires npm_execpath");
+    await run(process.execPath, [npmCli, "run", "test:postgres:ci"],verificationEnvironment);
+  }else await run("npm", ["run", "test:postgres:ci"],verificationEnvironment);
 
   console.log(JSON.stringify({
     status:"passed",
     suite:"isolated-postgres-integration",
     database:"ephemeral",
     roles:"ephemeral",
-    tests:["role-provisioning", "migrations", focused ? "five-role-publication-http" : "postgres-ci"]
+    tests:["role-provisioning", "migrations", contactVaultOnly ? "postgres-contact-vault" : focused ? "five-role-publication-http" : "postgres-ci"]
   }));
 } finally {
   try {

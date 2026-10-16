@@ -25,11 +25,12 @@ try{
  test('advisor page',(await get('/advisor/')).status,200);test('anonymous management denied',(await get('/api/admin/identity')).status,401);
  let r=await get('/auth/login',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({username:env.HUAMEI_ADMIN_USERNAME,password})});test('login',r.status,200);const cookie=r.headers.get('set-cookie').split(';')[0];
  test('authenticated session',(await get('/auth/session',{headers:{Cookie:cookie}})).status,200);
+ r=await get('/api/admin/management/domain-overlay?tenant_id=huamei-shanghai',{headers:{Cookie:cookie}});test('management own tenant overlay query',r.status,200);
+ r=await get('/api/admin/management/domain-overlay?tenant_id=other-test-tenant',{headers:{Cookie:cookie}});test('management cross-tenant overlay denied',r.status,403);assert.equal((await r.json()).error?.code,'OIDC_TENANT_FORBIDDEN','本机开发身份不能由tenant_id查询参数扩权');checks.push('local management tenant scope is server-owned');
  const chat=async(message,session={})=>{const response=await get('/api/public/acquisition-chat',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({message,...session})});test('chat HTTP '+message,response.status,200);return response.json();};
- const first=await chat('我想了解热玛吉');assert(first.session_id,'会话ID');checks.push('server session ID');const second=await chat('一般原理',{session_id:first.session_id,session_token:first.session_token});assert(/热玛吉/.test(second.reply||JSON.stringify(second.reply_segments)),'追问应保持项目');checks.push('project followup context');
+ const first=await chat('我想了解热玛吉');assert(first.session_id,'会话ID');checks.push('server session ID');assert.match(String(first.assistant_message_id||''),/^reply_[a-f0-9]{64}$/,'前台响应必须返回稳定的助手消息 ID');checks.push('stable assistant message ID');const second=await chat('一般原理',{session_id:first.session_id,session_token:first.session_token});assert(/热玛吉/.test(second.reply||JSON.stringify(second.reply_segments)),'追问应保持项目');checks.push('project followup context');
  r=await get('/api/public/acquisition-lead',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({mobile:'13800000001',name:'模拟HTTP客户',service_consent:true,session_id:first.session_id,session_token:first.session_token})});test('format-only contact save',r.status,200);const lead=await r.json();assert(!JSON.stringify(lead).includes('13800000001'),'公网回执应脱敏');checks.push('public receipt redacted');
  r=await get('/api/local/acquisition-customers',{headers:{Cookie:cookie}});test('management conversation query',r.status,200);const data=await r.json();assert(JSON.stringify(data).includes(first.session_id),'后台应存在同一会话ID');checks.push('same conversation frontend to backend');
-
  // A 模块：刷新后回读会话、重试幂等与凭证边界。
  const transcriptRequest=()=>get('/api/public/acquisition-conversation',{method:'POST',headers:{Origin:base,'Content-Type':'application/json'},body:JSON.stringify({session_id:first.session_id,session_token:first.session_token})});
  const transcript=await transcriptRequest();test('conversation transcript restore',transcript.status,200);
@@ -69,6 +70,11 @@ try{
  assert.equal(resumed.filter((item)=>item.name==='delta').length,streamDeltas.length-1,'重连只补发缺失片段');checks.push('stream resume skips delivered fragments');
  const archived=await (await transcriptRequest()).json();
  assert.ok(archived.messages.some((item)=>String(item.text||'').replace(/\s+/g,'')===streamedText.replace(/\s+/g,'')),'后台归档应与流式提交文本一致');checks.push('stream text matches archive');
+ const cursor=Buffer.from(JSON.stringify({v:1,c:data.data.meta?.cursor||{}})).toString('base64url');
+ await chat('补齐游标验证消息',{session_id:first.session_id,session_token:first.session_token});
+ r=await get('/api/local/acquisition-customers?after_cursor='+encodeURIComponent(cursor),{headers:{Cookie:cookie}});test('management conversation cursor query',r.status,200);const delta=await r.json();assert.equal(delta.data.meta?.incremental,true,'携带有效游标必须进入增量同步');assert.ok(delta.data.conversations.some((item)=>item.externalConversationId===first.session_id&&(item.messages||[]).length>0),'增量同步必须补回断线期间缺失消息');checks.push('management cursor delta backfills missed messages');
+ const nextCursor=Buffer.from(JSON.stringify({v:1,c:delta.data.meta?.cursor||{}})).toString('base64url');
+  r=await get('/api/local/acquisition-customers?after_cursor='+encodeURIComponent(nextCursor),{headers:{Cookie:cookie}});test('management cursor replay query',r.status,200);const replay=await r.json();assert.equal(replay.data.conversations.length,0,'已确认的游标不得重放同一批消息');checks.push('management cursor delta avoids replay');
  test('logout',(await get('/auth/logout',{method:'POST',headers:{Cookie:cookie,Origin:base}})).status,200);test('old session rejected',(await get('/auth/session',{headers:{Cookie:cookie}})).status,401);
  mkdirSync('.team-dev',{recursive:true});const report={scope:'isolated real Node application HTTP; LLM/member disabled; local_json; not browser or PostgreSQL acceptance',passed:true,count:checks.length,checks};writeFileSync('.team-dev/application-http-report.json',JSON.stringify(report,null,2));console.log(JSON.stringify(report));
 }finally{

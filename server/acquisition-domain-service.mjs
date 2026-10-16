@@ -6,12 +6,13 @@ import { withdrawnKnowledgeRecordIds } from "./knowledge-release-policy.mjs";
 import { AGENT_DEFINITIONS, invokeAgentAsync } from "./agent-runtime.mjs";
 import { getAcquisitionConversationStyleStatus, leadCaptureDecision, splitAcquisitionReplySegments } from "./acquisition-conversation-style.mjs";
 import { getIntentEngineStatus } from "./acquisition-intent.mjs";
+import { createHash } from "node:crypto";
 import { getAcquisitionSession, getAcquisitionSessionMetrics, prepareAcquisitionSessionContext, recordAcquisitionSessionTurn } from "./acquisition-session.mjs";
 import { getHuameiKnowledgeStatus, loadHuameiKnowledge } from "./huamei-knowledge.mjs";
 import { getLlmStatus } from "./llm-client.mjs";
 import { getGraphRagStatus } from "./graphrag-client.mjs";
 import { attachPublicKnowledgeMediaPreviews, getPublicKnowledgeMediaStatus, selectPublicKnowledgeMedia } from "./knowledge-media.mjs";
-import { buildAcquisitionOrchestration } from "./acquisition-orchestration.mjs";
+import { buildAcquisitionOrchestration, buildHandoverAppointmentProposal } from "./acquisition-orchestration.mjs";
 import { ensureHandoverTask, findOpenHandover, getOperationsStoreStatus, recordInboundDuringHandover } from "./acquisition-operations-store.mjs";
 import { ensureKnowledgeReleasePolicyFresh } from "./knowledge-release-policy.mjs";
 import { getTenantContextStatus, normalizeTenantId, tenantScopedKey } from "./platform/tenant-context.mjs";
@@ -22,6 +23,12 @@ const CONVERSATION_SEQUENCE_WAIT_MS = Number.isFinite(configuredSequenceWaitMs)
   ? Math.min(30_000, Math.max(250, configuredSequenceWaitMs))
   : 10_000;
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+// The public browser and persisted history must share one stable assistant
+// message identity.  It intentionally mirrors the session-store key, which is
+// derived from the private, tenant-scoped session ID and inbound message ID.
+const assistantMessageIdFor = (sessionId, inboundMessageId) => `reply_${createHash("sha256")
+  .update(`${sessionId}\u0000${inboundMessageId}\u0000assistant`)
+  .digest("hex")}`;
 
 const recordTurnInReceiptOrder = async (sessionId, payload, metadata) => {
   const deadline = Date.now() + CONVERSATION_SEQUENCE_WAIT_MS;
@@ -62,8 +69,18 @@ const knownProjectsFrom = (result) => [...new Set([
 function handoverResponse(envelope, openHandover, metadata = {}) {
   const tenantId = envelope.tenant_id, channel = envelope.channel;
   const externalConversationId = envelope.conversation_id, message = envelope.message.text;
-    const claimed = openHandover.ai_suspended === true || openHandover.status === "active";
-    return {
+  const claimed = openHandover.ai_suspended === true || openHandover.status === "active";
+  // This is a deterministic, customer-confirmed intake affordance, not an AI
+  // response. It intentionally remains available after an explicit lead
+  // capture has opened the human handover, so a later booking request is not
+  // stranded behind the AI-suspension boundary.
+  const appointmentProposal = buildHandoverAppointmentProposal({
+    tenantId,
+    conversationId:externalConversationId,
+    messageId:envelope.message.id,
+    message
+  });
+  return {
       schema_version:"1.1", service:"huamei-acquisition-agent", tenant_id:tenantId,
       request_id:metadata.requestId, run_id:null, status:claimed ? "human_active" : "handover_pending",
       channel, conversation_id:externalConversationId, message_id:envelope.message.id,
@@ -76,6 +93,7 @@ function handoverResponse(envelope, openHandover, metadata = {}) {
       handover:{ required:true, id:openHandover.id, task_id:openHandover.task_id, status:openHandover.status, to_team:openHandover.team, reason:openHandover.reason, assignee:openHandover.assignee, sla_due_at:openHandover.sla_due_at },
       delivery:{ suppress_ai:claimed, mode:claimed ? "human_only" : "handover_notice" },
       profile_signals:{ projects:openHandover.projects || [], known_slots:openHandover.known_slots || {}, conversation_summary:openHandover.summary, turn_count:null, session_id:externalConversationId, intent:"human_handover" },
+      orchestration:{ version:"1.0.0", action_proposal:appointmentProposal },
       lead_capture:{ should_prompt:false },
       guardrails:{ medical_diagnosis_allowed:false, suitability_judgement_allowed:false, llm_used:false, compliance_gate_version:"4.2.0", knowledge_version:null },
       usage:{ provider:"handover_orchestrator", model:null, input_characters:message.length, output_characters:claimed ? 0 : 17 }
@@ -92,10 +110,15 @@ export async function acquisitionHandoverDeliveryOverride(envelope, result = nul
 
 export async function processAcquisitionEnvelope(envelope, metadata = {}) {
   recordLocalConversation(envelope,{});
-  const publication=await loadActivePublication(envelope.tenant_id);
-  const response = await publicationRequestContext.run(publication,()=>processAcquisitionEnvelopeWithPublication(envelope,metadata));
-  recordLocalConversation(envelope,response);
-  return response;
+  try {
+    const publication=await loadActivePublication(envelope.tenant_id);
+    const response = await publicationRequestContext.run(publication,()=>processAcquisitionEnvelopeWithPublication(envelope,metadata));
+    recordLocalConversation(envelope,response);
+    return response;
+  } catch (error) {
+    recordLocalConversation(envelope,{messageStatus:'failed',error_code:error?.code || 'ACQUISITION_PROCESSING_FAILED'});
+    throw error;
+  }
 }
 async function processAcquisitionEnvelopeWithPublication(envelope, metadata = {}) {
   const tenantId = envelope.tenant_id;
@@ -186,6 +209,9 @@ async function processAcquisitionEnvelopeWithPublication(envelope, metadata = {}
     tenant_id:tenantId,
     request_id:result.request_id,
     run_id:result.run_id,
+    assistant_message_id:result.output.message
+      ? assistantMessageIdFor(internalSessionId, envelope.message.id)
+      : null,
     status:result.status,
     channel,
     conversation_id:externalConversationId,

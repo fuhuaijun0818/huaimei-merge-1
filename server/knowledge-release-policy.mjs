@@ -322,13 +322,20 @@ export async function submitKnowledgeReview({ tenant_id:tenantId, release_id:rel
     throw error;
   }
   requireIdentityRole(identity, `knowledge.${normalizedType}_reviewer`);
+  const normalizedComments = String(comments || "").trim().slice(0, 2_000);
+  if (!normalizedComments) {
+    const error = new Error("审核必须填写结论理由");
+    error.code = "KNOWLEDGE_REVIEW_REASON_REQUIRED";
+    error.status = 400;
+    throw error;
+  }
   return requirePostgresWorkflow().submitReview({
     tenantId:tenant,
     releaseId:String(releaseId || "").trim(),
     reviewType:normalizedType,
     decision:String(decision || "").trim().toLowerCase(),
     identity,
-    comments,
+    comments:normalizedComments,
     scopeChecksum:String(scopeChecksum || "").trim().toLowerCase()
   });
 }

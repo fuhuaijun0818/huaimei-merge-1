@@ -964,10 +964,11 @@ export function createAcquisitionServiceServer(options = {}) {
           "HANDOVER_COMPLETION_PAYLOAD_MISMATCH"
         ].includes(error.code);
         const dependencyFailure = /POSTGRES|REDIS|ECONN|TIMEOUT|DEPENDENCY/i.test(String(error.code || error.message || ""));
+        const status = Number(error.status) || (conflict ? 409 : dependencyFailure ? 503 : 400);
         sendError(
           response,
           requestId,
-          conflict ? 409 : dependencyFailure ? 503 : 400,
+          status,
           conflict ? error.code : dependencyFailure ? "DEPENDENCY_UNAVAILABLE" : error.code || "OPERATION_INVALID",
           dependencyFailure ? "运营数据服务暂时不可用" : error.message,
           dependencyFailure ? [] : error.details || []

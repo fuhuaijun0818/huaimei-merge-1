@@ -9,7 +9,14 @@ const loginFailures=new Map();
 let activePasswordChecks=0;
 const fail=(code,message,status=403)=>Object.assign(new Error(message),{code,status});
 const safe=row=>{const {password_hash,...publicFields}=row;return publicFields;};
-const principal=row=>({subject:row.subject,displayName:row.display_name,roles:[row.business_role],phaseOneRole:row.business_role,tenantIds:[row.tenant_id],departmentIds:row.department_ids,issuer:'urn:huamei:managed-account',accountVersion:row.version});
+const managementTenantIds = (tenantId) => {
+ const current=String(tenantId||'').trim().toLowerCase();
+ const configured=String(process.env.HUAMEI_MANAGEMENT_TENANT_IDS||'').split(',').map(v=>v.trim().toLowerCase()).filter(Boolean);
+ const runtime=String(process.env.HUAMEI_RUNTIME_ENV||process.env.NODE_ENV||'').trim().toLowerCase();
+ const values=configured.length ? configured : (!['prod','production'].includes(runtime) && ['team_alpha','team_beta'].includes(current) ? ['team_alpha','team_beta'] : [current]);
+ return [...new Set([current,...values].filter(Boolean))];
+};
+const principal=row=>({subject:row.subject,displayName:row.display_name,roles:[row.business_role],phaseOneRole:row.business_role,tenantIds:row.business_role==='超级管理员'?managementTenantIds(row.tenant_id):[row.tenant_id],departmentIds:row.department_ids,issuer:'urn:huamei:managed-account',accountVersion:row.version});
 async function passwordHash(password,salt=randomBytes(16).toString('hex')){
  if(typeof password!=='string'||password.length<8||password.length>256)throw fail('PASSWORD_INVALID','密码需为8至256个字符',400);
  return `${salt}:${Buffer.from(await scrypt(password,salt,64)).toString('hex')}`;

@@ -105,6 +105,7 @@ export function authorizeManagementPrincipal(principal, options = {}) {
   let tenantId;
   if (suppliedTenant) tenantId = normalizedTenant(suppliedTenant, options.tenantField || "tenant_id");
   else if (uniqueTenantIds.length === 1) tenantId = uniqueTenantIds[0];
+  else if (hasPhaseOneCapability(principal, "superadmin:manage")) tenantId = uniqueTenantIds[0];
   else {
     throw authorizationError(
       "TENANT_CONTEXT_REQUIRED",

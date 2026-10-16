@@ -3,6 +3,10 @@ const channel=enabled&&typeof BroadcastChannel!=='undefined'?new BroadcastChanne
 let leaving=false;
 export function expireAdminSession(reason='expired') {
   if(!enabled||leaving)return;leaving=true;
+  // Reply drafts can contain customer-facing content.  Tell the application
+  // to discard them before this tab is redirected to the login page.  A
+  // custom event keeps this session module independent of the composer.
+  window.dispatchEvent(new Event('huamei:management-session-ending'));
   document.querySelector('#app')?.replaceChildren();document.querySelector('#modal-root')?.replaceChildren();
   location.replace('/login?reason='+encodeURIComponent(reason)+location.hash);
 }

@@ -31,8 +31,15 @@ const replayFor = (state, key, fingerprint, actor) => {
   if (receipt.hash !== fingerprint || receipt.actor !== actor) fail("APPOINTMENT_IDEMPOTENCY_CONFLICT", "同一提交标识不能用于不同内容。", 409);
   return { intake:structuredClone(receipt.result), replayed:true };
 };
-const addEvent = (state, item, type, actor) => state.events.push({ id:`aptev_${randomUUID()}`, type, appointment_id:item.id, version:item.version, actor, at:item.updated_at });
+const addEvent = (state, item, type, actor, details = {}) => state.events.push({ id:`aptev_${randomUUID()}`, type, appointment_id:item.id, version:item.version, actor, at:item.updated_at, details });
 const saveReceipt = (state, key, fingerprint, actor, item) => state.receipts.push({ key, hash:fingerprint, actor, result:publicAppointment(item) });
+const normalizeNextFollowupAt = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const timestamp = Date.parse(raw);
+  if (!Number.isFinite(timestamp)) fail("APPOINTMENT_NEXT_FOLLOWUP_INVALID", "请填写有效的下次跟进时间。");
+  return new Date(timestamp).toISOString();
+};
 const syncFollowup = (state, item) => {
   let task = state.followups.find((t) => t.appointment_id === item.id);
   if (!task) { task = { id:`aptfollow_${randomUUID()}`, appointment_id:item.id }; state.followups.push(task); }
@@ -73,7 +80,7 @@ export async function createAppointmentIntake(payload = {}) {
       internal_customer_reference:payload.internal_customer_reference,
       confirmation:{ action_id:payload.source_action_id, creation_hash:fingerprint, summary_hash:fingerprint, confirmed_at:now, source:"customer_summary_form" },
       appointment_no:`HM${id.slice(4).replaceAll("-", "").toUpperCase()}`, assignee:null, followup_status:"pending",
-      notification_status:"manual_required", schedule_slot_id:null, schedule_reference:null,
+      notification_status:"manual_required", schedule_slot_id:null, schedule_reference:null, followup_history:[],
       created_at:now, updated_at:now, confirmed_at:now };
     state.registrations.push(item);
     syncFollowup(state, item);
@@ -83,9 +90,14 @@ export async function createAppointmentIntake(payload = {}) {
   });
 }
 
-export async function listAppointmentIntakes({ tenant_id, status = "", limit = 100, actor = "", assigned_only = false } = {}) {
+export async function listAppointmentIntakes({ tenant_id, status = "", followup_status = "", preferred_date = "", assignee = "", limit = 100, actor = "", assigned_only = false } = {}) {
+  const requestedDate = /^\d{4}-\d{2}-\d{2}$/.test(String(preferred_date || "")) ? String(preferred_date) : "";
+  const requestedAssignee = String(assignee || "").trim().slice(0, 120);
   const states = await readAppointmentStates({ tenant_id, limit });
   return states.flatMap((state) => state.registrations).filter((r) => (!status || r.status === status)
+    && (!followup_status || r.followup_status === followup_status)
+    && (!requestedDate || r.preferred_date === requestedDate)
+    && (!requestedAssignee || (requestedAssignee === "__unassigned__" ? !r.assignee : r.assignee === requestedAssignee))
     && (!assigned_only || !r.assignee || r.assignee === actor))
     .sort((a,b) => b.updated_at.localeCompare(a.updated_at)).slice(0, Math.min(500, Math.max(1, Number(limit) || 100))).map(publicAppointment);
 }
@@ -122,8 +134,10 @@ export async function resolveAppointmentIntake(payload) {
   if (!["completed", "needs_customer_info"].includes(payload.status)) fail("APPOINTMENT_STATUS_INVALID", "顾问只能记录跟进结果；到院时间由客户确认。");
   const note = clean(payload.note, 500);
   if (!note) fail("APPOINTMENT_NOTE_REQUIRED", "请填写跟进结果。");
+  const nextFollowupAt = normalizeNextFollowupAt(payload.next_followup_at);
+  if (payload.status === "needs_customer_info" && !nextFollowupAt) fail("APPOINTMENT_NEXT_FOLLOWUP_REQUIRED", "待客户补充信息时请记录下次跟进时间。");
   const key = operationKey(payload);
-  const fingerprint = hash(["resolve", payload.appointment_intake_id, payload.status, note]);
+  const fingerprint = hash(["resolve", payload.appointment_intake_id, payload.status, note, nextFollowupAt]);
   return appointmentStateTransaction(payload, (state) => {
     const item = currentFor(state, payload);
     if (!item) return null;
@@ -133,10 +147,13 @@ export async function resolveAppointmentIntake(payload) {
     if (item.status !== "registered" || item.followup_status === "completed") fail("APPOINTMENT_ALREADY_CLOSED", "跟进任务已结束。", 409);
     item.followup_status = payload.status;
     item.resolution_note = note;
+    item.next_followup_at = nextFollowupAt;
     item.updated_at = new Date().toISOString();
+    item.followup_history = Array.isArray(item.followup_history) ? item.followup_history : [];
+    item.followup_history.push({ id:`aptfollowevent_${randomUUID()}`, status:payload.status, note, next_followup_at:nextFollowupAt, actor, occurred_at:item.updated_at });
     const task = state.followups.find((t) => t.appointment_id === item.id);
-    if (task) task.status = payload.status === "completed" ? "completed" : "pending";
-    addEvent(state, item, "appointment.followup_updated", actor);
+    if (task) Object.assign(task, { status:payload.status === "completed" ? "completed" : "pending", last_note:note, next_followup_at:nextFollowupAt, updated_at:item.updated_at });
+    addEvent(state, item, "appointment.followup_updated", actor, { status:payload.status, next_followup_at:nextFollowupAt });
     saveReceipt(state, key, fingerprint, actor, item);
     return publicResult(item);
   });
@@ -153,7 +170,14 @@ export async function changeCustomerAppointment(payload) {
     const item = currentFor(state, payload);
     if (!item) return null;
     const replay = replayFor(state, key, fingerprint, actor);
-    if (replay) return replay;
+    // A retry of a previously accepted reschedule must never surface the
+    // pre-cancellation snapshot after the customer has cancelled the intake.
+    // Return the latest terminal state instead, while retaining the replay
+    // marker so callers can distinguish it from a new mutation.
+    if (replay) {
+      if (item.status === "cancelled" && payload.action === "reschedule") return publicResult(item, true);
+      return replay;
+    }
     checkVersion(item, payload.expected_version);
     if (item.status === "cancelled" && payload.action === "cancel") return publicResult(item, true);
     if (item.status !== "registered") fail("APPOINTMENT_ALREADY_CLOSED", "此登记已经取消，请重新登记。", 409);

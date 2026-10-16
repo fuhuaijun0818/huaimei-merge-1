@@ -8,7 +8,7 @@ const eventName = (value) => {
   const normalized = String(value || "application.event").trim().toLowerCase();
   return /^[a-z][a-z0-9_.:-]{0,95}$/.test(normalized) ? normalized : "application.event";
 };
-const allowedProductionField = /^(?:method|route|status_code|outcome|duration_ms|latency_ms|provider|model|mode|cache_hit|error|error_code|worker_id|event_id|attempt|max_attempts|bind_address|port|signal|dependency|state|count|version|index_version|release_id|tenant_hash|queue|retry_delay_ms|in_flight|drained|component|operation|driver)$/;
+const allowedProductionField = /^(?:request_id|method|route|status_code|outcome|duration_ms|latency_ms|provider|model|mode|cache_hit|error|error_code|worker_id|event_id|attempt|max_attempts|bind_address|port|signal|dependency|state|count|version|index_version|release_id|tenant_hash|queue|retry_delay_ms|in_flight|drained|component|operation|driver)$/;
 
 export function createStructuredLogger(options = {}) {
   const service = String(options.service || "huamei-service").trim().slice(0, 80) || "huamei-service";

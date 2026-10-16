@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { createFieldEncryption, createFieldRecordId } from "../platform/field-encryption.mjs";
 import {
   appendAuditEvent, appendOutboxEvent, ensureTenant, jsonValue, postgres
@@ -8,6 +8,14 @@ import { createPostgresContactVaultStore } from "./postgres-contact-vault-store.
 import { redactContactPii } from "../platform/contact-pii-redaction.mjs";
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
+const normalizeMobile = (value) => {
+  const digits = String(value ?? "").normalize("NFKC").replace(/\D/g, "");
+  if (/^1[3-9]\d{9}$/.test(digits)) return digits;
+  return digits.replace(/^(?:00)?86/, "");
+};
+const mobileIdentityHmac = (mobile, tenantId, env) => createHmac("sha256", String(env.HUAMEI_IDENTITY_PEPPER || "times-beauty-local-mvp-v1"))
+  .update(`${tenantId}:${normalizeMobile(mobile)}`).digest("hex");
+const maskMobile = (mobile) => `${mobile.slice(0, 3)}****${mobile.slice(-4)}`;
 const policyVersion = () => String(process.env.HUAMEI_PRIVACY_POLICY_VERSION || "phase1-consultation-v1").slice(0, 64);
 
 const leadProfileContext = (tenantId, identity) => ({
@@ -74,13 +82,18 @@ export function createPostgresLeadStore(options = {}) {
   const fieldEncryption = options.fieldEncryption || createFieldEncryption({ env });
   const contactVault = options.contactVault || createPostgresContactVaultStore({ postgres:database, env });
 
-  const updateMemberCheck = ({tenantId,identity,captureId,memberCheck}) => database.tenantTransaction(tenantId,async client=>{
+  const updateMemberCheck = ({tenantId,identity,captureId,memberCheck,timelineEvent=null}) => database.tenantTransaction(tenantId,async client=>{
     await assertPrivacyContactPurposeAllowed(client,{tenantId,subjectReferenceHmac:identity,purpose:"service",operation:"member_check_result"});
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`lead:${tenantId}:${identity}`]);
     const r=await client.query("SELECT * FROM leads WHERE tenant_id=$1 AND normalized_mobile_hmac=$2 FOR UPDATE",[tenantId,identity]);
     const lead=leadFromRow(r.rows[0],fieldEncryption);
     if(!lead || lead.customer?.memberCheck?.capture_id!==captureId) return null;
-    lead.customer.memberCheck=memberCheck;
+    // Keep the capture bound to the number that was actually queried: the manual
+    // re-check and the "an old number's result must not overwrite a new number"
+    // guard both compare this id, and the provider record itself has no capture.
+    lead.customer.memberCheck={ ...memberCheck, capture_id:captureId };
+    // 人工重查要在客户时间线留痕，管理端才能看到“谁在什么时候重查过”。
+    if (timelineEvent) lead.customer.timeline=[timelineEvent, ...(lead.customer.timeline || [])].slice(0, 80);
     const {phone_hash:ignored,...document}=lead;
     await client.query("UPDATE leads SET profile=$3::jsonb WHERE tenant_id=$1 AND normalized_mobile_hmac=$2",[tenantId,identity,JSON.stringify(fieldEncryption.encryptJson({_document:document},leadProfileContext(tenantId,identity)))]);
     await appendAuditEvent(client,{tenantId,actorId:"member-check-service",action:"lead.member_check_completed",resourceType:"lead",resourceId:lead.customer.id,details:{status:memberCheck.status,reason_code:memberCheck.reason_code||null}});
@@ -364,6 +377,48 @@ export function createPostgresLeadStore(options = {}) {
     });
   };
 
+  // Reads the server-side plaintext of the capture currently bound to the stored
+  // number so an operator-triggered member re-check can never query a different
+  // number.  The read itself is audited by the contact vault store.
+  const readCustomerContactForMemberCheck = ({ tenantId, customerId, actor, requestId = null }) =>
+    database.tenantTransaction(tenantId, async (client) => {
+      const result = await client.query(
+        "SELECT * FROM leads WHERE tenant_id=$1 AND customer_id=$2 FOR UPDATE",
+        [tenantId, customerId]
+      );
+      if (!result.rowCount) return null;
+      const row = result.rows[0];
+      const lead = leadFromRow(row, fieldEncryption);
+      const stored = lead?.customer?.memberCheck;
+      const captureId = stored?.capture_id || randomUUID();
+      if (!stored?.capture_id) {
+        // 历史档案（早期写回丢过 capture）在首次重查时补一个绑定，之后保持稳定，
+        // 这样“旧号码结果不能覆盖新号码状态”的守卫对老数据同样生效。
+        lead.customer.memberCheck = {
+          schema:"huamei.member-repeatcheck.v1", provider:"huamei_repeatcheck", status:"pending",
+          is_repeat:null, member_status:"unknown", reason_code:null,
+          attempted_at:new Date().toISOString(), checked_at:null,
+          ...(stored || {}), capture_id:captureId
+        };
+        const { phone_hash:ignored, ...document } = lead;
+        await client.query(
+          "UPDATE leads SET profile=$3::jsonb WHERE tenant_id=$1 AND normalized_mobile_hmac=$2",
+          [tenantId, row.normalized_mobile_hmac,
+            JSON.stringify(fieldEncryption.encryptJson({ _document:document }, leadProfileContext(tenantId, row.normalized_mobile_hmac)))]
+        );
+      }
+      const mobile = await contactVault.readMobileForMemberCheck({
+        client, tenantId, leadRecordId:row.id, subjectReferenceHmac:row.normalized_mobile_hmac, actor, requestId
+      });
+      const conversations = lead.conversations || [];
+      const sessionId = String(conversations[0]?.externalConversationId || conversations[0]?.id
+        || `member-check-${row.id}`).slice(0, 128);
+      return {
+        mobile, identity:row.normalized_mobile_hmac, captureId, sessionId,
+        name:lead.customer?.name || "", previous:stored
+      };
+    });
+
   const snapshot = async (tenantId) => {
     const result = await database.tenantQuery(tenantId,
       `SELECT * FROM leads WHERE tenant_id=$1 ORDER BY last_seen_at DESC`,
@@ -372,11 +427,143 @@ export function createPostgresLeadStore(options = {}) {
     return result.rows.map((row) => leadFromRow(row, fieldEncryption));
   };
 
+  const updateCustomer = async ({ tenantId, customerId, patch = {}, expectedVersion = null, actor = "当前用户", source = "management" } = {}) => database.tenantTransaction(tenantId, async (client) => {
+    const result = await client.query("SELECT * FROM leads WHERE tenant_id=$1 AND customer_id=$2 FOR UPDATE", [tenantId, customerId]);
+    if (!result.rowCount) {
+      const error = new Error("未找到客户档案"); error.code = "CUSTOMER_NOT_FOUND"; error.status = 404; throw error;
+    }
+    const row = result.rows[0];
+    const current = leadFromRow(row, fieldEncryption);
+    const currentVersion = Math.max(1, Number(current.profile_version || current.customer?.profileVersion || 1));
+    if (expectedVersion !== null && expectedVersion !== currentVersion) {
+      const error = new Error("客户资料已被其他人员更新，请刷新后重试");
+      error.code = "PROFILE_VERSION_CONFLICT"; error.status = 409;
+      error.details = [{ expected_version:expectedVersion, current_version:currentVersion }]; throw error;
+    }
+    const phoneChanged = Boolean(patch.mobile);
+    const mobile = phoneChanged ? normalizeMobile(patch.mobile) : "";
+    const identity = phoneChanged ? mobileIdentityHmac(mobile, tenantId, env) : row.normalized_mobile_hmac;
+    if (phoneChanged) {
+      const duplicate = await client.query(
+        "SELECT 1 FROM leads WHERE tenant_id=$1 AND normalized_mobile_hmac=$2 AND id<>$3 LIMIT 1",
+        [tenantId, identity, row.id]
+      );
+      if (duplicate.rowCount) {
+        const error = new Error("该手机号已关联其他客户，请先核对客户档案");
+        error.code = "MOBILE_ALREADY_LINKED"; error.status = 409; throw error;
+      }
+    }
+    const now = new Date().toISOString();
+    const nextVersion = currentVersion + 1;
+    const changed = [
+      ...(Object.hasOwn(patch, "name") ? ["name"] : []),
+      ...(phoneChanged ? ["mobile"] : []),
+      ...(patch.profile ? Object.keys(patch.profile).map((key) => `profile.${key}`) : []),
+      ...(patch.contactPreferences ? ["contact_preferences"] : []),
+      ...(patch.customerNote ? ["customer_note"] : []),
+      ...(Object.hasOwn(patch, "tags") ? ["tags"] : [])
+    ];
+    const profileUpdate = { version:nextVersion, fields:changed, source:source || "management", actor:actor || "当前用户", at:now };
+    const customerNote = patch.customerNote ? {
+      id:`N-${createHash("sha256").update(`${customerId}:note:${now}`).digest("hex").slice(0, 14).toUpperCase()}`,
+      customer_id:customerId, content:patch.customerNote, author:actor || "当前用户", created_at:now, source:source || "management"
+    } : null;
+    const customer = {
+      ...current.customer,
+      ...(Object.hasOwn(patch, "name") ? { name:patch.name } : {}),
+      ...(phoneChanged ? { mobile:maskMobile(mobile), phoneVerificationStatus:"pending_manual" } : {}),
+      ...(patch.profile ? { profile:{ ...(current.customer?.profile || {}), ...patch.profile } } : {}),
+      ...(patch.contactPreferences ? { contactPreferences:{ ...(current.customer?.contactPreferences || {}), ...patch.contactPreferences,
+        updated_at:now, updated_by:actor, source } } : {}),
+      ...(customerNote ? { customerNotes:[customerNote, ...(current.customer?.customerNotes || [])].slice(0, 100) } : {}),
+      ...(patch.tags ? { tags:patch.tags } : {}),
+      profileVersion:nextVersion, profileUpdatedAt:now, profileUpdatedBy:actor, profileUpdateSource:source,
+      profileUpdateHistory:[profileUpdate, ...(current.customer?.profileUpdateHistory || [])].slice(0, 50)
+    };
+    const captureId = phoneChanged ? randomUUID() : null;
+    const sessionId = String(current.conversations?.[0]?.externalConversationId || `profile-${randomUUID()}`).slice(0, 128);
+    const verification = phoneChanged ? {
+      schema:"huamei.contact-capture.v1", verified:false, status:"pending_manual", method:"format_validation",
+      tenant_id:tenantId, subject_reference_hmac:identity, session_id:sessionId,
+      verification_id:captureId, captured_at:now
+    } : null;
+    if (phoneChanged) {
+      customer.memberCheck = { schema:"huamei.member-repeatcheck.v1", provider:"huamei_repeatcheck", status:"pending",
+        is_repeat:null, member_status:"unknown", reason_code:null, attempted_at:now, checked_at:null, capture_id:captureId };
+    }
+    const event = {
+      id:`E-${createHash("sha256").update(`${customerId}:${customerNote ? "note" : "profile"}:${now}`).digest("hex").slice(0, 14).toUpperCase()}`,
+      type:customerNote ? "note" : "profile", title:customerNote ? "新增客户备注" : "客户资料由人工更正", detail:customerNote ? customerNote.content : `已更新${changed.join("、")}。${phoneChanged ? "手机号变更后将重新查询会员状态。" : ""}`,
+      occurredAt:now, actor:actor || "当前用户", channel:source || "管理后台", tone:"neutral", source, fields:changed
+    };
+    const document = { ...current, phone_hash:undefined, updated_at:now, profile_version:nextVersion,
+      customer:{ ...customer, timeline:[event, ...(current.customer?.timeline || [])].slice(0, 80) } };
+    if (phoneChanged) {
+      await contactVault.persistInTransaction(client, { tenantId, leadRecordId:row.id, subjectReferenceHmac:identity, mobile, verification, allowSubjectRotation:true });
+    }
+    await client.query(
+      `UPDATE leads SET normalized_mobile_hmac=$3, masked_mobile=$4, display_name=$5,
+         profile=$6::jsonb, last_seen_at=$7 WHERE tenant_id=$1 AND id=$2`,
+      [tenantId, row.id, identity, phoneChanged ? maskMobile(mobile) : row.masked_mobile,
+        customer.name || null, JSON.stringify(fieldEncryption.encryptJson({ _document:document }, leadProfileContext(tenantId, identity))), now]
+    );
+    await appendAuditEvent(client, { tenantId, action:"lead.profile_updated", resourceType:"lead", resourceId:row.lead_id,
+      actorType:"human", actorId:actor || "current-user", details:{ fields:changed, source, profile_version:nextVersion, phone_changed:phoneChanged } });
+    return { lead:{ ...document, phone_hash:identity }, phoneChanged, mobile, identity, sessionId, verification };
+  });
+
+  const appendConversationReply = ({ tenantId, conversationId, message, updateLead }) => database.tenantTransaction(tenantId, async (client) => {
+    const result = await client.query("SELECT * FROM leads WHERE tenant_id=$1 FOR UPDATE", [tenantId]);
+    for (const row of result.rows) {
+      const lead = leadFromRow(row, fieldEncryption);
+      const mutation = updateLead(lead);
+      if (!mutation) continue;
+      const updated = mutation.lead;
+      if (!mutation.replayed) {
+        const { phone_hash:ignored, ...document } = updated;
+        await client.query(
+          "UPDATE leads SET profile=$3::jsonb,last_seen_at=$4 WHERE tenant_id=$1 AND normalized_mobile_hmac=$2",
+          [tenantId, row.normalized_mobile_hmac, JSON.stringify(fieldEncryption.encryptJson({ _document:document }, leadProfileContext(tenantId, row.normalized_mobile_hmac))), updated.updated_at]
+        );
+        await appendAuditEvent(client, { tenantId, action:"conversation.reply_sent", resourceType:"conversation", resourceId:conversationId, actorId:message.actor, details:{ channel:"获客顾问 Web", message_id:message.id } });
+      }
+      return { conversation:clone(mutation.conversation), customer:clone(updated.customer), message:clone(mutation.message), replayed:Boolean(mutation.replayed) };
+    }
+    return null;
+  });
+
+  const recordConversationDelivery = ({ tenantId, conversationId, messageId, updateLead }) => database.tenantTransaction(tenantId, async (client) => {
+    const result = await client.query("SELECT * FROM leads WHERE tenant_id=$1 FOR UPDATE", [tenantId]);
+    for (const row of result.rows) {
+      const lead = leadFromRow(row, fieldEncryption);
+      const updated = updateLead(lead);
+      if (!updated) continue;
+      const { phone_hash:ignored, ...document } = updated.lead;
+      await client.query(
+        "UPDATE leads SET profile=$3::jsonb,last_seen_at=$4 WHERE tenant_id=$1 AND normalized_mobile_hmac=$2",
+        [tenantId, row.normalized_mobile_hmac, JSON.stringify(fieldEncryption.encryptJson({ _document:document }, leadProfileContext(tenantId, row.normalized_mobile_hmac))), document.updated_at]
+      );
+      await appendAuditEvent(client, {
+        tenantId,
+        action:"conversation.staff_message_delivered",
+        resourceType:"conversation_message",
+        resourceId:messageId,
+        details:{ conversation_id:conversationId, channel:"web", delivery_status:"delivered", read_status:"not_reported" }
+      });
+      return { message:clone(updated.message), replayed:Boolean(updated.replayed) };
+    }
+    return null;
+  });
+
   return {
     upsert,
     updateMemberCheck,
+    readCustomerContactForMemberCheck,
     upsertCandidate,
     snapshot,
+    updateCustomer,
+    appendConversationReply,
+    recordConversationDelivery,
     status:() => ({
       driver:"postgres", durable:true, shared:true, configured:database.configured,
       field_encryption:fieldEncryption.enabled ? "aes-256-gcm" : "development-plaintext",
