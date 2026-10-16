@@ -1654,6 +1654,13 @@ export async function handleApiRequest(request, response) {
     return true;
   }
 
+  // 反馈接口只接受客户提交，不提供读取：避免它被当成查询客户信息的入口
+  // （A-027 AC4）。质检侧读取一律走管理端脱敏接口 + capability 校验。
+  if (url.pathname === "/api/public/acquisition-feedback" && request.method !== "POST") {
+    sendError(request, response, requestId, 405, "METHOD_NOT_ALLOWED", "反馈接口仅接收客户提交，不提供读取；质检请使用管理端脱敏接口");
+    return true;
+  }
+
   if (request.method === "POST" && url.pathname === "/api/public/acquisition-feedback") {
     let payload;
     try { payload = await readJsonBody(request); }
