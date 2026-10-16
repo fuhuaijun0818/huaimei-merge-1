@@ -809,6 +809,9 @@ const attachGraphRagEvidence = (localResponse, graphResult, context, query = "")
 
 // A-011 AC4：连续两次仍无法理解时，承认不确定并给出人工入口，而不是再问一遍。
 const CLARIFICATION_ESCALATION_MESSAGE = "抱歉，我可能没有理解您的意思。您可以换个说法，比如想了解的项目，或想改善的部位；也可以回复“转人工”，我为您转接人工顾问继续沟通。";
+// 客户已经明确表态（拒绝联系、暂缓、要求人工）时不属于“没听懂”，照常承接不升级。
+const isCustomerDirectedTurn = (text = "") =>
+  /(?:不要|不用|别|不需要|先不|暂时不|暂不)(?:再)?(?:联系|打扰|回访|跟进)|没空|不着急|以后再说|再说吧|先不考虑|转人工|找人工|真人顾问|人工客服/.test(String(text || ""));
 const clarificationEscalationResult = (input, context, intent, conversationState) => ({
   status:"completed",
   message:CLARIFICATION_ESCALATION_MESSAGE,
@@ -1063,7 +1066,7 @@ function acquisitionAgent(input, context, intentAnalysis) {
 
   if (intentAnalysis?.clarification_required) {
     // 连续两次都没听懂：不再重复同一个澄清问题，改为承认不确定并给出人工入口。
-    if (Number(context.clarification_streak) >= 1) return clarificationEscalationResult(input, context, intent, baseConversationState);
+    if (Number(context.clarification_streak) >= 1 && !isCustomerDirectedTurn(input.message)) return clarificationEscalationResult(input, context, intent, baseConversationState);
     const message = intent === "doctor_discovery_by_project"
       ? "我先按项目方向帮您缩小医生范围。您主要想咨询眼部、鼻部、胸部，还是面部年轻化？"
       : entities.concerns?.length
@@ -1372,7 +1375,11 @@ function acquisitionAgent(input, context, intentAnalysis) {
   };
 
   if (!hits.length && huameiResponse) return resultFromKnowledgeResponse({ ...huameiResponse, intent });
-  if (!hits.length && Number(context.clarification_streak) >= 1) return clarificationEscalationResult(input, context, intent, baseConversationState);
+  // 只有“本轮同样是需要澄清”时才升级；拒绝联系、人工请求等确定性轮次照常承接。
+  if (!hits.length && Number(context.clarification_streak) >= 1 && !isCustomerDirectedTurn(input.message)
+    && (intent === "need_clarification" || intentAnalysis?.clarification_required === true)) {
+    return clarificationEscalationResult(input, context, intent, baseConversationState);
+  }
   if (!hits.length) return {
     status: "completed",
     message: entities.concerns?.length

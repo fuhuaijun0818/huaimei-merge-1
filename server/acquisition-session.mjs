@@ -447,7 +447,14 @@ const recordSessionTurn = (session, {
   session.pendingFields = interaction.pending_fields;
   // 记录本次是否“没听懂”：澄清轮累加，其它轮清零（连续两次即触发人工入口）。
   const turnIntent = intentAnalysis?.primary_intent || result.output?.structured_data?.intent || "";
-  session.clarificationStreak = turnIntent === "need_clarification" ? (Number(session.clarificationStreak) || 0) + 1 : 0;
+  // 已经给出业务回执（留资保存、人工受理等）的轮次不算“没听懂”：否则“留资 + 联系偏好”
+  // 这类正常轮次会被计入连续澄清，导致下一轮被误升级到人工。
+  const businessHandled = Boolean(result.lead_receipt)
+    || result.handover?.required === true
+    || /已保存|已记录您希望/.test(String(result.output?.message || ""));
+  session.clarificationStreak = (turnIntent === "need_clarification" && !businessHandled)
+    ? (Number(session.clarificationStreak) || 0) + 1
+    : 0;
   const selectedChoice = intentAnalysis.choice_resolution?.status === "selected"
     ? intentAnalysis.choice_resolution.selection
     : null;
