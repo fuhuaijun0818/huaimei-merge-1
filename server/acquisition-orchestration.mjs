@@ -12,7 +12,7 @@ const actionIdFor = ({ tenantId, conversationId, messageId, type }) => `act_${cr
 
 const EXTERNAL_SEARCH_PATTERN = /(?:国家卫健委|卫健委|药监局|监管(?:规定|政策)|最新(?:法规|政策|指南)|外部新闻|全网|网上查)/;
 const ACTION_TYPES = [
-  { type:"appointment_request", pattern:/(?:帮我|我要|想)?(?:预约|约面诊|安排到院)/, title:"确认到院时间登记" },
+    { type:"appointment_request", pattern:/(?:帮我|我要|想)?(?:预约|约面诊|安排到院|登记(?:一下)?(?:到院|面诊|时间)?|到院登记)/, title:"确认到院时间登记" },
   { type:"activity_registration", pattern:/(?:报名|参加).{0,12}(?:活动|体验|讲座|沙龙)/, title:"提交活动报名申请" },
   { type:"service_ticket", pattern:/(?:创建|提交|开).{0,8}(?:工单|申请)/, title:"创建服务工单" }
 ];
