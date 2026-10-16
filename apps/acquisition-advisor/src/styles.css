@@ -326,3 +326,9 @@ button, input, textarea { font: inherit; }
 .stream-state.aborted { color: #a3908f; }
 .assistant-message .stream-state::before { content: "· "; }
 .knowledge-sources .source-more { color:#998c8d; font-size:11px; align-self:center; }
+/* A-025：客户附件入口、上传状态与客户侧附件标记。 */
+.composer-file { display: none; }
+.attach-button { flex: none; width: 40px; height: 40px; border: 1px solid #e0cdcb; border-radius: 50%; background: #fff; color: #8a4a4a; font-size: 20px; line-height: 1; cursor: pointer; }
+.attach-button:hover { border-color: #cf9a9a; background: #fdf6f6; }
+.upload-status { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; padding: 8px 12px; border: 1px solid #eccfcf; border-radius: 10px; background: #fff8f7; color: #6c4646; font-size: 12px; }
+.attachment-state { color: #7a6a68; font-size: 11px; font-style: normal; }

@@ -49,11 +49,26 @@ function FeedbackIcon({ type }) {
   );
 }
 
-function Composer({ value, onChange, onSubmit, disabled, restoringSession, inputRef, onStop, waiting }) {
+function Composer({ value, onChange, onSubmit, disabled, restoringSession, inputRef, onStop, waiting, uploadCapability, onUpload, uploadError, onRetryUpload }) {
   const canSend = value.trim() && !disabled;
   return (
     <div className="composer-area">
       <form className="composer" onSubmit={onSubmit}>
+        {uploadCapability?.enabled && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="composer-file"
+              accept={(uploadCapability.accepted_types || []).join(",")}
+              aria-label="添加图片或资料"
+              onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; onUpload?.(file); }}
+            />
+            <button type="button" className="attach-button" aria-label="添加图片或资料" onClick={() => fileInputRef.current?.click()}>
+              +
+            </button>
+          </>
+        )}
         <textarea
           ref={inputRef}
           aria-label="咨询内容"
@@ -82,6 +97,12 @@ function Composer({ value, onChange, onSubmit, disabled, restoringSession, input
           <SendIcon />
         </button>
       </form>
+      {uploadError && (
+        <div className="upload-status" role="alert">
+          <span>{uploadError}</span>
+          <button type="button" className="retry-button" onClick={() => onRetryUpload?.()} aria-label="重试上传">重试上传</button>
+        </div>
+      )}
       {waiting && (
         <div className="composer-waiting" role="status">
           <span>小美正在整理资料…</span>
@@ -300,6 +321,11 @@ function ChatMessage({ message, showLeadCapture, leadState, appointmentState, on
   if (message.role === "user") return (
     <div className={`user-message ${message.status ? `is-${message.status}` : ""}`}>
       <span className="user-message-text">{message.content}</span>
+      {message.attachment && (
+        <em className="attachment-state">
+          附件已在本地保存（{Math.max(1, Math.round(message.attachment.size / 1024))} KB）· 仅客户侧可见
+        </em>
+      )}
       {message.status === "sending" && <em className="message-state">发送中…</em>}
       {message.status === "stopped" && <em className="message-state">已停止等待</em>}
       {message.status === "failed" && (
@@ -354,6 +380,10 @@ export function App() {
   const [restoringSession, setRestoringSession] = useState(true);
   const [restoreFailed, setRestoreFailed] = useState(false);
   const [unseenCount, setUnseenCount] = useState(0);
+  const [uploadCapability, setUploadCapability] = useState(null);
+  const [uploadError, setUploadError] = useState("");
+  const fileInputRef = useRef(null);
+  const pendingUploadRef = useRef(null);
   const chatStarted = messages.length > 0 || isLoading || Boolean(appointmentState.intake);
 
   const statusText = useMemo(() => isLoading ? "正在为您整理相关项目信息…" : "", [isLoading]);
@@ -515,6 +545,7 @@ export function App() {
       if (epoch !== sessionEpochRef.current) return;
       if (!response.ok) throw new Error(body?.error?.message || "无法恢复上次的咨询记录");
       updateSessionCredential(body);
+      if (body?.capabilities?.customer_upload) setUploadCapability(body.capabilities.customer_upload);
       const restored = Array.isArray(body.messages) ? body.messages.map(transcriptMessage) : [];
       if (restored.length && !options.silent) setMessages(restored);
       else if (restored.length && options.silent) {
@@ -775,6 +806,57 @@ export function App() {
       })));
   };
 
+  // A-025 AC2：客户上传图片/资料（受服务端能力位控制；失败可重试，客户附件不进知识引用）。
+  const submitUpload = async (file) => {
+    if (!file || typeof file === "undefined") return;
+    const accepted = uploadCapability?.accepted_types || ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+    const maxBytes = file.type === "application/pdf"
+      ? (uploadCapability?.max_pdf_bytes || 32 * 1024 * 1024)
+      : (uploadCapability?.max_image_bytes || 64 * 1024 * 1024);
+    pendingUploadRef.current = file;
+    setUploadError("");
+    if (!accepted.includes(file.type)) {
+      setUploadError("仅支持 jpg、png、webp 图片或 pdf 资料");
+      return;
+    }
+    if (file.size > maxBytes) {
+      setUploadError(`文件超出体积上限（${Math.round(maxBytes / 1024 / 1024)}MB）`);
+      return;
+    }
+    const dataBase64 = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
+      reader.readAsDataURL(file);
+    });
+    try {
+      const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-upload"), {
+        method:"POST",
+        credentials:"include",
+        headers:{ ...publicHeaders(), "Idempotency-Key":`upload-${file.name}-${file.size}-${file.lastModified}` },
+        body:JSON.stringify({
+          file_name:file.name,
+          mime_type:file.type,
+          data_base64:dataBase64,
+          session_id:sessionIdRef.current,
+          ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {})
+        })
+      });
+      const body = await response.json();
+      updateSessionCredential(body);
+      if (!response.ok) throw new Error(body?.error?.message || "上传失败，请稍后重试");
+      pendingUploadRef.current = null;
+      setMessages((current) => [...current, {
+        id:`upload-${body.upload_id}`,
+        role:"user",
+        content:`[附件] ${file.name}`,
+        attachment:{ name:file.name, mime:file.type, size:file.size, uploadId:body.upload_id, status:"uploaded" },
+        at:new Date().toISOString()
+      }]);
+    } catch (error) {
+      setUploadError(error.message);
+    }
+  };
+
   const sendQuestion = async ({ question, clientMessageId, retryOfId }) => {
     const messageKey = clientMessageId || globalThis.crypto?.randomUUID?.() || `web-msg-${Date.now()}`;
     questionInFlightRef.current = true;
@@ -909,7 +991,7 @@ export function App() {
           {error && <span className="sr-only">{error}</span>}
           <div ref={messageEndRef} />
         </div>
-        <Composer value={input} onChange={setInput} onSubmit={submitQuestion} disabled={isLoading || restoringSession} restoringSession={restoringSession} inputRef={inputRef} onStop={stopWaiting} waiting={isLoading} />
+        <Composer value={input} onChange={setInput} onSubmit={submitQuestion} disabled={isLoading || restoringSession} restoringSession={restoringSession} inputRef={inputRef} onStop={stopWaiting} waiting={isLoading} uploadCapability={uploadCapability} onUpload={submitUpload} uploadError={uploadError} onRetryUpload={() => submitUpload(pendingUploadRef.current)} />
       </main>
       <KnowledgeMediaPreview preview={knowledgePreview} onClose={() => setKnowledgePreview(null)} />
     </div>
