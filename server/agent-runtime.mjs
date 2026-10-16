@@ -970,9 +970,48 @@ function acquisitionAgent(input, context, intentAnalysis) {
   const knownConcreteConcern = entities.concerns?.length || /松弛|下垂|皱纹|法令纹|暗沉|色斑|凹陷|眼袋|泪沟/.test(context.profile.concern || '');
   if(broadRejuvenation && !knownConcreteConcern) {
     const question='您最在意的是细纹、松弛下垂，还是肤色暗沉、看起来没精神？';
-    return {status:'completed',message:`抗衰涵盖的方向比较多，先明确您想改善的表现，才好介绍相关项目。${question}`,
+    // A-016 AC2：知识包里有可公开的抗衰资料时，必须先介绍可了解的方向及区别，
+    // 不能只追问客户表现而一点方向都不给；检索不到资料时保持原有追问口径。
+    const directionHits = retrieveHuameiKnowledge(input.message, { audience:"public", limit:8, minimumScore:4, tenantId:context.tenant_id }) || [];
+    // 目录类记录（华美资料目录：项目介绍 / 皮肤美容科 / 抗衰老 / 4D眼周）取最后一段作为方向名；
+    // 项目介绍类记录（热玛吉｜项目介绍）取竖线前的项目名。
+    const directionName = (title) => {
+      const text = String(title || "");
+      const segments = text.split("/").map((part) => part.trim()).filter(Boolean);
+      const tail = segments.length ? segments.at(-1) : "";
+      const head = text.split(/[｜|]/)[0].trim();
+      return (tail && tail.length <= 14 ? tail : head).replace(/^华美资料目录[:：]?/u, "").trim();
+    };
+    // 检索命中形如 { item, score }：方向名和引用都必须取自 item（记录本体），
+    // 否则引用缺少 source_record_id，前台会按“引用必须带来源记录号”拒绝。
+    const directionRecords = directionHits.map((hit) => hit?.item).filter(Boolean);
+    const directions = [...new Set(directionRecords
+      .map((record) => directionName(record?.title))
+      .filter((name) => name.length >= 2 && name.length <= 14
+        && !/目录|政策|价格|活动|说明|制度|流程|项目介绍|皮肤美容科|抗衰老|全部/.test(name)))]
+      .slice(0, 3);
+    const introduction = directions.length >= 2
+      ? `抗衰可以先从这些方向了解：${directions.join("、")}。它们作用层次和恢复期不一样，具体适不适合要医生面诊确认，我先按您关心的点展开。`
+      : '';
+    // 引用只保留可公开检索到的院方资料；资料不足时不编造方向，改为明确“需面诊确认”。
+    const directionCitations = directionRecords.slice(0, 2).map((record) => ({
+      knowledge_id:record.record_id,
+      source_record_id:record.record_id,
+      title:String(record.title || "").slice(0, 120),
+      version:packageStatus.version,
+      source_relative_path:record.source_relative_path,
+      record_type:record.record_type,
+      excerpt:String(record.excerpt || record.summary || "").slice(0, 160)
+        || "院方公开资料中的一般项目介绍；具体方案需医生面诊确认。",
+      requires_verification:true,
+      verification_note:record.verification_note,
+      usage:"consumer_safe_general_information"
+    }));
+    const clarificationNote = introduction ? "" : "具体情况需要医生面诊确认，";
+    return {status:'completed',message:`${introduction}${clarificationNote}抗衰涵盖的方向比较多，先明确您想改善的表现，才好介绍相关项目。${question}`,
       structured_data:{intent:'need_clarification',original_intent:intent,understanding_status:'broad_goal_needs_concern',goal:'抗衰',next_questions:[question],conversation_state:baseConversationState},
-      recommended_actions:[{type:'collect_need',fields:['concern']}],handover:{required:false},citations:[]};
+      recommended_actions:[{type:'collect_need',fields:['concern']}],handover:{required:false},
+      citations:directionCitations};
   }
 
   // Understand the stated concern before retrieving a project list. This only
