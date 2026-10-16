@@ -1061,6 +1061,7 @@ export async function handleApiRequest(request, response) {
       sendManagementAuthorizationError(request, response, requestId, error);
       return true;
     }
+    // 接管任务由智能体服务进程写入，getHandover 会重新读盘，保证跨进程可见。
     const humanHandover = getHandover(handoverReplyMatch[1], PUBLIC_TENANT_ID);
     if (!humanHandover) {
       sendError(request, response, requestId, 404, "HANDOVER_NOT_FOUND", "未找到指定接管任务");
