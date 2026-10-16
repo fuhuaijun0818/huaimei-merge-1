@@ -50,6 +50,7 @@ function FeedbackIcon({ type }) {
 }
 
 function Composer({ value, onChange, onSubmit, disabled, restoringSession, inputRef, onStop, waiting, uploadCapability, onUpload, uploadError, onRetryUpload }) {
+  const filePickerRef = useRef(null);
   const canSend = value.trim() && !disabled;
   return (
     <div className="composer-area">
@@ -57,14 +58,14 @@ function Composer({ value, onChange, onSubmit, disabled, restoringSession, input
         {uploadCapability?.enabled && (
           <>
             <input
-              ref={fileInputRef}
+              ref={filePickerRef}
               type="file"
               className="composer-file"
               accept={(uploadCapability.accepted_types || []).join(",")}
               aria-label="添加图片或资料"
               onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; onUpload?.(file); }}
             />
-            <button type="button" className="attach-button" aria-label="添加图片或资料" onClick={() => fileInputRef.current?.click()}>
+            <button type="button" className="attach-button" aria-label="添加图片或资料" onClick={() => filePickerRef.current?.click()}>
               +
             </button>
           </>
@@ -530,16 +531,18 @@ export function App() {
       sessionIdRef.current = stored.session_id;
       sessionTokenRef.current = stored.session_token || "";
     }
-    if (!stored?.session_id || !stored?.session_token) {
-      if (!options.silent) setRestoringSession(false);
-      return;
-    }
+    // 没有历史会话时也要取一次能力位（服务端会顺带签发本机会话凭证），
+    // 否则前台拿不到"是否允许上传"等能力开关。
     try {
       const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-conversation"), {
         method:"POST",
         credentials:"include",
         headers:{ ...publicHeaders(), "Content-Type":"application/json" },
-        body:JSON.stringify({ session_id:stored.session_id, session_token:stored.session_token, limit:200 })
+        body:JSON.stringify({
+          session_id:sessionIdRef.current,
+          ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {}),
+          limit:200
+        })
       });
       const body = await response.json();
       if (epoch !== sessionEpochRef.current) return;
