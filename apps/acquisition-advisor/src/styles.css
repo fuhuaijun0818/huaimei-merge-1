@@ -165,6 +165,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .public-media-pdf { min-height: 126px; padding: 20px; display: grid; align-content: center; gap: 7px; color: #806e70; background: linear-gradient(145deg,#fff,#fff4f3); }
 .public-media-pdf strong { width: fit-content; padding: 3px 7px; border-radius: 5px; color: #a35b5f; background: #f6dddd; font-size: 11px; letter-spacing: .08em; }
 .public-media-pdf span { font-size: 12px; }
+.public-media-unavailable { display: block; padding: 18px 14px; color: #8a6b4a; background: #fffaf2; font-size: 12px; line-height: 1.55; text-align: left; }
 
 .knowledge-sources { margin-top: 13px; padding-top: 10px; border-top: 1px solid #eee4e3; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; color: #9a898a; font-size: 10px; }
 .source-chip { padding: 4px 8px; border: 1px solid #eadbda; border-radius: 999px; color: #806e70; background: #fffafa; }

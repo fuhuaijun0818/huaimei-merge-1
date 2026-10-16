@@ -122,6 +122,29 @@ const publicMediaUrl = (value = "") => {
   return /^https?:\/\//i.test(rawUrl) ? rawUrl : joinBaseUrl(API_BASE_URL, rawUrl);
 };
 
+// A-025 AC4：链接失效时向客户说明原因（已撤回/已过期/不可公开发送），
+// 而不是留一张破图。原因取自媒体端点的错误体，取不到时用兜底文案。
+const mediaFailureReason = async (url) => {
+  try {
+    const response = await fetch(url, { headers: { Accept: "application/json" } });
+    if (response.ok) return "";
+    const body = await response.json().catch(() => null);
+    return String(body?.error?.message || "");
+  } catch {
+    return "";
+  }
+};
+
+function MediaUnavailable({ url, fallback = "该资料暂时无法预览" }) {
+  const [reason, setReason] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    mediaFailureReason(url).then((message) => { if (!cancelled && message) setReason(message); });
+    return () => { cancelled = true; };
+  }, [url]);
+  return <span className="public-media-unavailable" role="status">{fallback}{reason ? `：${reason}` : "，请联系顾问获取最新版本"}</span>;
+}
+
 function KnowledgeSources({ citations = [], onPreview }) {
   if (!citations.length) return null;
   return (
@@ -144,6 +167,21 @@ function KnowledgeSources({ citations = [], onPreview }) {
   );
 }
 
+function PublicMediaCard({ item, src, onPreview }) {
+  const [failed, setFailed] = useState(false);
+  const isPdf = item.type === "pdf";
+  return (
+    <button className="public-media-card" type="button" onClick={() => onPreview({ ...item, url:src })} title={`点击预览${isPdf ? " PDF" : "图片"}`}>
+      {isPdf
+        ? <span className="public-media-pdf" aria-hidden="true"><strong>PDF</strong><span>点击预览公开资料</span></span>
+        : failed
+          ? <MediaUnavailable url={src} fallback="该资料链接已失效" />
+          : <img src={src} alt={item.alt || item.title || "公开宣传资料"} loading="lazy" onError={() => setFailed(true)} />}
+      <span className="public-media-caption">{item.title || "公开宣传资料"}{item.requires_verification ? <em>资料需核验</em> : null}</span>
+    </button>
+  );
+}
+
 function PublicKnowledgeMedia({ media = [], onPreview }) {
   if (!media.length) return null;
   return (
@@ -151,19 +189,14 @@ function PublicKnowledgeMedia({ media = [], onPreview }) {
       {media.slice(0, 2).map((item) => {
         const src = publicMediaUrl(item?.url);
         if (!src) return null;
-        const isPdf = item.type === "pdf";
-        return (
-          <button className="public-media-card" type="button" key={item.id || src} onClick={() => onPreview({ ...item, url:src })} title={`点击预览${isPdf ? " PDF" : "图片"}`}>
-            {isPdf ? <span className="public-media-pdf" aria-hidden="true"><strong>PDF</strong><span>点击预览公开资料</span></span> : <img src={src} alt={item.alt || item.title || "公开宣传资料"} loading="lazy" />}
-            <span className="public-media-caption">{item.title || "公开宣传资料"}{item.requires_verification ? <em>资料需核验</em> : null}</span>
-          </button>
-        );
+        return <PublicMediaCard item={item} src={src} key={item.id || src} onPreview={onPreview} />;
       })}
     </div>
   );
 }
 
 function KnowledgeMediaPreview({ preview, onClose }) {
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     if (!preview) return undefined;
     const onKeyDown = (event) => {
@@ -172,6 +205,7 @@ function KnowledgeMediaPreview({ preview, onClose }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [preview, onClose]);
+  useEffect(() => { setFailed(false); }, [preview?.url]);
   if (!preview?.url) return null;
   const isPdf = preview.type === "pdf";
   const title = preview.title || (isPdf ? "公开 PDF 资料" : "公开图片资料");
@@ -180,7 +214,11 @@ function KnowledgeMediaPreview({ preview, onClose }) {
       <section className="knowledge-preview-dialog" role="dialog" aria-modal="true" aria-label={`${title}预览`}>
         <header className="knowledge-preview-header"><div><span>参考资料预览</span><strong>{title}</strong></div><button type="button" className="knowledge-preview-close" onClick={onClose} aria-label="关闭资料预览">×</button></header>
         <div className={`knowledge-preview-content ${isPdf ? "is-pdf" : "is-image"}`}>
-          {isPdf ? <iframe src={preview.url} title={title} /> : <img src={preview.url} alt={preview.alt || title} />}
+          {failed
+            ? <p className="public-media-unavailable" role="status"><MediaUnavailable url={preview.url} fallback="该资料链接已失效" /></p>
+            : isPdf
+              ? <iframe src={preview.url} title={title} />
+              : <img src={preview.url} alt={preview.alt || title} onError={() => setFailed(true)} />}
         </div>
         <footer className="knowledge-preview-footer">
           <span>{preview.requires_verification ? "该资料以院方当前审核版本为准" : "仅展示院方已审核的公开资料"}</span>

@@ -15,7 +15,7 @@ import {
   resolveAppointmentIntake, changeCustomerAppointment
 } from "./appointment-intake-store.mjs";
 import { getLlmStatus } from "./llm-client.mjs";
-import { resolvePublicKnowledgeMedia } from "./knowledge-media.mjs";
+import { publicKnowledgeMediaDenial, resolvePublicKnowledgeMedia } from "./knowledge-media.mjs";
 import { getKnowledgeGovernanceOverview } from "./knowledge-governance-overview.mjs";
 import {
   completeKnowledgeIntakeAsset, createKnowledgeIntakeDocument,
@@ -492,10 +492,18 @@ export async function handleApiRequest(request, response) {
     return true;
   }
 
-  const publicKnowledgeMediaMatch = url.pathname.match(/^\/api\/public\/knowledge-media\/(asset_[a-z0-9]{16})$/i);
+  // 任何形状的资料链接都在这里收口：可交付的按素材返回，其余给出说明原因的
+  // 404/410，而不是漏到需要 API Key 的路由上报“缺少 X-API-Key”（A-025 AC4）。
+  const publicKnowledgeMediaMatch = url.pathname.match(/^\/api\/public\/knowledge-media\/([^/]+)$/i);
   if (request.method === "GET" && publicKnowledgeMediaMatch) {
     const media = resolvePublicKnowledgeMedia(publicKnowledgeMediaMatch[1]);
     if (!media) {
+      // 已撤回/已过期的素材给出可区分的原因，其余一律不暴露存在性（A-025 AC4）。
+      const denial = publicKnowledgeMediaDenial(publicKnowledgeMediaMatch[1]);
+      if (denial) {
+        sendError(request, response, requestId, denial.status, denial.code, denial.message);
+        return true;
+      }
       sendError(request, response, requestId, 404, "PUBLIC_MEDIA_NOT_FOUND", "未找到可公开发送的资料图片");
       return true;
     }

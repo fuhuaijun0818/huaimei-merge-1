@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export const PUBLIC_KNOWLEDGE_MEDIA_VERSION = "1.1.0";
+export const PUBLIC_KNOWLEDGE_MEDIA_VERSION = "1.2.0";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
 const knowledgeRoot = String(process.env.HUAMEI_KNOWLEDGE_ROOT || "").trim()
@@ -282,12 +282,36 @@ export function resolvePublicKnowledgeMedia(assetId = "") {
   return { path, size:stats.size, mime:descriptor.mime, type:descriptor.type, asset_id:id, title:titleFor(asset) };
 }
 
+/**
+ * 失效链接的原因说明（A-025 AC4）。
+ *
+ * 只有“已在清单中、且评审状态为撤回/过期”的素材才返回可区分的原因码；客户
+ * 已经拿到过这个不透明 asset_id，因此告知“已撤回/已过期”不会泄露未授权素材。
+ * 其余情况（id 不存在、路径受限、未审核、超出体积上限）一律交给调用方按
+ * PUBLIC_MEDIA_NOT_FOUND 兜底，避免用错误码探测素材是否存在。
+ */
+export function publicKnowledgeMediaDenial(assetId = "") {
+  const id = String(assetId).trim();
+  if (!/^asset_[a-z0-9]{16}$/i.test(id)) return null;
+  const asset = loadAssets().get(id);
+  if (!asset) return null;
+  const reviewStatus = String(asset.review_status || "").toLowerCase();
+  if (reviewStatus === "withdrawn") {
+    return { status:410, code:"PUBLIC_MEDIA_WITHDRAWN", message:"该资料已由院方撤回，不再对外发送；如需最新版本请联系顾问" };
+  }
+  if (reviewStatus === "expired") {
+    return { status:410, code:"PUBLIC_MEDIA_EXPIRED", message:"该资料已过期，不再对外发送；如需最新版本请联系顾问" };
+  }
+  return null;
+}
+
 export function getPublicKnowledgeMediaStatus() {
   const assets = loadAssets();
   return {
     version:PUBLIC_KNOWLEDGE_MEDIA_VERSION,
     manifest_loaded:assets.size > 0,
     eligible_assets:[...assets.values()].filter(isPublicDeliveryEligible).length,
-    policy:"已审核公开资料包，以及医生介绍和项目介绍中的公开图片、PDF资料可对客预览；案例、术前术后、聊天与客户资料均不可对客发送"
+    policy:"已审核公开资料包，以及医生介绍和项目介绍中的公开图片、PDF资料可对客预览；案例、术前术后、聊天与客户资料均不可对客发送",
+    denial_reasons:["PUBLIC_MEDIA_EXPIRED", "PUBLIC_MEDIA_WITHDRAWN", "PUBLIC_MEDIA_NOT_FOUND"]
   };
 }
