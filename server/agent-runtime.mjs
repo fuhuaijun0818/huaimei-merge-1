@@ -1065,6 +1065,25 @@ function acquisitionAgent(input, context, intentAnalysis) {
   }
 
   if (intentAnalysis?.clarification_required) {
+    // A-025 AC1：图片通道未启用时明确说明不支持，不留下无效上传入口。
+    const imageUploadRequest = /(?:上传|发送|发|传)[^。，,！？?]{0,5}(?:照片|图片|图像)/.test(input.message);
+    if (imageUploadRequest) {
+      const unsupported = "当前在线咨询暂不支持上传图片（图片通道未启用）。您可以把关注点或想了解的项目告诉我，我先介绍一般资料；也可以转人工顾问，安排到院由医生查看具体情况。";
+      return {
+        status:"completed",
+        message:unsupported,
+        structured_data:{
+          intent:"image_channel_unsupported",
+          projects:[...(context.known_projects || [])],
+          next_questions:[],
+          conversation_state:baseConversationState,
+          supported_projects:[...new Set(searchableProjectKnowledge(context.tenant_id).map((item) => item.project))]
+        },
+        recommended_actions:[{ type:"request_human_service_verification" }],
+        handover:{ required:false },
+        citations:[]
+      };
+    }
     // 连续两次都没听懂：不再重复同一个澄清问题，改为承认不确定并给出人工入口。
     if (Number(context.clarification_streak) >= 1 && !isCustomerDirectedTurn(input.message)) return clarificationEscalationResult(input, context, intent, baseConversationState);
     const message = intent === "doctor_discovery_by_project"
