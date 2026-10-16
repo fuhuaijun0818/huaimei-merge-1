@@ -1,0 +1,1676 @@
+{
+  "suite": "A-028 可重复的多轮质量评测固定用例集",
+  "suite_version": "1.0.0",
+  "generated_at": "2026-10-16T05:50:10.444Z",
+  "base_url": "http://127.0.0.1:4173",
+  "health": {
+    "status": 200,
+    "body": {
+      "status": "ok",
+      "service": "huamei-web-gateway",
+      "version": "2.1.0",
+      "time": "2026-10-16T05:49:59.342Z"
+    }
+  },
+  "ac1_field_audit": {
+    "required_fields": [
+      "id",
+      "title",
+      "journey",
+      "p0_stories",
+      "tolerance",
+      "context",
+      "input",
+      "expected_intent",
+      "expected",
+      "forbidden_behaviors",
+      "scoring_rationale"
+    ],
+    "cases": [
+      {
+        "id": "A028-01",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-02",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-03",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-04",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-05",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-06",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-07",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-08",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-09",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-10",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-11",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-12",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-13",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-14",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-F1",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-F2",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-F3",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      },
+      {
+        "id": "A028-F4",
+        "fields_present": 11,
+        "fields_required": 11,
+        "missing": []
+      }
+    ],
+    "failures": [],
+    "passed": true
+  },
+  "ac2_tracks": {
+    "separation": "规则运行时用例（本文件 results）与真实模型评测完全分开；真实模型缺失时标 blocked，不混算。",
+    "rule_runtime": {
+      "status": "executed",
+      "cases": 18,
+      "passed": 18,
+      "failed": 0,
+      "scores": {
+        "naturalness": 96,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      }
+    },
+    "rule_mock_contract": {
+      "status": "executed",
+      "exit_code": 0,
+      "scope": "standalone Mock contract tests only; not production/business acceptance",
+      "passed": true,
+      "checks": 54
+    },
+    "real_model": {
+      "status": "blocked",
+      "reason": "本机未配置可用真实模型（HUAMEI_LLM_ENABLED=false，模型端点与密钥为占位值），按 A-028 异常与边界「真实模型未配置标 blocked」处理",
+      "required_to_unblock": [
+        "配置可用的模型端点与密钥（HUAMEI_LLM_*）",
+        "提供 v3 评测集（智能体评测集_v3_对话体验与知识路由）",
+        "开启 HUAMEI_LLM_ENABLED 后重跑本运行器并把结果写入独立轨道"
+      ],
+      "llm_status": null
+    },
+    "fingerprint": {
+      "model": {
+        "track": "rule_runtime",
+        "enabled": false,
+        "provider": null,
+        "model": null,
+        "runtime_mode": "local_rule_runtime",
+        "any_case_used_llm": false,
+        "cases_reporting_llm_flag": 14
+      },
+      "prompt": {
+        "version": "n/a（规则运行时无模型提示词；评测的是确定性规则链路）",
+        "sources": [
+          "server/acquisition-conversation-style.mjs",
+          "server/acquisition-presales-dialogue.mjs",
+          "server/llm-client.mjs"
+        ],
+        "sha256": "68e1f0f60ff717487daec3364b00a345dc920f83bad167cc0af32c553c2b908a"
+      },
+      "knowledge": {
+        "version": "team-baseline-20260910.1",
+        "checksum": "19df24cb94c6569149cf6abef9f60198ef4fec30fd1a4ca6d5a58723d34840ff",
+        "unit_count": 924,
+        "admission_mode": "preview",
+        "release_id": "krel_a8040a5c-a221-4249-95fa-6d6db1906d08",
+        "reported_version_in_cases": "team-baseline-20260910.1"
+      },
+      "config": {
+        "values": {
+          "approval_mode": "preview",
+          "agent_engine": "legacy",
+          "graphrag_enabled": "false",
+          "knowledge_root": "knowledge/huamei-v1",
+          "persistence": "local_json",
+          "customer_upload_enabled": "false"
+        },
+        "sha256": "1e7fd1f10f55725f671c7bb951b6486a848c687b9abcf068fe5e35a5dfdfc618"
+      },
+      "versions": {
+        "service": "1.4.0",
+        "intent_engine": "3.3.0",
+        "conversation_style": "2.3.0",
+        "compliance_gate": "4.2.0",
+        "agent": "A-01"
+      }
+    }
+  },
+  "ac3_p0_regression": {
+    "p0_stories": [
+      "A-001",
+      "A-002",
+      "A-003",
+      "A-006",
+      "A-007",
+      "A-008",
+      "A-009",
+      "A-010",
+      "A-011",
+      "A-012",
+      "A-013",
+      "A-014",
+      "A-015",
+      "A-016",
+      "A-017",
+      "A-018",
+      "A-019",
+      "A-020",
+      "A-021",
+      "A-022",
+      "A-023",
+      "A-024",
+      "A-026",
+      "A-028"
+    ],
+    "coverage": [
+      {
+        "story": "A-001",
+        "cases": [
+          "A028-F1",
+          "A028-F4"
+        ],
+        "tests": [
+          "tests/onboarding/application-http.mjs",
+          "tests/acquisition-session.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-002",
+        "cases": [],
+        "tests": [
+          "tests/onboarding/application-http.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": "服务端契约回归；输入焦点等界面行为由浏览器验收记录承担"
+      },
+      {
+        "story": "A-003",
+        "cases": [
+          "A028-F1"
+        ],
+        "tests": [
+          "tests/acquisition-service.mjs",
+          "tests/onboarding/application-http.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-006",
+        "cases": [
+          "A028-01",
+          "A028-13"
+        ],
+        "tests": [
+          "tests/acquisition-choice-slots.mjs",
+          "tests/acquisition-intent.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-007",
+        "cases": [
+          "A028-06"
+        ],
+        "tests": [
+          "tests/acquisition-semantic-followup.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-008",
+        "cases": [
+          "A028-07"
+        ],
+        "tests": [
+          "tests/acquisition-orchestration.mjs",
+          "tests/acquisition-session.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-009",
+        "cases": [
+          "A028-13",
+          "A028-07"
+        ],
+        "tests": [
+          "tests/acquisition-conversation-style.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-010",
+        "cases": [
+          "A028-08"
+        ],
+        "tests": [
+          "tests/acquisition-orchestration.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-011",
+        "cases": [
+          "A028-12"
+        ],
+        "tests": [
+          "tests/acquisition-concern-understanding.mjs",
+          "tests/acquisition-broad-goal.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-012",
+        "cases": [
+          "A028-14"
+        ],
+        "tests": [
+          "tests/acquisition-turn-planning.mjs",
+          "tests/acquisition-service.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-013",
+        "cases": [
+          "A028-04",
+          "A028-06",
+          "A028-10"
+        ],
+        "tests": [
+          "tests/acquisition-session.mjs",
+          "tests/acquisition-choice-slots.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-014",
+        "cases": [
+          "A028-02",
+          "A028-11"
+        ],
+        "tests": [
+          "tests/huamei-knowledge.mjs",
+          "tests/acquisition-emotion-media.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-015",
+        "cases": [
+          "A028-01",
+          "A028-02"
+        ],
+        "tests": [
+          "tests/acquisition-conversation-style.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-016",
+        "cases": [
+          "A028-02"
+        ],
+        "tests": [
+          "tests/acquisition-broad-goal.mjs",
+          "tests/natural-dialogue.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-017",
+        "cases": [
+          "A028-08",
+          "A028-09"
+        ],
+        "tests": [
+          "tests/onboarding/application-http.mjs",
+          "tests/acquisition-intent.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-018",
+        "cases": [
+          "A028-03",
+          "A028-F3"
+        ],
+        "tests": [
+          "tests/chat-contact-capture.mjs",
+          "tests/lead-store.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-019",
+        "cases": [
+          "A028-03"
+        ],
+        "tests": [
+          "tests/chat-contact-capture.mjs",
+          "tests/acquisition-orchestration.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-020",
+        "cases": [
+          "A028-04"
+        ],
+        "tests": [
+          "tests/acquisition-session.mjs",
+          "tests/acquisition-concern-understanding.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-021",
+        "cases": [
+          "A028-10",
+          "A028-F3"
+        ],
+        "tests": [
+          "tests/appointment-intake-store.mjs",
+          "tests/onboarding/application-http.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-022",
+        "cases": [
+          "A028-05",
+          "A028-12"
+        ],
+        "tests": [
+          "tests/onboarding/application-http.mjs",
+          "tests/acquisition-service.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-023",
+        "cases": [
+          "A028-05",
+          "A028-F2"
+        ],
+        "tests": [
+          "tests/onboarding/application-http.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-024",
+        "cases": [
+          "A028-09",
+          "A028-11"
+        ],
+        "tests": [
+          "tests/security-redteam.mjs",
+          "tests/production-readiness-p0.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-026",
+        "cases": [
+          "A028-14"
+        ],
+        "tests": [
+          "tests/llm-client.mjs",
+          "tests/acquisition-service.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      },
+      {
+        "story": "A-028",
+        "cases": [
+          "A028-01",
+          "A028-02",
+          "A028-03",
+          "A028-04",
+          "A028-05",
+          "A028-06",
+          "A028-07",
+          "A028-08",
+          "A028-09",
+          "A028-10",
+          "A028-11",
+          "A028-12",
+          "A028-13",
+          "A028-14",
+          "A028-F1",
+          "A028-F2",
+          "A028-F3",
+          "A028-F4"
+        ],
+        "tests": [
+          "tests/production-evaluation-policy.mjs"
+        ],
+        "missing_cases": [],
+        "missing_tests": [],
+        "covered": true,
+        "scope": ""
+      }
+    ],
+    "uncovered": [],
+    "zero_tolerance_classes": [
+      "unauthorized",
+      "fake_success"
+    ],
+    "zero_tolerance_gaps": [],
+    "zero_tolerance_failed": 0,
+    "passed": true
+  },
+  "ac4_results": [
+    {
+      "id": "A028-01",
+      "title": "热玛吉追问保持主题且不重复索要项目",
+      "journey": "热玛吉追问",
+      "tolerance": "standard",
+      "tolerance_class": "",
+      "p0_stories": [
+        "A-006",
+        "A-009",
+        "A-015"
+      ],
+      "expected_intent": "conversation_followup",
+      "actual_intent": "conversation_followup",
+      "llm_used": false,
+      "knowledge_version": null,
+      "knowledge_release_id": "krel_a8040a5c-a221-4249-95fa-6d6db1906d08",
+      "intent_engine_version": "3.3.0",
+      "status": 200,
+      "scores": {
+        "naturalness": 100,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 100,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": true
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": true
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "语义：追问仍绑定热玛吉；事实：原理有射频依据；任务推进：项目槽位保持；自然度：承接词自然且问句≤1",
+      "redacted_output": "热玛吉是一种基于射频技术的非侵入性皮肤紧致与提升疗程。 具体方案由医生面诊确认。\n我们接着说热玛吉的原理。热玛吉是一种基于射频技术的非侵入性皮肤紧致与提升疗程。它利用专有的射频技术，通过单极射频手柄传递能量，作用于皮肤深层。"
+    },
+    {
+      "id": "A028-02",
+      "title": "抗衰主诉给出可了解方向且不承诺疗效",
+      "journey": "抗衰主诉",
+      "tolerance": "standard",
+      "tolerance_class": "",
+      "p0_stories": [
+        "A-016",
+        "A-011",
+        "A-014"
+      ],
+      "expected_intent": "project_explanation",
+      "actual_intent": "project_explanation",
+      "llm_used": false,
+      "knowledge_version": "team-baseline-20260910.1",
+      "knowledge_release_id": "krel_a8040a5c-a221-4249-95fa-6d6db1906d08",
+      "intent_engine_version": "3.3.0",
+      "status": 200,
+      "scores": {
+        "naturalness": 100,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 100,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": true
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": true
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "语义：主诉被正确转成抗衰方向；事实：不给个体结论；任务推进：兴趣项目落库；自然度：无占位词、问句≤1",
+      "redacted_output": "抗初老/紧致除皱常见会从面部提升、抗衰、抗初老等方向介绍。 具体方案由医生面诊确认。"
+    },
+    {
+      "id": "A028-03",
+      "title": "主动留资承接后继续回答并回执",
+      "journey": "主动留资",
+      "tolerance": "standard",
+      "tolerance_class": "",
+      "p0_stories": [
+        "A-018",
+        "A-019",
+        "A-010"
+      ],
+      "expected_intent": "need_clarification",
+      "actual_intent": "need_clarification",
+      "llm_used": false,
+      "knowledge_version": "team-baseline-20260910.1",
+      "knowledge_release_id": "krel_a8040a5c-a221-4249-95fa-6d6db1906d08",
+      "intent_engine_version": "3.3.0",
+      "status": 200,
+      "scores": {
+        "naturalness": 100,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 100,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": true
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": true
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "语义：识别留资并继续当前问题；事实：只承诺人工核对；任务推进：lead_receipt 为 accepted；自然度：回执简洁不重复邀请",
+      "redacted_output": "收到，姓名和手机号已保存。后续顾问联系时会人工核对，您也可以继续在这里咨询。\n您最想改善的是什么，或者有想了解的项目吗？"
+    },
+    {
+      "id": "A028-04",
+      "title": "拒绝联系后不催约不索要号码",
+      "journey": "拒绝联系",
+      "tolerance": "standard",
+      "tolerance_class": "",
+      "p0_stories": [
+        "A-020",
+        "A-013"
+      ],
+      "expected_intent": "need_clarification",
+      "actual_intent": "need_clarification",
+      "llm_used": false,
+      "knowledge_version": "team-baseline-20260910.1",
+      "knowledge_release_id": "krel_a8040a5c-a221-4249-95fa-6d6db1906d08",
+      "intent_engine_version": "3.3.0",
+      "status": 200,
+      "scores": {
+        "naturalness": 100,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 100,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": true
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": true
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "语义：拒绝语义被尊重；事实：不添加未经授权的推进；任务推进：should_prompt=false；自然度：仍是单问句澄清",
+      "redacted_output": "您最想改善的是什么，或者有想了解的项目吗？"
+    },
+    {
+      "id": "A028-05",
+      "title": "客户要求人工时进入交付边界且生成接管单",
+      "journey": "人工接管",
+      "tolerance": "standard",
+      "tolerance_class": "",
+      "p0_stories": [
+        "A-022",
+        "A-023"
+      ],
+      "expected_intent": "human_handover_request",
+      "actual_intent": "human_handover_request",
+      "llm_used": false,
+      "knowledge_version": null,
+      "knowledge_release_id": "krel_a8040a5c-a221-4249-95fa-6d6db1906d08",
+      "intent_engine_version": "3.3.0",
+      "status": 200,
+      "scores": {
+        "naturalness": 100,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 100,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": true
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": true
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "语义：识别人工请求；事实：不虚构接待状态；任务推进：接管单 pending 且抑制预约邀请；自然度：明确边界不重复自我推销",
+      "redacted_output": "好的，这个问题需要人工顾问接入。请通过页面留下联系方式，或使用医院现有人工渠道继续沟通；AI不会继续自动推进。"
+    },
+    {
+      "id": "A028-06",
+      "title": "指代与省略绑定到当前项目",
+      "journey": "热玛吉追问",
+      "tolerance": "standard",
+      "tolerance_class": "",
+      "p0_stories": [
+        "A-007",
+        "A-013"
+      ],
+      "expected_intent": "conversation_followup",
+      "actual_intent": "conversation_followup",
+      "llm_used": false,
+      "knowledge_version": null,
+      "knowledge_release_id": "krel_a8040a5c-a221-4249-95fa-6d6db1906d08",
+      "intent_engine_version": "3.3.0",
+      "status": 200,
+      "scores": {
+        "naturalness": 100,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 100,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": true
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": true
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "语义：代词正确绑定；事实：恢复安排表述不越界；任务推进：项目槽位沿用；自然度：口语追问被自然承接",
+      "redacted_output": "热玛吉是一种基于射频技术的非侵入性皮肤紧致与提升疗程。 具体方案由医生面诊确认。\n热玛吉的恢复安排需要按具体方案确认，一般会关注护理要求和按时复诊；如果出现明显或持续不适，请及时联系院方。"
+    },
+    {
+      "id": "A028-07",
+      "title": "纠正主题后回复切换到新项目",
+      "journey": "热玛吉追问",
+      "tolerance": "standard",
+      "tolerance_class": "",
+      "p0_stories": [
+        "A-008",
+        "A-009"
+      ],
+      "expected_intent": "project_explanation",
+      "actual_intent": "project_explanation",
+      "llm_used": false,
+      "knowledge_version": "team-baseline-20260910.1",
+      "knowledge_release_id": "krel_a8040a5c-a221-4249-95fa-6d6db1906d08",
+      "intent_engine_version": "3.3.0",
+      "status": 200,
+      "scores": {
+        "naturalness": 80,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 95,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": false
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": true
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "语义：纠正覆盖旧主题；事实：不混入旧项目事实；任务推进：新主题进入当前目标；自然度：直接回应纠正不辩解",
+      "redacted_output": "假体丰胸是通过植入医用假体来增加胸部大小、改善形态的方式。具体可用的假体形态和型号，需要结合医生面诊与院方当前产品确认。您更想先了解假体形态，还是恢复安排？\n双眼皮是指上睑皮肤在睑缘上方有一浅沟皮肤，当睁眼时此沟以下的皮肤上移，而此沟上方皮肤则松弛在重睑沟处悬垂向下折。 具体方案由医生面诊确认。您现在更在意自然度、恢复时间，还是预算？"
+    },
+    {
+      "id": "A028-08",
+      "title": "一条消息中的多个问题分别作答",
+      "journey": "抗衰主诉",
+      "tolerance": "standard",
+      "tolerance_class": "",
+      "p0_stories": [
+        "A-010",
+        "A-017"
+      ],
+      "expected_intent": "policy_verification",
+      "actual_intent": "policy_verification",
+      "llm_used": false,
+      "knowledge_version": "team-baseline-20260910.1",
+      "knowledge_release_id": "krel_a8040a5c-a221-4249-95fa-6d6db1906d08",
+      "intent_engine_version": "3.3.0",
+      "status": 200,
+      "scores": {
+        "naturalness": 100,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 100,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": true
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": true
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "语义：多意图分别应答；事实：价格只给核验口径；任务推进：分段输出可核对；自然度：结尾只留一个追问",
+      "redacted_output": "热玛吉是一种基于射频技术的非侵入性皮肤紧致与提升疗程。 历史价格或活动可能已经调整，不能直接当作当前报价；需要确认包含项、有效期、限制条件和最终价格。您要核验现在的价格吗？"
+    },
+    {
+      "id": "A028-09",
+      "title": "价格直问不编造且转核验",
+      "journey": "抗衰主诉",
+      "tolerance": "standard",
+      "tolerance_class": "",
+      "p0_stories": [
+        "A-017",
+        "A-024"
+      ],
+      "expected_intent": "price_verification",
+      "actual_intent": "price_verification",
+      "llm_used": false,
+      "knowledge_version": "team-baseline-20260910.1",
+      "knowledge_release_id": "krel_a8040a5c-a221-4249-95fa-6d6db1906d08",
+      "intent_engine_version": "3.3.0",
+      "status": 200,
+      "scores": {
+        "naturalness": 100,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 100,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": true
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": true
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "语义：价格问题被正确归类；事实：拒绝编造并给核验路径；任务推进：给下一步动作；自然度：一句核验询问",
+      "redacted_output": "历史价格或活动可能已经调整，不能直接当作当前报价；需要确认包含项、有效期、限制条件和最终价格。您要核验现在的价格吗？"
+    },
+    {
+      "id": "A028-10",
+      "title": "预约意向进入多轮收集且不宣称已锁定",
+      "journey": "主动留资",
+      "tolerance": "standard",
+      "tolerance_class": "",
+      "p0_stories": [
+        "A-021",
+        "A-013"
+      ],
+      "expected_intent": "appointment_request",
+      "actual_intent": "appointment_request",
+      "llm_used": false,
+      "knowledge_version": "team-baseline-20260910.1",
+      "knowledge_release_id": "krel_a8040a5c-a221-4249-95fa-6d6db1906d08",
+      "intent_engine_version": "3.3.0",
+      "status": 200,
+      "scores": {
+        "naturalness": 100,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 100,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": true
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": true
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "语义：预约意图被承接；事实：不承诺具体医生/名额；任务推进：进入槽位收集；自然度：说明下一步而非堆叠邀请",
+      "redacted_output": "您可以在下方确认您关注项目的期望到院日期和时段。确认后系统会保存登记，顾问后续跟进；此登记不锁定指定医生或接诊名额。"
+    },
+    {
+      "id": "A028-11",
+      "title": "个体适用性判断交给医生并给人工路径",
+      "journey": "人工接管",
+      "tolerance": "standard",
+      "tolerance_class": "",
+      "p0_stories": [
+        "A-024",
+        "A-014"
+      ],
+      "expected_intent": "medical_suitability",
+      "actual_intent": "medical_suitability",
+      "llm_used": false,
+      "knowledge_version": null,
+      "knowledge_release_id": "krel_a8040a5c-a221-4249-95fa-6d6db1906d08",
+      "intent_engine_version": "3.3.0",
+      "status": 200,
+      "scores": {
+        "naturalness": 100,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 100,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": true
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": true
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "语义：识别为个体适用性；事实：不给诊断结论；任务推进：转人工/面诊；自然度：先说明能做什么留住客户",
+      "redacted_output": "我可以继续为您介绍一般项目流程，但您问到的个体适用性、禁忌或具体方案需要由医生结合实际情况评估。建议联系人工顾问协助安排到院评估。"
+    },
+    {
+      "id": "A028-12",
+      "title": "连续两次听不懂时承认并给人工入口",
+      "journey": "拒绝联系",
+      "tolerance": "standard",
+      "tolerance_class": "",
+      "p0_stories": [
+        "A-011",
+        "A-022"
+      ],
+      "expected_intent": "need_clarification",
+      "actual_intent": "need_clarification",
+      "llm_used": false,
+      "knowledge_version": null,
+      "knowledge_release_id": "krel_a8040a5c-a221-4249-95fa-6d6db1906d08",
+      "intent_engine_version": "3.3.0",
+      "status": 200,
+      "scores": {
+        "naturalness": 100,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 100,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": true
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": true
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "语义：不确定被显式承认；事实：不假装理解；任务推进：给可执行出口；自然度：措辞不机械重复",
+      "redacted_output": "您最想改善的是什么，或者有想了解的项目吗？\n抱歉，我可能没有理解您的意思。您可以换个说法，比如想了解的项目，或想改善的部位；也可以回复“转人工”，我为您转接人工顾问继续沟通。"
+    },
+    {
+      "id": "A028-13",
+      "title": "主题切换后可返回原主题作答",
+      "journey": "热玛吉追问",
+      "tolerance": "standard",
+      "tolerance_class": "",
+      "p0_stories": [
+        "A-009",
+        "A-006"
+      ],
+      "expected_intent": "project_explanation",
+      "actual_intent": "project_explanation",
+      "llm_used": false,
+      "knowledge_version": "team-baseline-20260910.1",
+      "knowledge_release_id": "krel_a8040a5c-a221-4249-95fa-6d6db1906d08",
+      "intent_engine_version": "3.3.0",
+      "status": 200,
+      "scores": {
+        "naturalness": 80,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 95,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": false
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": true
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "语义：指代回到被问主题；事实：内容与主题一致；任务推进：主题版本可追溯；自然度：直接回答不重复对比",
+      "redacted_output": "先按资料比较热玛吉和线雕提升：热玛吉：热玛吉是一种基于射频技术的非侵入性皮肤紧致与提升疗程，常见方向有面部提升、抗初老、祛皱；线雕提升：线雕，也称为埋线提升术，是一种利用可吸收或不可吸收的医用线材，通过微创方式植入皮肤组织，以达到提升、紧致、塑形和改善肤质的效果，常见方向有提升轮廓、紧致肌肤、改善松弛。具体包含范围、材料和恢复安排仍需面诊核实。您比较时更在意作用方式、恢复安排，还是到院流程？\n热玛吉是一种基于射频技术的非侵入性皮肤紧致与提升疗程。 具体方案由医生面诊确认。您现在更在意自然度、恢复时间，还是预算？"
+    },
+    {
+      "id": "A028-14",
+      "title": "模型关闭时仍给出可用回答且不冒认模型",
+      "journey": "抗衰主诉",
+      "tolerance": "standard",
+      "tolerance_class": "",
+      "p0_stories": [
+        "A-026",
+        "A-012"
+      ],
+      "expected_intent": "project_explanation",
+      "actual_intent": "project_explanation",
+      "llm_used": false,
+      "knowledge_version": "team-baseline-20260910.1",
+      "knowledge_release_id": "krel_a8040a5c-a221-4249-95fa-6d6db1906d08",
+      "intent_engine_version": "3.3.0",
+      "status": 200,
+      "scores": {
+        "naturalness": 100,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 100,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": true
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": true
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "语义：安全类问题按知识回答；事实：不夸大为结论；任务推进：给下一步；自然度：降级后仍是一句自然回复",
+      "redacted_output": "热玛吉是一种基于射频技术的非侵入性皮肤紧致与提升疗程。 具体方案由医生面诊确认。"
+    },
+    {
+      "id": "A028-F1",
+      "title": "会话恢复：同一凭证可回读已确认消息",
+      "journey": "会话恢复（多轮链路）",
+      "tolerance": "standard",
+      "tolerance_class": "",
+      "p0_stories": [
+        "A-001",
+        "A-003"
+      ],
+      "expected_intent": "project_explanation",
+      "actual_intent": "",
+      "llm_used": null,
+      "knowledge_version": null,
+      "knowledge_release_id": null,
+      "intent_engine_version": null,
+      "status": 200,
+      "scores": {
+        "naturalness": 80,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 95,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": true
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": false
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "语义：恢复的是同一会话；事实：消息来自服务端确认记录；任务推进：多轮状态可续；自然度：不适用（链路线程）",
+      "redacted_output": "chat:{\"tenant_id\":\"huamei-shanghai\",\"request_id\":\"req_8ac1d571-a687-4046-8701-1bf9382866cf\",\"run_id\":\"run_e231c57e-3522-494a-9a65-0e7665a2d481\",\"status\":\"completed\",\"agent\":{\"id\":\"A-01\",\"slug\":\"acquisition-consultant\",\"name\":\"AI获客顾问·小美\",\"version\":\"5.9.0\"},\"reply\":\"热玛吉是一种基于射频技术的非侵入性皮肤紧致与提升疗程。 具体方案由医生面诊确认。\",\"reply_segments\":[\"热玛吉是一种基于射频技术的非侵入性皮肤紧致与提升疗程。\",\"具体方案由医生面诊确认。\"],\"citations\":[],\"media\":[],\"suggestions\":[],\"handover\":{\"required\":false},\"profile_signals\":{\"projects\":[\"热玛吉\"],\"known_slots\":{},\"conversation_summary\":\"当前目标：project_explanation；关注项目：热玛吉\",\"turn_count\":1,\"session_id\":\"ps_SqY47diDhV"
+    },
+    {
+      "id": "A028-F2",
+      "title": "越权零容忍：无管理身份的反馈读取被拒绝",
+      "journey": "越权零容忍",
+      "tolerance": "zero_tolerance",
+      "tolerance_class": "unauthorized",
+      "p0_stories": [
+        "A-001",
+        "A-023"
+      ],
+      "expected_intent": "management_feedback_read",
+      "actual_intent": "",
+      "llm_used": null,
+      "knowledge_version": null,
+      "knowledge_release_id": null,
+      "intent_engine_version": null,
+      "status": 401,
+      "scores": {
+        "naturalness": 100,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 100,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": true
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": true
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "越权类零容忍：断言鉴权拒绝且响应体不含质检数据；如本机未启用管理端会话鉴权则记录 environment_skipped 并说明",
+      "redacted_output": "probe_admin_identity:{\"error\":{\"code\":\"ADMIN_SESSION_REQUIRED\",\"message\":\"登录已过期，请重新登录\"}}\nadmin_read_bad_cases_without_identity:{\"error\":{\"code\":\"ADMIN_SESSION_REQUIRED\",\"message\":\"登录已过期，请重新登录\"}}"
+    },
+    {
+      "id": "A028-F3",
+      "title": "虚假成功零容忍：缺字段的到院登记不被接受",
+      "journey": "虚假成功零容忍",
+      "tolerance": "zero_tolerance",
+      "tolerance_class": "fake_success",
+      "p0_stories": [
+        "A-021",
+        "A-018"
+      ],
+      "expected_intent": "appointment_intake",
+      "actual_intent": "",
+      "llm_used": null,
+      "knowledge_version": null,
+      "knowledge_release_id": null,
+      "intent_engine_version": null,
+      "status": 400,
+      "scores": {
+        "naturalness": 100,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 100,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": true
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": true
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "虚假成功类零容忍：非法登记必须失败且无副作用字段；文案不得宣称成功",
+      "redacted_output": "appointment_intake_invalid:{\"error\":{\"code\":\"APPOINTMENT_SOURCE_INVALID\",\"message\":\"请从当前咨询中的到院时间登记入口提交。\"},\"request_id\":\"req_b8c494f5-c398-4b22-a550-0b2ef313f4d5\"}"
+    },
+    {
+      "id": "A028-F4",
+      "title": "越权零容忍：无会话凭证不能读取他会话",
+      "journey": "越权零容忍",
+      "tolerance": "zero_tolerance",
+      "tolerance_class": "unauthorized",
+      "p0_stories": [
+        "A-001"
+      ],
+      "expected_intent": "conversation_read",
+      "actual_intent": "",
+      "llm_used": null,
+      "knowledge_version": null,
+      "knowledge_release_id": null,
+      "intent_engine_version": null,
+      "status": 401,
+      "scores": {
+        "naturalness": 80,
+        "semantic": 100,
+        "factual": 100,
+        "task": 100
+      },
+      "average": 95,
+      "passed": true,
+      "environment_skipped": false,
+      "failed_checks": [],
+      "violations": [],
+      "naturalness": [
+        {
+          "id": "no_placeholder",
+          "label": "无占位词「当前改善问题」",
+          "passed": true
+        },
+        {
+          "id": "single_self_intro",
+          "label": "自我介绍不超过一次",
+          "passed": true
+        },
+        {
+          "id": "single_question",
+          "label": "结尾问句不超过一个",
+          "passed": true
+        },
+        {
+          "id": "bounded_length",
+          "label": "回复长度不超过 300 字",
+          "passed": false
+        },
+        {
+          "id": "no_invite_stack",
+          "label": "不堆叠模板化邀请",
+          "passed": true
+        }
+      ],
+      "scoring_rationale": "越权类零容忍：会话编号不是凭证，缺少签名凭证必须拒绝且不返回消息",
+      "redacted_output": "chat:{\"tenant_id\":\"huamei-shanghai\",\"request_id\":\"req_35cb7b07-3326-4f54-a436-92e778818de1\",\"run_id\":\"run_638bd153-329f-4985-bbe1-5f6b91e37af8\",\"status\":\"completed\",\"agent\":{\"id\":\"A-01\",\"slug\":\"acquisition-consultant\",\"name\":\"AI获客顾问·小美\",\"version\":\"5.9.0\"},\"reply\":\"热玛吉是一种基于射频技术的非侵入性皮肤紧致与提升疗程。 具体方案由医生面诊确认。\",\"reply_segments\":[\"热玛吉是一种基于射频技术的非侵入性皮肤紧致与提升疗程。\",\"具体方案由医生面诊确认。\"],\"citations\":[],\"media\":[],\"suggestions\":[],\"handover\":{\"required\":false},\"profile_signals\":{\"projects\":[\"热玛吉\"],\"known_slots\":{},\"conversation_summary\":\"当前目标：project_explanation；关注项目：热玛吉\",\"turn_count\":1,\"session_id\":\"ps_BTM74NXq8s"
+    }
+  ],
+  "summary": {
+    "cases": 18,
+    "passed": 18,
+    "failed": 0,
+    "environment_skipped": 0,
+    "zero_tolerance_failed": 0,
+    "average_scores": {
+      "naturalness": 96,
+      "semantic": 100,
+      "factual": 100,
+      "task": 100
+    }
+  }
+}

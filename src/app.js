@@ -2266,7 +2266,9 @@ function qualityRedactedConversationPanel(){
 
 function productionKnowledgeGovernancePage() {
   const actions = `${knowledgeIntakeEnabled && hasCapability("knowledge:manage") ? `<button class="btn primary" data-action="new-knowledge-intake">${icon("plus",15)}录入资料</button>` : ""}`;
-  return `<div class="page">${pageHead("知识库与图谱", "知识与合规", "资料解析后保存为内部草稿；补齐来源与院方确认后准备候选，完成正式发布才能用于对客问答。", actions)}${hasCapability("knowledge:read") ? knowledgeIntakePanel() : ""}${publicationPanel()}${hasCapability("feedback:manage") ? qualityFeedbackPanel() : ""}${hasCapability("conversations:read_redacted") ? qualityRedactedConversationPanel() : ""}</div>`;
+  // 面板自己处理“功能关闭 / 无权限 / 无数据”三种状态，调用处不得再按权限跳过渲染，
+  // 否则无权限岗位看不到任何说明（C-017 AC4）。
+  return `<div class="page">${pageHead("知识库与图谱", "知识与合规", "资料解析后保存为内部草稿；补齐来源与院方确认后准备候选，完成正式发布才能用于对客问答。", actions)}${knowledgeIntakePanel()}${publicationPanel()}${hasCapability("feedback:manage") ? qualityFeedbackPanel() : ""}${hasCapability("conversations:read_redacted") ? qualityRedactedConversationPanel() : ""}</div>`;
 }
 
 function knowledgePage() {

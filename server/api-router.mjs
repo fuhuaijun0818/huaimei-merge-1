@@ -86,12 +86,6 @@ const runtimeEnvironment = String(
   process.env.HUAMEI_RUNTIME_ENV || process.env.HUAMEI_DEPLOYMENT_ENV || process.env.NODE_ENV || "development"
 ).trim().toLowerCase();
 const productionRuntime = ["prod", "production"].includes(runtimeEnvironment);
-// A local PostgreSQL acceptance environment can opt into the same fail-closed
-// audit path without making every developer's persistent test fixture write
-// to its database.
-const localManagementAuditEnabled = String(process.env.HUAMEI_LOCAL_MANAGEMENT_AUDIT_ENABLED || "").trim().toLowerCase() === "true";
-const managementAuditPersistenceEnabled = productionRuntime
-  || (localManagementAuditEnabled && postgresPersistenceEnabled(process.env));
 const requestSecurityStores = await createRequestSecurityStores({ env:process.env });
 const rateLimitStore = requestSecurityStores.fixedWindowStore;
 const idempotencyStore = requestSecurityStores.idempotencyStore;
@@ -437,7 +431,12 @@ const recordManagementAccess = async ({
   resourceId = "",
   outcome = "success"
 }) => {
-  if (!managementAuditPersistenceEnabled) return;
+  // Local JSON deliberately has no audit table.  An isolated PostgreSQL
+  // environment does, and must exercise the same actor/request/outcome audit
+  // path as production rather than silently omitting authorization evidence.
+  // (B's gate wins here: the acceptance suites require the audit row whenever
+  // PostgreSQL persistence is active, not only when productionRuntime is set.)
+  if (!postgresPersistenceEnabled()) return;
   const database = getPostgresClient({ env:process.env });
   try {
     await database.tenantTransaction(principal.tenantId, (client) => appendAuditEvent(client, {

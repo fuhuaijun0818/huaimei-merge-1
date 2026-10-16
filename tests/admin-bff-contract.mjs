@@ -105,7 +105,9 @@ try {
   assert.match(routerSource, /requiredAllRoles:\[MANAGEMENT_ROLES\.operationsAgent, MANAGEMENT_ROLES\.contactReveal\]/);
   assert.match(routerSource, /management\.contact\.reveal_authorized/,
     "BFF前置审计只能表示授权通过，不得误记为已披露联系方式");
-  assert.match(routerSource, /outcome:contactRevealMatch\s*\?\s*["']authorized["']/,
+  // 审计结果由接管操作统一记录（B 的重构把 outcome 从对象字段改为
+  // recordHandoverOperation 的入参）；判定语义不变：前置审计只能记 authorized。
+  assert.match(routerSource, /contactRevealMatch\s*\?\s*["']authorized["']\s*:\s*["']success["']/,
     "联系方式披露成功与失败应由保险箱审计决定");
   assert.match(routerSource, /ADMIN_IDENTITY_OVERRIDE_FORBIDDEN/);
   assert.match(routerSource, /authorization:request\.headers\.authorization/);
