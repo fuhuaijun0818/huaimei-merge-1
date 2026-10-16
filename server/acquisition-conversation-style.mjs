@@ -161,11 +161,15 @@ export function splitAcquisitionReplySegments(message = "", options = {}) {
   if (String(message).includes("\n")) return atomicSegments.filter(Boolean);
   const segments = [];
   const groupLimit = Math.min(maxCharacters * 2, 64);
+  // 结论/边界句说明的是“需要面诊确认、价格需核验”这类独立信息，和上一句
+  // 合并后客户只看到一个长气泡，也不利于渠道侧单独呈现合规提示。
+  const standaloneClosing = /^(?:具体(?:方案|选择|方式|价格|包含|时间|安排|恢复|事项|情况)|价格|报价|以上|如果需要|需要的话|这一点|本登记|该问题|如果出现|如出现|相关(?:资料|信息))/u;
   for (const segment of atomicSegments.filter(Boolean)) {
     const previous = segments.at(-1);
     const canGroup = previous
       && !/[？?]$/.test(previous)
       && !/[？?]$/.test(segment)
+      && !standaloneClosing.test(segment)
       && !/^\d+[.、]\s+/u.test(previous)
       && !/^\d+[.、]\s+/u.test(segment)
       && previous.split("\n").length < 2
@@ -246,6 +250,11 @@ export function evaluateAcquisitionConversationCopy(message = "", options = {}) 
 export function leadCaptureDecision({ intent = "", status = "completed", turnCount = 0, knownSlots = {}, message = "", recommendedActions = [] } = {}) {
   if (status === "blocked") return { should_prompt:false, reason:"blocked_response" };
   if (status === "handover_required") return { should_prompt:true, reason:"handover_required" };
+  // “不要联系我”“先不联系”是拒绝语义，不能因为包含“联系我”就当成主动要人工。
+  if (/(?:不要|不用|别|不需要|先不|暂时不|暂不)(?:再)?(?:联系|打扰|回访|跟进)/.test(message)
+    || /(?:没空|不着急|以后再说|再说吧|先不考虑)/.test(message)) {
+    return { should_prompt:false, reason:"contact_deferred" };
+  }
   if (/(?:转人工|找人工|真人顾问|人工客服|联系我)/.test(message)) return { should_prompt:true, reason:"explicit_human_request" };
   if (APPOINTMENT_INTENTS.has(intent) || /(?:帮我预约|想预约|约面诊|安排到院)/.test(message)) return { should_prompt:true, reason:"appointment_intent" };
   if (/(?:核验|确认|查)(?:当前)?(?:价格|活动|排班|出诊|号源)/.test(message)) return { should_prompt:true, reason:"explicit_verification_request" };

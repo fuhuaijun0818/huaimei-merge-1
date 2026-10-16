@@ -1,4 +1,4 @@
-import {createHash} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
 import {readFileSync,writeFileSync,mkdirSync,renameSync} from 'node:fs';
 import {dirname,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -30,6 +30,33 @@ export function readLocalConversations(tenant){
   records.push({id:key(tenant,'web',externalId),tenant,externalId,channel:'web',projects:s.projects||[],createdAt:new Date(s.createdAt).toISOString(),updatedAt:new Date(s.updatedAt).toISOString(),messages:s.turns.map((t,i)=>({id:id+':'+i,from:t.role==='user'?'customer':'ai',text:redactContactPii(t.content||''),at:t.at||new Date(s.updatedAt).toISOString()}))});
  }
  return records.sort((a,b)=>Date.parse(b.updatedAt)-Date.parse(a.updatedAt)).slice(0,500);
+}
+
+/**
+ * 客户侧回读自己这一段会话。只按租户+渠道+会话编号精确取一条，不做模糊匹配，
+ * 也不返回其他访客的记录。
+ */
+export function readLocalConversationRecord(tenant,channel,externalId){
+ if(postgresPersistenceEnabled())return null;
+ const row=read(path())[key(tenant,channel,externalId)];
+ return row?JSON.parse(JSON.stringify(row)):null;
+}
+
+/**
+ * 人工回复也要落进同一条会话记录，客户页才能按来源标识人工消息。
+ * 幂等：同一个消息ID重复写入不会产生第二条。
+ */
+export function appendLocalConversationMessage({tenant,channel,conversationId,from='human',text,at,messageId}={}){
+ if(postgresPersistenceEnabled())return null;
+ const safeText=String(text||'').trim().slice(0,1000);
+ if(!safeText)return null;
+ const records=read(path());const id=key(tenant,channel,conversationId);const now=new Date().toISOString();
+ const row=records[id]||{id,tenant,channel,externalId:conversationId,createdAt:at||now,messages:[]};
+ const resolvedId=String(messageId||`msg_${randomUUID()}`);
+ if(!row.messages.some(m=>m.id===resolvedId))row.messages.push({id:resolvedId,from,text:redactContactPii(safeText),at:at||now});
+ row.messages=row.messages.slice(-200);row.updatedAt=now;records[id]=row;
+ mkdirSync(dirname(path()),{recursive:true});const tmp=path()+'.'+process.pid+'.tmp';writeFileSync(tmp,JSON.stringify(records),{mode:0o600});renameSync(tmp,path());
+ return JSON.parse(JSON.stringify(row.messages.at(-1)));
 }
 export function localConversationView(row,customer,task){
  const customerId=customer?.id||'C-VISITOR-'+row.id;

@@ -283,6 +283,11 @@ export function computeApprovedKnowledgeRecordListChecksum(approvedRecordIds = [
   return approvedRecordListChecksumForState(options.state || loadHuameiKnowledge(), approvedRecordIds);
 }
 
+// 发布侧需要为“某个批准清单”算出可绑定的校验和：撤回或收窄发布范围时校验和
+// 随之变化，这里把同一套计算对外开放，避免只能绑定全量清单。
+export const computeApprovedRecordListChecksum = (approvedRecordIds = [], options = {}) =>
+  approvedRecordListChecksumForState(options.state || loadHuameiKnowledge(), approvedRecordIds);
+
 export function getHuameiKnowledgeBindingStatus(tenantId, options = {}) {
   const state = options.state || loadHuameiKnowledge();
   const tenant = normalizeTenantId(tenantId);
@@ -974,7 +979,25 @@ export function buildStarProductResponse(message, hits = [], options = {}) {
     };
   }
 
-  const item = candidateItems.find((candidate) => candidate.record_type === "image_ocr" || candidate.record_type === "pdf_text");
+  // 短词直问会同时召回目录下多条素材（例如“面膜”既能命中“敷贴面膜”，也能
+  // 命中目录名就叫“面膜”的那条）。按客户用词与目录名/文件名的贴合度选，
+  // 避免用同目录里的另一款产品回答。
+  const askedTerm = text.replace(/[？?！!。.\s、,，]/gu, "");
+  const mediaCandidates = candidateItems.filter((candidate) => candidate.record_type === "image_ocr" || candidate.record_type === "pdf_text");
+  const rankCandidate = (candidate) => {
+    if (!askedTerm) return 0;
+    const parts = publicPathParts(candidate.source_relative_path);
+    const folder = parts.at(-2) || "";
+    const file = sourceFileName(parts.at(-1));
+    let score = 0;
+    if (file === askedTerm) score += 80;
+    else if (file.includes(askedTerm)) score += 40;
+    if (folder && folder.includes(askedTerm)) score += 60;
+    return score;
+  };
+  const item = [...mediaCandidates]
+    .sort((left, right) => rankCandidate(right) - rankCandidate(left))
+    .find((candidate) => rankCandidate(candidate) > 0) || mediaCandidates[0];
   if (!item) return null;
   const parts = publicPathParts(item.source_relative_path);
   const category = parts[1] || "明星产品";

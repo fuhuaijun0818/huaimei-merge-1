@@ -135,6 +135,11 @@ export async function refreshKnowledgeReleasePolicy(tenantIds) {
 }
 
 export async function ensureKnowledgeReleasePolicyFresh(tenantId, options = {}) {
+  // 本地 JSON 发布存储只在进程启动时读盘：跨进程的发布、撤回与过期必须每轮重读，
+  // 否则运行时会一直用启动时的旧发布范围（实测表现为撤回后仍引用旧证据）。
+  if (!postgresPersistenceEnabled()) {
+    try { store.reload(); } catch {}
+  }
   if (!postgresPersistenceEnabled()) return getKnowledgeAdmissionStatus(tenantId);
   const tenant = normalizeTenantId(tenantId);
   registerKnowledgeReleaseTenants(tenant);
@@ -154,6 +159,28 @@ export function getActiveKnowledgeRelease(tenantId, packageVersion = "") {
     .filter((item) => item.tenant_id === tenant && activeAt(item))
     .filter((item) => !packageVersion || item.package_version === packageVersion)
     .sort((a, b) => String(b.activated_at).localeCompare(String(a.activated_at)))[0] || null;
+}
+
+// 撤回/失效证据集合：先前生效发布里批准、但当前生效发布不再包含的记录；
+// 当前没有生效发布（例如发布包已过期）时，此前批准过的记录全部视为失效。
+// 交付前用它做最终重检，避免继续引用已撤回或过期的内容。
+export function withdrawnKnowledgeRecordIds(tenantId, packageVersion = "") {
+  const tenant = normalizeTenantId(tenantId);
+  // 与 getActiveKnowledgeRelease 一致地选择发布存储：PostgreSQL 模式下必须读
+  // Postgres 的发布记录，否则撤回集合在切库后会变成空集、重检形同空转。
+  const releases = (postgresPersistenceEnabled() ? getPostgresKnowledgeReleaseStore().list(tenant) : store.load().releases || [])
+    .filter((item) => item.tenant_id === tenant)
+    .sort((left, right) => String(left.activated_at || "").localeCompare(String(right.activated_at || "")));
+  if (!releases.length) return new Set();
+  const current = getActiveKnowledgeRelease(tenant, packageVersion);
+  const currentIds = new Set(current?.approved_record_ids || []);
+  const withdrawn = new Set(current?.withdrawn_record_ids || []);
+  for (const release of releases) {
+    for (const id of release.approved_record_ids || []) {
+      if (!currentIds.has(id)) withdrawn.add(id);
+    }
+  }
+  return withdrawn;
 }
 
 export function approvedKnowledgeRecordIds(tenantId, packageVersion = "") {

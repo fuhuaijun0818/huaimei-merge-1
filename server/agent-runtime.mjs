@@ -205,9 +205,14 @@ const knowledgeIdentityTerms = (item) => [...new Set([
   ...(item.cardTags || []), ...(item.efficacyLabels || [])
 ].flatMap((value) => String(value || "").split(/[—、/｜_\-]/)).map((value) => value.trim()).filter((value) => value.length >= 2))];
 
+// 显式项目识别只认项目名、品牌/型号与登记别名。此前把资料标题按分隔符切片，
+// 会让“痛感明显吗”这类追问因标题里的“明显”被误判成点名的项目提问，随后把
+// 图片 OCR 原文当成答复讲给客户。
 const explicitProjectTerms = (item) => [...new Set([
-  item.project, item.cardTitle, item.sourceTitle
-].flatMap((value) => String(value || "").split(/[—、/｜_\-]/)).map((value) => value.trim()).filter((value) => value.length >= 2))];
+  item.project,
+  item.brandOrModel,
+  ...(PROJECT_INTENT_ALIASES[item.project] || [])
+].map((value) => String(value || "").trim()).filter((value) => value.length >= 2))];
 
 const projectKnowledgeText = (item) => [
   item.project, item.cardTitle, item.sourceTitle, item.brandOrModel,
@@ -408,6 +413,8 @@ const normalizeContext = (context = {}) => ({
   conversation_summary:maskSensitive(context.conversation_summary || "").slice(0, 500),
   session_id:String(context.session_id || "").slice(0, 128),
   turn_index:Math.max(1, Number(context.turn_index) || 1),
+  // 连续“没听懂”的轮数，用于连续两次仍无法理解时给出人工入口。
+  clarification_streak:Math.max(0, Number(context.clarification_streak) || 0),
   active_critical_risk:context.active_critical_risk && typeof context.active_critical_risk === "object"
     ? { category:String(context.active_critical_risk.category || "").slice(0, 80), rule_id:String(context.active_critical_risk.rule_id || "").slice(0, 80) }
     : null
@@ -447,16 +454,49 @@ const detectProject = (message, context) => {
   return interestName && PROJECT_KNOWLEDGE[interestName] ? [interestName, PROJECT_KNOWLEDGE[interestName]] : null;
 };
 
-const citation = (title, item) => ({
+// 项目解释类回答的引用来自内置策划表（只有 knowledge_id/summary，没有文件路径），
+// 客户看到的“参考资料”因此无法定位到原始资料。这里按项目名回查公开知识子集里
+// 项目介绍目录下的资料记录，补上可追溯的来源路径；查不到时保持原样。
+const projectEvidenceSourceCache = new Map();
+const projectEvidenceSource = (project) => {
+  const key = String(project || "").trim();
+  if (!key) return null;
+  if (projectEvidenceSourceCache.has(key)) return projectEvidenceSourceCache.get(key);
+  let resolved = null;
+  try {
+    const candidates = retrieveHuameiKnowledge(key, {
+      audience: "public",
+      pathPrefixes: ["项目介绍/"],
+      limit: 5,
+      minimumScore: 8
+    }).map((hit) => hit?.item || hit).filter((record) => record && String(record.source_relative_path || "").startsWith("项目介绍/"));
+    const fileRecord = candidates.find((record) => ["image_ocr", "pdf_text"].includes(record.record_type));
+    const picked = fileRecord || candidates.find((record) => record.record_type === "directory_overview") || candidates[0] || null;
+    resolved = picked
+      ? { source_relative_path:String(picked.source_relative_path), source_record_id:picked.record_id || picked.id || null }
+      : null;
+  } catch {
+    resolved = null;
+  }
+  projectEvidenceSourceCache.set(key, resolved);
+  return resolved;
+};
+
+const citation = (title, item) => {
+  const fallbackEvidence = item.source_relative_path ? null : projectEvidenceSource(title || item.project);
+  return {
   knowledge_id: item.knowledge_id || LEGACY_KNOWLEDGE_IDS[item.project] || item.id,
   source_record_id: item.id || null,
   title: `${title}｜项目介绍`,
   version: item.version,
   usage: "consumer_safe_general_information",
   review_status: item.status || "已发布",
-  ...(item.source_relative_path ? { source_relative_path:item.source_relative_path } : {}),
+  ...(item.source_relative_path
+    ? { source_relative_path:item.source_relative_path }
+    : fallbackEvidence ? { source_relative_path:fallbackEvidence.source_relative_path, evidence_source_record_id:fallbackEvidence.source_record_id } : {}),
   ...(item.requires_verification === true ? { requires_verification:true } : {})
-});
+  };
+};
 
 const handoverMessage = (risk) => {
   const categories = new Set(risk.matches.map((item) => item.category));
@@ -767,6 +807,30 @@ const attachGraphRagEvidence = (localResponse, graphResult, context, query = "")
   return localResponse;
 };
 
+// A-011 AC4：连续两次仍无法理解时，承认不确定并给出人工入口，而不是再问一遍。
+const CLARIFICATION_ESCALATION_MESSAGE = "抱歉，我可能没有理解您的意思。您可以换个说法，比如想了解的项目，或想改善的部位；也可以回复“转人工”，我为您转接人工顾问继续沟通。";
+// 客户已经明确表态（拒绝联系、暂缓、要求人工）时不属于“没听懂”，照常承接不升级。
+const isCustomerDirectedTurn = (text = "") =>
+  /(?:不要|不用|别|不需要|先不|暂时不|暂不)(?:再)?(?:联系|打扰|回访|跟进)|没空|不着急|以后再说|再说吧|先不考虑|转人工|找人工|真人顾问|人工客服/.test(String(text || ""));
+const clarificationEscalationResult = (input, context, intent, conversationState) => ({
+  status:"completed",
+  message:CLARIFICATION_ESCALATION_MESSAGE,
+  structured_data:{
+    intent:"need_clarification",
+    original_intent:intent || "",
+    clarification_streak:Math.max(0, Number(context?.clarification_streak) || 0),
+    supported_projects:[...new Set(searchableProjectKnowledge(context?.tenant_id).map((item) => item.project))],
+    conversation_state:conversationState,
+    next_questions:[CLARIFICATION_ESCALATION_MESSAGE]
+  },
+  recommended_actions:[
+    { type:"request_human_service_verification" },
+    { type:"collect_need", fields:["concern", "body_part", "preferred_project"] }
+  ],
+  handover:{ required:false },
+  citations:[]
+});
+
 function acquisitionAgent(input, context, intentAnalysis) {
   const intent = intentAnalysis?.primary_intent || "need_clarification";
   const entities = intentAnalysis?.entities || { projects:[], doctors:[], concerns:[] };
@@ -1001,6 +1065,27 @@ function acquisitionAgent(input, context, intentAnalysis) {
   }
 
   if (intentAnalysis?.clarification_required) {
+    // A-025 AC1：图片通道未启用时明确说明不支持，不留下无效上传入口。
+    const imageUploadRequest = /(?:上传|发送|发|传)[^。，,！？?]{0,8}(?:照片|图片|图像)/.test(input.message);
+    if (imageUploadRequest) {
+      const unsupported = "当前在线咨询暂不支持上传图片（图片通道未启用）。您可以把关注点或想了解的项目告诉我，我先介绍一般资料；也可以转人工顾问，安排到院由医生查看具体情况。";
+      return {
+        status:"completed",
+        message:unsupported,
+        structured_data:{
+          intent:"image_channel_unsupported",
+          projects:[...(context.known_projects || [])],
+          next_questions:[],
+          conversation_state:baseConversationState,
+          supported_projects:[...new Set(searchableProjectKnowledge(context.tenant_id).map((item) => item.project))]
+        },
+        recommended_actions:[{ type:"request_human_service_verification" }],
+        handover:{ required:false },
+        citations:[]
+      };
+    }
+    // 连续两次都没听懂：不再重复同一个澄清问题，改为承认不确定并给出人工入口。
+    if (Number(context.clarification_streak) >= 1 && !isCustomerDirectedTurn(input.message)) return clarificationEscalationResult(input, context, intent, baseConversationState);
     const message = intent === "doctor_discovery_by_project"
       ? "我先按项目方向帮您缩小医生范围。您主要想咨询眼部、鼻部、胸部，还是面部年轻化？"
       : entities.concerns?.length
@@ -1067,6 +1152,33 @@ function acquisitionAgent(input, context, intentAnalysis) {
       recommended_actions:[],handover:{required:false},citations:[citation(item.project,item)]
     };
   }
+  // 客户在已知项目下追问感受、恢复或风险时，必须接着这个项目回答，而不是
+  // 落回“您主要在意的是……”这类占位承接，也不能把资料原文当结论。这些
+  // 回答只说需要面诊确认的边界，不替医生判断个体情况。
+  const followupItem = hits[0]?.item;
+  const followupFacet = followupItem && !breastType && !currentExplicitProjects.length && rememberedProjects.length
+    ? [
+        { key:"comfort", pattern:/(?:痛|疼|麻药|麻醉|舒适|难受|感觉)/, message:`${followupItem.project}的治疗感受和是否需要麻药，会因治疗部位与具体方案不同，需要医生在面诊时结合您的情况说明。` },
+        { key:"recovery", pattern:/(?:恢复|休息|消肿|肿胀|几天|多久|上班|请假|停工期)/, message:`${followupItem.project}的恢复安排需要按具体方案确认，一般会关注护理要求和按时复诊；如果出现明显或持续不适，请及时联系院方。` },
+        { key:"safety", pattern:/(?:风险|副作用|安全|危害|并发症|后遗症)/, message:`${followupItem.project}的适用性、禁忌和风险需要医生面诊评估，这里不做个体判断；需要的话我可以帮您转人工顾问。` }
+      ].find((entry) => entry.pattern.test(input.message))
+    : null;
+  if (followupFacet) return {
+    status:'completed',
+    message:followupFacet.message,
+    structured_data:{
+      intent:'conversation_followup',
+      project:followupItem.project,
+      projects:[followupItem.project],
+      requested_facet:followupFacet.key,
+      next_questions:[],
+      conversation_state:baseConversationState,
+      knowledge_hits:[{ knowledge_id:followupItem.id, project:followupItem.project, general_information:safeProjectSummary(followupItem) }]
+    },
+    recommended_actions:[],
+    handover:{ required:false },
+    citations:[citation(followupItem.project, followupItem)]
+  };
   const confirmedBreastMethod = breastType;
   const breastPrincipleFollowup = intent === "project_explanation"
     && Boolean(breastType)
@@ -1255,6 +1367,17 @@ function acquisitionAgent(input, context, intentAnalysis) {
   const huameiResponse = buildPublicKnowledgeResponse(responseEvidenceQuery, huameiHits);
   if (["directory_discovery", "service_information", "price_verification", "policy_verification"].includes(intent) && huameiResponse) {
     huameiResponse.intent = intent;
+    // 一条消息里同时问了项目知识和价格/政策时，先答知识再答价格；不能因为
+    // 路由到价格意图就丢掉同一轮里的项目问题。
+    const alsoAsksExplanation = /(?:原理|作用|是什么|怎么做|介绍|了解一下|有啥区别|区别)/.test(input.message);
+    if (alsoAsksExplanation && hits.length && !huameiResponse.message.startsWith(customerProjectSummary(hits[0].item).slice(0, 6))) {
+      const explanation = customerProjectSummary(hits[0].item);
+      if (explanation) {
+        huameiResponse.message = `${explanation} ${huameiResponse.message}`;
+        // 项目解释类引用放在最前：它直接支撑本轮的知识点，价格/政策引用排在其后。
+        huameiResponse.evidence = [citation(hits[0].item.project, hits[0].item), ...(huameiResponse.evidence || [])].filter(Boolean);
+      }
+    }
     if (intent === "service_information" && !/(?:地址|停车|营业|电话|院区)/.test(huameiResponse.message)) {
       huameiResponse.message = serviceUnknown;
       huameiResponse.next_questions = serviceSubject ? [] : [serviceUnknown];
@@ -1271,6 +1394,11 @@ function acquisitionAgent(input, context, intentAnalysis) {
   };
 
   if (!hits.length && huameiResponse) return resultFromKnowledgeResponse({ ...huameiResponse, intent });
+  // 只有“本轮同样是需要澄清”时才升级；拒绝联系、人工请求等确定性轮次照常承接。
+  if (!hits.length && Number(context.clarification_streak) >= 1 && !isCustomerDirectedTurn(input.message)
+    && (intent === "need_clarification" || intentAnalysis?.clarification_required === true)) {
+    return clarificationEscalationResult(input, context, intent, baseConversationState);
+  }
   if (!hits.length) return {
     status: "completed",
     message: entities.concerns?.length
@@ -1321,7 +1449,8 @@ function acquisitionAgent(input, context, intentAnalysis) {
     ? `先按资料比较${explicitHits.map(({ item }) => comparisonLabel(item)).join("和")}：${explicitHits.map(({ item }) => `${comparisonLabel(item)}：${shortProjectSummary(item)}`).join("；")}。具体包含范围、材料和恢复安排仍需面诊核实。`
     : exactProject
       ? `${customerProjectSummary(primary)} 具体方案由医生面诊确认。`
-      : `明白，您主要在意的是${entities.concerns?.join("、") || "当前改善问题"}。可以先看这些方向：${hits.map(({ item }) => `${item.project}（${(item.efficacyLabels || []).slice(0, 3).join("、") || "一般项目介绍"}）`).join("；")}。具体选择再由医生面诊确认。`;
+      // 客户没说明主诉时不能回“当前改善问题”这类占位词；先承接再给方向。
+      : `${entities.concerns?.length ? `明白，您主要在意的是${entities.concerns.join("、")}。` : "好的。"}可以先看这些方向：${hits.map(({ item }) => `${item.project}（${(item.efficacyLabels || []).slice(0, 3).join("、") || "一般项目介绍"}）`).join("；")}。具体选择再由医生面诊确认。`;
   if (PRICE_OR_POLICY_INTENT.test(input.message)) {
     message += " 价格或活动我可以继续帮您核验，但不把历史图片直接当当前报价；需要确认包含项、有效期和限制条件。";
   }

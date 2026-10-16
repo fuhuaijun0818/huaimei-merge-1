@@ -165,6 +165,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .public-media-pdf { min-height: 126px; padding: 20px; display: grid; align-content: center; gap: 7px; color: #806e70; background: linear-gradient(145deg,#fff,#fff4f3); }
 .public-media-pdf strong { width: fit-content; padding: 3px 7px; border-radius: 5px; color: #a35b5f; background: #f6dddd; font-size: 11px; letter-spacing: .08em; }
 .public-media-pdf span { font-size: 12px; }
+.public-media-unavailable { display: block; padding: 18px 14px; color: #8a6b4a; background: #fffaf2; font-size: 12px; line-height: 1.55; text-align: left; }
 
 .knowledge-sources { margin-top: 13px; padding-top: 10px; border-top: 1px solid #eee4e3; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; color: #9a898a; font-size: 10px; }
 .source-chip { padding: 4px 8px; border: 1px solid #eadbda; border-radius: 999px; color: #806e70; background: #fffafa; }
@@ -282,3 +283,53 @@ button { -webkit-tap-highlight-color: transparent; }
 .appointment-recommendations button { padding:9px 12px; border:1px solid #cedfda; border-radius:8px; background:#f4f9f7; color:#235a48; cursor:pointer; }
 .appointment-number { overflow-wrap:anywhere; font-size:12px; }
 .appointment-registration-card { margin:20px 0; }
+
+/* A 模块：多行输入、停止等待、发送状态与人工消息的来源标识。 */
+button, input, textarea { font: inherit; }
+.composer textarea {
+  flex: 1;
+  min-width: 0;
+  min-height: 46px;
+  max-height: 132px;
+  padding: 13px 16px;
+  border: 1px solid #e0cdcb;
+  border-radius: 14px;
+  background: #fff;
+  color: #2d2325;
+  line-height: 1.5;
+  resize: none;
+  overflow-y: auto;
+  outline: none;
+  transition: border-color .18s ease, box-shadow .18s ease;
+}
+.composer textarea::placeholder { color: #998c8d; }
+.composer textarea:focus { border-color: #d79595; box-shadow: 0 0 0 4px rgba(216,150,150,.1); }
+.composer textarea:disabled { background: #faf5f4; color: #9a888a; }
+.composer-waiting { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; color: #8b7576; font-size: 12px; }
+.stop-button { padding: 7px 14px; border: 1px solid #e0cdcb; border-radius: 999px; background: #fff; color: #8a4a4a; font-size: 12px; cursor: pointer; }
+.stop-button:hover { border-color: #cf9a9a; background: #fdf6f6; }
+.user-message { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.user-message .user-message-text { overflow-wrap: anywhere; white-space: pre-wrap; }
+.message-state { display: inline-flex; align-items: center; gap: 6px; color: #a3908f; font-size: 11px; font-style: normal; }
+.user-message.is-failed .user-message-text { color: #8d3535; }
+.user-message.is-stopped .user-message-text { color: #6f6464; }
+.retry-button { padding: 3px 10px; border: 1px solid #e0cdcb; border-radius: 999px; background: #fff; color: #8a4a4a; font-size: 11px; cursor: pointer; }
+.unseen-hint { position: sticky; bottom: 10px; align-self: center; margin: 6px auto 0; padding: 8px 16px; border: 1px solid #e4d3d2; border-radius: 999px; background: #fff; color: #7a4a55; font-size: 12px; box-shadow: 0 6px 18px rgba(120,60,70,.12); cursor: pointer; }
+.restore-failed { align-self: stretch; margin: 12px 0; padding: 14px 16px; border: 1px solid #eccfcf; border-radius: 14px; background: #fff8f7; color: #6c4646; font-size: 13px; }
+.restore-actions { display: flex; gap: 10px; margin-top: 10px; }
+.restore-actions button { padding: 8px 14px; border: 1px solid #e0cdcb; border-radius: 999px; background: #fff; color: #8a4a4a; font-size: 12px; cursor: pointer; }
+.assistant-message.source-human { border-color: #cfe0d6; background: #f7fbf8; }
+.assistant-message.source-human .assistant-avatar { background: #d9ece1; color: #1f5c42; }
+.assistant-message.source-system { border-color: #e3dced; background: #faf8fd; }
+.assistant-message.source-system .assistant-avatar { background: #e6dff2; color: #4a3a70; }
+/* A-005：流式生成中的中间状态与中止标记。 */
+.stream-state { margin-top: 6px; color: #9a888a; font-size: 11px; }
+.stream-state.aborted { color: #a3908f; }
+.assistant-message .stream-state::before { content: "· "; }
+.knowledge-sources .source-more { color:#998c8d; font-size:11px; align-self:center; }
+/* A-025：客户附件入口、上传状态与客户侧附件标记。 */
+.composer-file { display: none; }
+.attach-button { flex: none; width: 40px; height: 40px; border: 1px solid #e0cdcb; border-radius: 50%; background: #fff; color: #8a4a4a; font-size: 20px; line-height: 1; cursor: pointer; }
+.attach-button:hover { border-color: #cf9a9a; background: #fdf6f6; }
+.upload-status { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; padding: 8px 12px; border: 1px solid #eccfcf; border-radius: 10px; background: #fff8f7; color: #6c4646; font-size: 12px; }
+.attachment-state { color: #7a6a68; font-size: 11px; font-style: normal; }

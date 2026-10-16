@@ -6,9 +6,13 @@ const QUICK_QUESTIONS = [
   "皮肤暗沉发黄，想提亮"
 ];
 
+// 本机保存客户自己的会话凭证，用于刷新后回读服务端确认过的会话与人工消息。
+const SESSION_STORAGE_KEY = "huamei.advisor.session.v1";
+
 const emptyConversation = () => [];
 const createSessionId = () => globalThis.crypto?.randomUUID?.() || `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const trimTrailingSlashes = (value = "") => String(value).replace(/\/+$/, "");
+const normalizeForCompare = (value = "") => String(value).replace(/\s+/g, "");
 const joinBaseUrl = (baseUrl, path) => {
   const normalizedBaseUrl = trimTrailingSlashes(baseUrl);
   if (!normalizedBaseUrl) return path;
@@ -45,17 +49,46 @@ function FeedbackIcon({ type }) {
   );
 }
 
-function Composer({ value, onChange, onSubmit, disabled, restoringSession, inputRef }) {
+function Composer({ value, onChange, onSubmit, disabled, restoringSession, inputRef, onStop, waiting, uploadCapability, onUpload, uploadError, onRetryUpload }) {
+  const filePickerRef = useRef(null);
   const canSend = value.trim() && !disabled;
   return (
     <div className="composer-area">
       <form className="composer" onSubmit={onSubmit}>
-        <input
+        {uploadCapability?.enabled && (
+          <>
+            <input
+              ref={filePickerRef}
+              type="file"
+              className="composer-file"
+              accept={(uploadCapability.accepted_types || []).join(",")}
+              aria-label="添加图片或资料"
+              onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; onUpload?.(file); }}
+            />
+            <button type="button" className="attach-button" aria-label="添加图片或资料" onClick={() => filePickerRef.current?.click()}>
+              +
+            </button>
+          </>
+        )}
+        <textarea
           ref={inputRef}
           aria-label="咨询内容"
           autoComplete="off"
+          rows={1}
           disabled={restoringSession}
-          onKeyDown={(event) => { if (event.key === "Enter" && (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229)) event.preventDefault(); }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter") return;
+            // 中文输入法组合态的回车只用于确认候选词，不发送消息。
+            if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
+              event.preventDefault();
+              return;
+            }
+            // Shift+Enter 在输入框内换行，回车才发送。
+            if (event.shiftKey) return;
+            event.preventDefault();
+            if (!value.trim() || disabled) return;
+            onSubmit({ preventDefault() {} });
+          }}
           maxLength={1000}
           onChange={(event) => onChange(event.target.value)}
           placeholder="描述您的关注点，例如：脸部松弛、肤色暗沉…"
@@ -65,6 +98,20 @@ function Composer({ value, onChange, onSubmit, disabled, restoringSession, input
           <SendIcon />
         </button>
       </form>
+      {uploadError && (
+        <div className="upload-status" role="alert">
+          <span>{uploadError}</span>
+          <button type="button" className="retry-button" onClick={() => onRetryUpload?.()} aria-label="重试上传">重试上传</button>
+        </div>
+      )}
+      {waiting && (
+        <div className="composer-waiting" role="status">
+          <span>小美正在整理资料…</span>
+          <button type="button" className="stop-button" onClick={onStop} aria-label="停止等待">
+            停止等待
+          </button>
+        </div>
+      )}
       <p className="compliance-note">时代之美 · AI获客顾问·小美 · 项目信息仅供参考，具体适用性请咨询专业医师</p>
     </div>
   );
@@ -75,12 +122,35 @@ const publicMediaUrl = (value = "") => {
   return /^https?:\/\//i.test(rawUrl) ? rawUrl : joinBaseUrl(API_BASE_URL, rawUrl);
 };
 
+// A-025 AC4：链接失效时向客户说明原因（已撤回/已过期/不可公开发送），
+// 而不是留一张破图。原因取自媒体端点的错误体，取不到时用兜底文案。
+const mediaFailureReason = async (url) => {
+  try {
+    const response = await fetch(url, { headers: { Accept: "application/json" } });
+    if (response.ok) return "";
+    const body = await response.json().catch(() => null);
+    return String(body?.error?.message || "");
+  } catch {
+    return "";
+  }
+};
+
+function MediaUnavailable({ url, fallback = "该资料暂时无法预览" }) {
+  const [reason, setReason] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    mediaFailureReason(url).then((message) => { if (!cancelled && message) setReason(message); });
+    return () => { cancelled = true; };
+  }, [url]);
+  return <span className="public-media-unavailable" role="status">{fallback}{reason ? `：${reason}` : "，请联系顾问获取最新版本"}</span>;
+}
+
 function KnowledgeSources({ citations = [], onPreview }) {
   if (!citations.length) return null;
   return (
     <div className="knowledge-sources" aria-label="参考资料">
       <span>参考资料</span>
-      {citations.slice(0, 3).map((citation) => {
+      {citations.slice(0, 6).map((citation) => {
         const preview = citation?.preview?.url ? { ...citation.preview, url:publicMediaUrl(citation.preview.url) } : null;
         const label = String(citation.title || "项目资料").replace(/[｜|]\s*项目知识$/, "");
         const className = `source-chip ${citation.requires_verification ? "needs-verification" : ""}`;
@@ -92,7 +162,23 @@ function KnowledgeSources({ citations = [], onPreview }) {
           <span className={className} key={`${citation.knowledge_id}-${citation.source_record_id || "source"}`} title={title}>{content}</span>
         );
       })}
+      {citations.length > 6 && <span className="source-more">另有 {citations.length - 6} 条资料</span>}
     </div>
+  );
+}
+
+function PublicMediaCard({ item, src, onPreview }) {
+  const [failed, setFailed] = useState(false);
+  const isPdf = item.type === "pdf";
+  return (
+    <button className="public-media-card" type="button" onClick={() => onPreview({ ...item, url:src })} title={`点击预览${isPdf ? " PDF" : "图片"}`}>
+      {isPdf
+        ? <span className="public-media-pdf" aria-hidden="true"><strong>PDF</strong><span>点击预览公开资料</span></span>
+        : failed
+          ? <MediaUnavailable url={src} fallback="该资料链接已失效" />
+          : <img src={src} alt={item.alt || item.title || "公开宣传资料"} loading="lazy" onError={() => setFailed(true)} />}
+      <span className="public-media-caption">{item.title || "公开宣传资料"}{item.requires_verification ? <em>资料需核验</em> : null}</span>
+    </button>
   );
 }
 
@@ -103,19 +189,14 @@ function PublicKnowledgeMedia({ media = [], onPreview }) {
       {media.slice(0, 2).map((item) => {
         const src = publicMediaUrl(item?.url);
         if (!src) return null;
-        const isPdf = item.type === "pdf";
-        return (
-          <button className="public-media-card" type="button" key={item.id || src} onClick={() => onPreview({ ...item, url:src })} title={`点击预览${isPdf ? " PDF" : "图片"}`}>
-            {isPdf ? <span className="public-media-pdf" aria-hidden="true"><strong>PDF</strong><span>点击预览公开资料</span></span> : <img src={src} alt={item.alt || item.title || "公开宣传资料"} loading="lazy" />}
-            <span className="public-media-caption">{item.title || "公开宣传资料"}{item.requires_verification ? <em>资料需核验</em> : null}</span>
-          </button>
-        );
+        return <PublicMediaCard item={item} src={src} key={item.id || src} onPreview={onPreview} />;
       })}
     </div>
   );
 }
 
 function KnowledgeMediaPreview({ preview, onClose }) {
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
     if (!preview) return undefined;
     const onKeyDown = (event) => {
@@ -124,6 +205,7 @@ function KnowledgeMediaPreview({ preview, onClose }) {
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [preview, onClose]);
+  useEffect(() => { setFailed(false); }, [preview?.url]);
   if (!preview?.url) return null;
   const isPdf = preview.type === "pdf";
   const title = preview.title || (isPdf ? "公开 PDF 资料" : "公开图片资料");
@@ -132,7 +214,11 @@ function KnowledgeMediaPreview({ preview, onClose }) {
       <section className="knowledge-preview-dialog" role="dialog" aria-modal="true" aria-label={`${title}预览`}>
         <header className="knowledge-preview-header"><div><span>参考资料预览</span><strong>{title}</strong></div><button type="button" className="knowledge-preview-close" onClick={onClose} aria-label="关闭资料预览">×</button></header>
         <div className={`knowledge-preview-content ${isPdf ? "is-pdf" : "is-image"}`}>
-          {isPdf ? <iframe src={preview.url} title={title} /> : <img src={preview.url} alt={preview.alt || title} />}
+          {failed
+            ? <p className="public-media-unavailable" role="status"><MediaUnavailable url={preview.url} fallback="该资料链接已失效" /></p>
+            : isPdf
+              ? <iframe src={preview.url} title={title} />
+              : <img src={preview.url} alt={preview.alt || title} onError={() => setFailed(true)} />}
         </div>
         <footer className="knowledge-preview-footer">
           <span>{preview.requires_verification ? "该资料以院方当前审核版本为准" : "仅展示院方已审核的公开资料"}</span>
@@ -270,13 +356,37 @@ function ConversationFeedback({ feedback, onFeedback }) {
   );
 }
 
-function ChatMessage({ message, showLeadCapture, leadState, appointmentState, onLeadSubmit, onAppointmentSubmit, feedback, onFeedback, onPreview }) {
-  if (message.role === "user") return <div className="user-message">{message.content}</div>;
+function ChatMessage({ message, showLeadCapture, leadState, appointmentState, onLeadSubmit, onAppointmentSubmit, feedback, onFeedback, onPreview, onRetry }) {
+  if (message.role === "user") return (
+    <div className={`user-message ${message.status ? `is-${message.status}` : ""}`}>
+      <span className="user-message-text">{message.content}</span>
+      {message.attachment && (
+        <em className="attachment-state">
+          附件已在本地保存（{Math.max(1, Math.round(message.attachment.size / 1024))} KB）· 仅客户侧可见
+        </em>
+      )}
+      {message.status === "sending" && <em className="message-state">发送中…</em>}
+      {message.status === "stopped" && <em className="message-state">已停止等待</em>}
+      {message.status === "failed" && (
+        <em className="message-state">
+          未送达
+          <button type="button" className="retry-button" onClick={() => onRetry?.(message)} aria-label="重试发送这条消息">重试</button>
+        </em>
+      )}
+    </div>
+  );
   const medicalHandover = ["medical_emergency", "medical_safety", "medical_boundary"].includes(message.handover?.reason);
+  const source = message.source || "ai";
+  const sourceLabel = source === "human" ? "人工顾问" : source === "system" ? "系统提示" : "小美 · AI获客顾问";
+  const sourceAvatar = source === "human" ? "顾" : source === "system" ? "系" : "美";
   return (
-    <article className={`assistant-message ${message.isContinuation ? "continuation" : ""} ${message.status === "handover_required" ? "handover" : ""}`}>
-      {!message.isContinuation && <div className="assistant-label"><span className="assistant-avatar">美</span><span>小美 · AI获客顾问</span></div>}
+    <article className={`assistant-message source-${source} ${message.isContinuation ? "continuation" : ""} ${message.status === "handover_required" ? "handover" : ""}`}>
+      {!message.isContinuation && <div className="assistant-label"><span className="assistant-avatar">{sourceAvatar}</span><span>{sourceLabel}</span></div>}
       <div className="assistant-copy">{message.content}</div>
+      {message.generating && <div className="stream-state" role="status">正在生成…</div>}
+      {message.aborted && !message.generating && (
+        <div className="stream-state aborted">已中止（这段内容未提交）</div>
+      )}
       {message.isFinalSegment && message.status === "handover_required" && <div className="handover-note">{medicalHandover ? "该问题需要人工顾问或医生进一步协助，小美不会在线判断或提供医疗处置建议。" : "该问题已停止自动推进，需要由相关人工团队继续处理。"}</div>}
       <PublicKnowledgeMedia media={message.media} onPreview={onPreview} />
       <KnowledgeSources citations={message.citations} onPreview={onPreview} />
@@ -302,13 +412,34 @@ export function App() {
   const sessionIdRef = useRef(createSessionId());
   const sessionTokenRef = useRef("");
   const sessionEpochRef = useRef(0);
+  const activeRequestRef = useRef(null);
+  const stoppedByUserRef = useRef(false);
+  const scrollerRef = useRef(null);
+  const atBottomRef = useRef(true);
   const [restoringSession, setRestoringSession] = useState(true);
+  const [restoreFailed, setRestoreFailed] = useState(false);
+  const [unseenCount, setUnseenCount] = useState(0);
+  const [uploadCapability, setUploadCapability] = useState(null);
+  const [uploadError, setUploadError] = useState("");
+  const fileInputRef = useRef(null);
+  const pendingUploadRef = useRef(null);
   const chatStarted = messages.length > 0 || isLoading || Boolean(appointmentState.intake);
 
   const statusText = useMemo(() => isLoading ? "正在为您整理相关项目信息…" : "", [isLoading]);
 
+  // 恢复会话时保持客户原来的阅读位置：只有本来就贴在底部时才自动滚动，
+  // 客户主动上滑看历史时改为提示有新消息。
+  const stickToBottom = (behavior = "smooth") => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+    scroller.scrollTo({ top: scroller.scrollHeight, behavior });
+    atBottomRef.current = true;
+    setUnseenCount(0);
+  };
+
   useEffect(() => {
-    messageEndRef.current?.scrollIntoView({ block:"end", behavior:"smooth" });
+    if (atBottomRef.current) stickToBottom();
+    else setUnseenCount((current) => current + 1);
   }, [messages, isLoading]);
 
   const resetConversation = async () => {
@@ -322,6 +453,9 @@ export function App() {
     setAppointmentState({ status:"idle", error:"", actionId:"", message:"" });
     setFeedbackByReply({});
     setKnowledgePreview(null);
+    setUnseenCount(0);
+    setRestoreFailed(false);
+    clearPersistedSessionCredential();
     sessionIdRef.current = createSessionId();
     sessionTokenRef.current = "";
     try {
@@ -337,6 +471,21 @@ export function App() {
   const updateSessionCredential = (body) => {
     if (body?.session_id) sessionIdRef.current = body.session_id;
     if (body?.session_token) sessionTokenRef.current = body.session_token;
+    persistSessionCredential();
+  };
+
+  // 会话凭证保存在浏览器本地，刷新后才能带着同一凭证回读服务端确认过的会话。
+  const persistSessionCredential = () => {
+    try {
+      globalThis.localStorage?.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+        session_id: sessionIdRef.current,
+        session_token: sessionTokenRef.current
+      }));
+    } catch {}
+  };
+
+  const clearPersistedSessionCredential = () => {
+    try { globalThis.localStorage?.removeItem(SESSION_STORAGE_KEY); } catch {}
   };
 
   const publicHeaders = () => ({
@@ -369,9 +518,100 @@ export function App() {
     }
   };
 
+  const readStoredSessionCredential = () => {
+    try {
+      const raw = globalThis.localStorage?.getItem(SESSION_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed?.session_id ? parsed : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const transcriptMessage = (item) => {
+    const id = String(item?.id || `history-${item?.at || ""}-${Math.random().toString(16).slice(2)}`);
+    if (item?.role === "customer" || item?.role === "user") {
+      return { id, role:"user", content:item.text, at:item.at, status:"confirmed" };
+    }
+    return {
+      id,
+      groupId:id,
+      role:"assistant",
+      source:["human", "system"].includes(item?.role) ? item.role : "ai",
+      content:item.text,
+      at:item.at,
+      isFinalSegment:true,
+      citations:[],
+      status:"completed"
+    };
+  };
+
+  // 刷新后带着本机会话凭证回读服务端确认过的消息顺序；失败时给出重试与
+  // 新对话入口，不把旧消息挂到新客户身上。
+  // 轮询补齐只追加真正的新消息：同一条消息在本地渲染和服务端记录里的 id
+  // 不同，只按 id 去重会把同一轮再加一遍，所以要同时比对角色与文本内容。
+  const isRenderedAlready = (message, current) => {
+    const text = normalizeForCompare(message.content);
+    if (!text) return true;
+    const sameRole = current.filter((item) => item.role === message.role);
+    if (sameRole.some((item) => normalizeForCompare(item.content) === text)) return true;
+    if (message.role !== "assistant") return false;
+    // 服务端把一轮答复存成一条整文本，本地按分段渲染成多个气泡，用包含关系判断。
+    const joinedAssistant = normalizeForCompare(current.filter((item) => item.role === "assistant").map((item) => item.content).join(""));
+    return joinedAssistant.includes(text);
+  };
+
+  const restoreConversation = async (options = {}) => {
+    const epoch = sessionEpochRef.current;
+    const stored = readStoredSessionCredential();
+    if (stored) {
+      sessionIdRef.current = stored.session_id;
+      sessionTokenRef.current = stored.session_token || "";
+    }
+    // 没有历史会话时也要取一次能力位（服务端会顺带签发本机会话凭证），
+    // 否则前台拿不到"是否允许上传"等能力开关。
+    try {
+      const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-conversation"), {
+        method:"POST",
+        credentials:"include",
+        headers:{ ...publicHeaders(), "Content-Type":"application/json" },
+        body:JSON.stringify({
+          session_id:sessionIdRef.current,
+          ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {}),
+          limit:200
+        })
+      });
+      const body = await response.json();
+      if (epoch !== sessionEpochRef.current) return;
+      if (!response.ok) throw new Error(body?.error?.message || "无法恢复上次的咨询记录");
+      updateSessionCredential(body);
+      if (body?.capabilities?.customer_upload) setUploadCapability(body.capabilities.customer_upload);
+      const restored = Array.isArray(body.messages) ? body.messages.map(transcriptMessage) : [];
+      if (restored.length && !options.silent) setMessages(restored);
+      else if (restored.length && options.silent) {
+        setMessages((current) => {
+          const known = new Set(current.map((item) => item.id));
+          const additions = restored.filter((item) => !known.has(item.id) && !isRenderedAlready(item, current));
+          return additions.length ? [...current, ...additions] : current;
+        });
+      }
+      setRestoreFailed(false);
+    } catch (restoreError) {
+      if (epoch !== sessionEpochRef.current) return;
+      if (!options.silent) {
+        setRestoreFailed(true);
+        setError(restoreError.message);
+      }
+    } finally {
+      if (epoch === sessionEpochRef.current && !options.silent) setRestoringSession(false);
+    }
+  };
+
   useEffect(() => {
     let cancelled = false;
     const epoch = sessionEpochRef.current;
+    void restoreConversation();
     fetch(joinBaseUrl(API_BASE_URL, "/api/public/appointment-intakes/current"), { method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" }, body:"{}" })
       .then(async (response) => { if (!response.ok) throw new Error("无法恢复到院登记，请刷新重试。"); return response.json(); })
       .then((body) => {
@@ -382,6 +622,16 @@ export function App() {
       .finally(() => { if (!cancelled) setRestoringSession(false); });
     return () => { cancelled = true; };
   }, []);
+
+  // 人工接管时客户页没有推送通道，按可见性轮询补齐人工回复与系统事件。
+  useEffect(() => {
+    if (!chatStarted) return undefined;
+    const timer = window.setInterval(() => {
+      if (globalThis.document?.visibilityState === "hidden") return;
+      void restoreConversation({ silent:true });
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, [chatStarted]);
 
   const changeAppointment = async (action, time) => {
     const intake = appointmentState.intake;
@@ -461,41 +711,127 @@ export function App() {
   };
 
   const submitQuestion = async (event) => {
-    event.preventDefault();
+    event?.preventDefault?.();
+    if (isLoading || restoringSession || questionInFlightRef.current) return;
     const question = input.trim();
-    if (!question || isLoading || restoringSession || questionInFlightRef.current) return;
-    questionInFlightRef.current = true;
-    inputRef.current?.focus({ preventScroll:true });
-    setMessages((current) => [...current, { id:`user-${Date.now()}`, role:"user", content:question, at:new Date().toISOString() }]);
-    setInput("");
-    setError("");
-    setIsLoading(true);
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => controller.abort(), 45_000);
-    try {
-      const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-chat"), {
-        method:"POST",
-        credentials:"include",
-        headers:publicHeaders(),
-        body:JSON.stringify({ message:question, session_id:sessionIdRef.current, ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {}) }),
-        signal:controller.signal
-      });
-      const body = await response.json();
-      updateSessionCredential(body);
-      if (!response.ok) throw new Error(body?.error?.message || "咨询服务暂时不可用");
-      if (body.lead_receipt?.status === "accepted") setLeadState({status:"captured", error:"", result:body.lead_receipt, consentText:""});
-      const segments = Array.isArray(body.reply_segments)
-        ? body.reply_segments.map((item) => String(item || "").trim()).filter(Boolean)
-        : [];
-      const replySegments = segments.length ? segments : [String(body.reply || "").trim()].filter(Boolean);
-      const replyGroupId = body.run_id || `assistant-${Date.now()}`;
-      const replyAt = new Date().toISOString();
-      setMessages((current) => [...current, ...replySegments.map((content, index) => {
+    if (!question) return;
+    await sendQuestion({ question });
+  };
+
+  // 客户端消息标识随消息一起发给服务端，并用同一个标识做幂等键：重试不会
+  // 增加重复对话、客户或预约记录；成功回执只更新原来那条消息。
+  const parseSseChunk = (chunk = "") => {
+    let event = "message";
+    const dataLines = [];
+    for (const line of String(chunk).split("\n")) {
+      if (line.startsWith("event:")) event = line.slice(6).trim();
+      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+    }
+    let data = null;
+    if (dataLines.length) {
+      try { data = JSON.parse(dataLines.join("\n")); } catch { data = null; }
+    }
+    return { event, data };
+  };
+
+  // A-005：分片推送 + 最终回执。重复片段按序号丢弃，断线时带 since_seq 只补缺失片段。
+  const streamReply = async ({ question, messageKey, controller }) => {
+    const streamId = `stream-${messageKey}`;
+    let sinceSeq = 0;
+    let text = "";
+    const applyDelta = (delta) => {
+      if (!delta) return;
+      const seq = Number(delta.seq) || 0;
+      if (seq && seq <= sinceSeq) return;
+      sinceSeq = Math.max(sinceSeq, seq);
+      text += String(delta.text || "");
+      setMessages((current) => current.some((item) => item.id === streamId)
+        ? current.map((item) => item.id === streamId ? { ...item, content:text, seq:sinceSeq, generating:true } : item)
+        : [...current, {
+            id:streamId, groupId:streamId, role:"assistant", source:"ai",
+            content:text, seq:sinceSeq, generating:true,
+            citations:[], isFinalSegment:false, at:new Date().toISOString()
+          }]);
+    };
+    const open = (since) => fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-chat/stream"), {
+      method:"POST",
+      credentials:"include",
+      headers:{ ...publicHeaders(), "Content-Type":"application/json", "Idempotency-Key":messageKey },
+      body:JSON.stringify({
+        message:question,
+        client_message_id:messageKey,
+        since_seq:since,
+        session_id:sessionIdRef.current,
+        ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {})
+      }),
+      signal:controller.signal
+    });
+    let receipt = null;
+    for (let attempt = 0; attempt < 2 && !receipt; attempt += 1) {
+      const response = await open(sinceSeq);
+      if (!response.ok || !response.body) {
+        const detail = await response.json().catch(() => null);
+        // 流式通道不可用时回落到普通接口，客户照样能拿到回执。
+        if (attempt === 0 && sinceSeq === 0) return requestReplyReceipt({ question, messageKey, controller });
+        throw new Error(detail?.error?.message || "咨询服务暂时不可用");
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream:true });
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary >= 0) {
+          const { event, data } = parseSseChunk(buffer.slice(0, boundary));
+          buffer = buffer.slice(boundary + 2);
+          boundary = buffer.indexOf("\n\n");
+          if (event === "delta") applyDelta(data);
+          else if (event === "final") receipt = data;
+          else if (event === "error") throw new Error(data?.message || "咨询服务暂时不可用");
+        }
+      }
+    }
+    if (!receipt) throw new Error("本次咨询响应中断，请稍后重试");
+    return receipt;
+  };
+
+  const requestReplyReceipt = async ({ question, messageKey, controller }) => {
+    const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-chat"), {
+      method:"POST",
+      credentials:"include",
+      headers:{ ...publicHeaders(), "Idempotency-Key":messageKey },
+      body:JSON.stringify({ message:question, client_message_id:messageKey, session_id:sessionIdRef.current, ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {}) }),
+      signal:controller.signal
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body?.error?.message || "咨询服务暂时不可用");
+    return body;
+  };
+
+  // 最终回执为准：未提交的流式片段在这里被丢弃，替换成服务端确认过的分段答复。
+  const applyReplyReceipt = (body, messageKey) => {
+    updateSessionCredential(body);
+    if (body.lead_receipt?.status === "accepted") setLeadState({ status:"captured", error:"", result:body.lead_receipt, consentText:"" });
+    const segments = Array.isArray(body.reply_segments)
+      ? body.reply_segments.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+    const replySegments = segments.length ? segments : [String(body.reply || "").trim()].filter(Boolean);
+    const replyGroupId = body.run_id || `assistant-${Date.now()}`;
+    const replyAt = new Date().toISOString();
+    setMessages((current) => current
+      .filter((item) => item.id !== `stream-${messageKey}`)
+      .map((item) => item.id.startsWith("user-") && item.clientMessageId === messageKey
+        ? { ...item, status:"confirmed", runId:replyGroupId, confirmedAt:replyAt }
+        : item)
+      .concat(replySegments.map((content, index) => {
         const isFinalSegment = index === replySegments.length - 1;
         return {
           id:`${replyGroupId}-${index + 1}`,
           groupId:replyGroupId,
           role:"assistant",
+          source:body.handover?.required ? "system" : "ai",
           content,
           isContinuation:index > 0,
           isFinalSegment,
@@ -508,16 +844,123 @@ export function App() {
           orchestration:isFinalSegment ? body.orchestration : null,
           at:replyAt
         };
-      })]);
+      })));
+  };
+
+  // A-025 AC2：客户上传图片/资料（受服务端能力位控制；失败可重试，客户附件不进知识引用）。
+  const submitUpload = async (file) => {
+    if (!file || typeof file === "undefined") return;
+    const accepted = uploadCapability?.accepted_types || ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+    const maxBytes = file.type === "application/pdf"
+      ? (uploadCapability?.max_pdf_bytes || 32 * 1024 * 1024)
+      : (uploadCapability?.max_image_bytes || 64 * 1024 * 1024);
+    pendingUploadRef.current = file;
+    setUploadError("");
+    if (!accepted.includes(file.type)) {
+      setUploadError("仅支持 jpg、png、webp 图片或 pdf 资料");
+      return;
+    }
+    if (file.size > maxBytes) {
+      setUploadError(`文件超出体积上限（${Math.round(maxBytes / 1024 / 1024)}MB）`);
+      return;
+    }
+    const dataBase64 = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
+      reader.readAsDataURL(file);
+    });
+    try {
+      const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-upload"), {
+        method:"POST",
+        credentials:"include",
+        headers:{ ...publicHeaders(), "Idempotency-Key":`upload-${file.name}-${file.size}-${file.lastModified}` },
+        body:JSON.stringify({
+          file_name:file.name,
+          mime_type:file.type,
+          data_base64:dataBase64,
+          session_id:sessionIdRef.current,
+          ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {})
+        })
+      });
+      const body = await response.json();
+      updateSessionCredential(body);
+      if (!response.ok) throw new Error(body?.error?.message || "上传失败，请稍后重试");
+      pendingUploadRef.current = null;
+      setMessages((current) => [...current, {
+        id:`upload-${body.upload_id}`,
+        role:"user",
+        content:`[附件] ${file.name}`,
+        attachment:{ name:file.name, mime:file.type, size:file.size, uploadId:body.upload_id, status:"uploaded" },
+        at:new Date().toISOString()
+      }]);
+    } catch (error) {
+      setUploadError(error.message);
+    }
+  };
+
+  const sendQuestion = async ({ question, clientMessageId, retryOfId }) => {
+    const messageKey = clientMessageId || globalThis.crypto?.randomUUID?.() || `web-msg-${Date.now()}`;
+    questionInFlightRef.current = true;
+    inputRef.current?.focus({ preventScroll:true });
+    setMessages((current) => retryOfId
+      ? current.map((item) => item.id === retryOfId ? { ...item, status:"sending", error:"" } : item)
+      : [...current, { id:`user-${Date.now()}`, clientMessageId:messageKey, role:"user", content:question, at:new Date().toISOString(), status:"sending", error:"" }]);
+    if (!retryOfId) setInput("");
+    setError("");
+    setIsLoading(true);
+    const controller = new AbortController();
+    activeRequestRef.current = controller;
+    const timer = window.setTimeout(() => controller.abort(), 45_000);
+    try {
+      let receipt = null;
+      try {
+        receipt = await streamReply({ question, messageKey, controller });
+      } catch (streamError) {
+        if (streamError.name === "AbortError") throw streamError;
+        // 流式通道不可用时回落到普通接口，保证客户仍能拿到回执。
+        receipt = await requestReplyReceipt({ question, messageKey, controller });
+      }
+      applyReplyReceipt(receipt, messageKey);
     } catch (requestError) {
-      const message = requestError.name === "AbortError" ? "本次咨询响应时间较长，请稍后重新提问。" : requestError.message;
-      setError(message);
-      setMessages((current) => [...current, { id:`error-${Date.now()}`, role:"assistant", content:`抱歉，${message}`, status:"error", citations:[], isFinalSegment:true, at:new Date().toISOString() }]);
+      const stopped = stoppedByUserRef.current;
+      const timedOut = requestError.name === "AbortError" && !stopped;
+      const failure = stopped
+        ? "已停止等待本次回复，您可以继续提问。"
+        : timedOut
+          ? "本次咨询响应时间较长，请稍后重新提问。"
+          : requestError.message;
+      setMessages((current) => current.map((item) => item.id.startsWith("user-") && item.clientMessageId === messageKey
+        ? { ...item, status:stopped ? "stopped" : "failed", error:stopped ? "" : failure }
+        : item));
+      if (stopped) setError("");
+      else {
+        setError(failure);
+        setMessages((current) => [...current, { id:`error-${Date.now()}`, role:"assistant", source:"system", content:`抱歉，${failure}`, status:"error", citations:[], isFinalSegment:true, at:new Date().toISOString() }]);
+      }
+      // 已经显示出来的流式片段按“中止”处理：不谎称已完成，也不静默丢失。
+      setMessages((current) => current
+        .map((item) => item.id === `stream-${messageKey}` ? { ...item, generating:false, aborted:true, abortReason:stopped ? "stopped" : "failed" } : item)
+        .filter((item) => !(item.id === `stream-${messageKey}` && !String(item.content || "").trim())));
     } finally {
       window.clearTimeout(timer);
+      if (activeRequestRef.current === controller) activeRequestRef.current = null;
+      stoppedByUserRef.current = false;
       setIsLoading(false);
       questionInFlightRef.current = false;
     }
+  };
+
+  // 停止等待只结束这一轮回复，不代表撤销已保存的联系方式或已提交的到院登记。
+  const stopWaiting = () => {
+    stoppedByUserRef.current = true;
+    activeRequestRef.current?.abort();
+    setIsLoading(false);
+  };
+
+  const retryQuestion = (message) => {
+    if (!message || isLoading) return;
+    stoppedByUserRef.current = false;
+    void sendQuestion({ question:message.content, clientMessageId:message.clientMessageId, retryOfId:message.id });
   };
 
   const leadPromptMessageId = [...messages].reverse().find((message) => message.role === "assistant" && message.leadCapture?.should_prompt)?.id;
@@ -548,13 +991,37 @@ export function App() {
       )}
 
       <main className="advisor-workspace">
-        <div className="message-scroller" aria-live="polite">
+        <div
+          className="message-scroller"
+          aria-live="polite"
+          ref={scrollerRef}
+          onScroll={(event) => {
+            const node = event.currentTarget;
+            const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80;
+            atBottomRef.current = atBottom;
+            if (atBottom) setUnseenCount(0);
+          }}
+        >
           {messages.map((message) => {
             const feedbackKey = message.groupId || message.id;
-            return <ChatMessage key={message.id} message={message} showLeadCapture={message.id === leadPromptMessageId && !leadState.result} leadState={leadState} appointmentState={appointmentState} onLeadSubmit={submitLead} onAppointmentSubmit={submitAppointment} feedback={feedbackByReply[feedbackKey]} onFeedback={(rating) => submitFeedback(message, rating)} onPreview={setKnowledgePreview} />;
+            return <ChatMessage key={message.id} message={message} showLeadCapture={message.id === leadPromptMessageId && !leadState.result} leadState={leadState} appointmentState={appointmentState} onLeadSubmit={submitLead} onAppointmentSubmit={submitAppointment} feedback={feedbackByReply[feedbackKey]} onFeedback={(rating) => submitFeedback(message, rating)} onPreview={setKnowledgePreview} onRetry={retryQuestion} />;
           })}
           {leadState.result && <LeadCaptureCard result={leadState.result} status={leadState.status} error="" prompt={{}} onSubmit={submitLead} />}
           <AppointmentRegistrationCard state={appointmentState} onChange={changeAppointment} />
+          {restoreFailed && (
+            <div className="restore-failed" role="alert">
+              <p>上次的咨询记录暂时无法恢复，可以重试或直接开始新的咨询。</p>
+              <div className="restore-actions">
+                <button type="button" onClick={() => { setRestoringSession(true); void restoreConversation(); }}>重试恢复</button>
+                <button type="button" onClick={resetConversation}>开始新对话</button>
+              </div>
+            </div>
+          )}
+          {unseenCount > 0 && (
+            <button type="button" className="unseen-hint" onClick={() => stickToBottom()}>
+              有 {unseenCount} 条新消息
+            </button>
+          )}
           {isLoading && (
             <article className="assistant-message loading-message">
               <div className="assistant-label"><span className="assistant-avatar">美</span><span>小美 · AI获客顾问</span></div>
@@ -565,7 +1032,7 @@ export function App() {
           {error && <span className="sr-only">{error}</span>}
           <div ref={messageEndRef} />
         </div>
-        <Composer value={input} onChange={setInput} onSubmit={submitQuestion} disabled={isLoading || restoringSession} restoringSession={restoringSession} inputRef={inputRef} />
+        <Composer value={input} onChange={setInput} onSubmit={submitQuestion} disabled={isLoading || restoringSession} restoringSession={restoringSession} inputRef={inputRef} onStop={stopWaiting} waiting={isLoading} uploadCapability={uploadCapability} onUpload={submitUpload} uploadError={uploadError} onRetryUpload={() => submitUpload(pendingUploadRef.current)} />
       </main>
       <KnowledgeMediaPreview preview={knowledgePreview} onClose={() => setKnowledgePreview(null)} />
     </div>

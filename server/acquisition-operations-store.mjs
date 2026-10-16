@@ -449,7 +449,9 @@ export function getHandover(handoverId, tenantId) {
   if (postgresPersistenceEnabled()) {
     return getPostgresOperationsStore().getHandover({ tenantId:tenant, handoverId });
   }
-  return clone(store.load().handovers.find((item) => item.id === handoverId && item.tenant_id === tenant) || null);
+  // 接管任务由智能体服务进程写入；网关进程只读了启动时的快照，会查不到新任务。
+  // 单条读取固定重载一次文件，保证跨进程可见（与 listHandovers 行为一致）。
+  return clone(store.reload().handovers.find((item) => item.id === handoverId && item.tenant_id === tenant) || null);
 }
 
 export function listOperationTasks({ tenant_id, status = "", limit = 100 } = {}) {

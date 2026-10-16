@@ -2,6 +2,7 @@ import { captureChatContact } from "./chat-contact-capture.mjs";
 import { upsertAcquisitionLead } from "./lead-store.mjs";
 import { recordLocalConversation } from "./local-conversation-store.mjs";
 import { publicationRequestContext, loadActivePublication } from "./knowledge-publication.mjs";
+import { withdrawnKnowledgeRecordIds } from "./knowledge-release-policy.mjs";
 import { AGENT_DEFINITIONS, invokeAgentAsync } from "./agent-runtime.mjs";
 import { getAcquisitionConversationStyleStatus, leadCaptureDecision, splitAcquisitionReplySegments } from "./acquisition-conversation-style.mjs";
 import { getIntentEngineStatus } from "./acquisition-intent.mjs";
@@ -167,9 +168,14 @@ async function processAcquisitionEnvelopeWithPublication(envelope, metadata = {}
     recommendedActions:result.output.recommended_actions
   });
   const citations = attachPublicKnowledgeMediaPreviews(result.output.citations);
+  // A-014 AC4：最终输出前重检撤回/过期证据，交付时不再引用已经失效的记录。
+  const withdrawnEvidence = withdrawnKnowledgeRecordIds(tenantId);
+  const deliveredCitations = withdrawnEvidence.size
+    ? citations.filter((item) => !withdrawnEvidence.has(item.source_record_id) && !withdrawnEvidence.has(item.evidence_source_record_id))
+    : citations;
   const media = selectPublicKnowledgeMedia({
     message,
-    citations,
+    citations:deliveredCitations,
     intent:result.output.structured_data?.intent || ""
   });
   const orchestration = buildAcquisitionOrchestration({ envelope, result, sessionSnapshot });
@@ -188,7 +194,7 @@ async function processAcquisitionEnvelopeWithPublication(envelope, metadata = {}
     reply:{
       text:result.output.message,
       segments:splitAcquisitionReplySegments(result.output.message),
-      citations,
+      citations:deliveredCitations,
       media,
       suggestions:result.output.structured_data?.next_questions || []
     },

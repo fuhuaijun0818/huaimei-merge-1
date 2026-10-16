@@ -42,6 +42,12 @@ const presalesSubnavKeys = Object.freeze({
   customers: new Set(["overview"]),
   conversations: new Set(["overview", "takeovers", "templates"])
 });
+// 质量与运营人员只处理脱敏反馈链路（A-027 AC4）：会话模块的二级导航仅保留
+// Bad Case 库，不给出会话收件箱、人工接管或客户档案入口。
+const isPhaseOneQuality = () => /质量|质检/.test(String(store.state.currentRole || ""));
+const qualitySubnavKeys = Object.freeze({
+  conversations: new Set(["bad-cases"])
+});
 
 export const entityTitle = (route, id) => {
   if (route === "task") return store.task(id)?.title || "任务详情";
@@ -57,9 +63,10 @@ export const entityTitle = (route, id) => {
 
 export const moduleSubnav = (route, active = "overview") => {
   const allItems = moduleNavConfig[route];
-  const items = isPhaseOnePresales() && presalesSubnavKeys[route]
-    ? allItems?.filter(([key]) => presalesSubnavKeys[route].has(key))
-    : allItems;
+  const allowedKeys = isPhaseOnePresales()
+    ? presalesSubnavKeys[route]
+    : isPhaseOneQuality() ? qualitySubnavKeys[route] : null;
+  const items = allowedKeys ? allItems?.filter(([key]) => allowedKeys.has(key)) : allItems;
   if (!items) return "";
   return `<nav class="module-subnav" aria-label="${moduleMeta[route][1]}二级导航">${items.map(([key, label]) => {
     const isActive = active === key || (!active && key === "overview");

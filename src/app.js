@@ -131,10 +131,19 @@ const normalizePhaseOneRole = value => roleCatalogEntry(value)?.name || "未授�
 const currentPhaseOneRole = () => normalizePhaseOneRole(ui.managementIdentity?.role);
 const isPresalesWorkspace = () => currentPhaseOneRole() === "售前顾问";
 const presalesRouteAllowlist = new Set(["workbench", "customers", "conversations", "conversation"]);
+// 质量与运营人员的岗位范围是“授权科室脱敏数据”（role-catalog）。前端只放行
+// 脱敏质检链路：Bad Case 库；会话收件箱、人工接管与客户档案都不在该岗位的
+// 可见范围内。服务端 capability（feedback:manage / conversations:read_redacted）
+// 仍是最终授权边界，这里的收敛只负责不给出越权入口。
+const isQualityWorkspace = () => currentPhaseOneRole() === "质量与运营人员";
+const qualityRouteAllowlist = new Set(["workbench", "knowledge", "conversations"]);
+const qualitySubrouteAllowlist = Object.freeze({
+  conversations: new Set(["bad-cases"])
+});
 const canOpenRouteInCurrentRole = route => {
  const key=roleCatalogEntry(currentPhaseOneRole())?.key;
  if(key==='superadministrator')return true;
- return key==="presales"?presalesRouteAllowlist.has(route):key==="administrator"?["workbench","administration","integrations"].includes(route):["content","publisher","quality"].includes(key)?["workbench","knowledge"].includes(route):false;
+ return key==="presales"?presalesRouteAllowlist.has(route):key==="administrator"?["workbench","administration","integrations"].includes(route):key==="quality"?qualityRouteAllowlist.has(route):["content","publisher"].includes(key)?["workbench","knowledge"].includes(route):false;
 };
 const presalesSubrouteAllowlist = Object.freeze({
   workbench: new Set([undefined, "overview", "takeovers"]),
@@ -159,6 +168,8 @@ const routeInfo = () => {
   if (handoverOnlyMode && route !== "workbench" && !((knowledgeGovernanceEnabled || knowledgeIntakeEnabled) && route === "knowledge")) return { route:"workbench", id:undefined, resourceId:undefined };
   if (!handoverOnlyMode && !canOpenRouteInCurrentRole(route)) return { route:"conversations", id:undefined, resourceId:undefined };
   if (!handoverOnlyMode && isPresalesWorkspace() && presalesSubrouteAllowlist[route] && !presalesSubrouteAllowlist[route].has(id)) return { route:"conversations", id:undefined, resourceId:undefined };
+  // 质量岗位进入会话模块时只落在 Bad Case 库，未授权二级页面一律改道。
+  if (!handoverOnlyMode && isQualityWorkspace() && qualitySubrouteAllowlist[route] && !qualitySubrouteAllowlist[route].has(id)) return { route, id:"bad-cases", resourceId:undefined };
   return { route, id, resourceId };
 };
 
@@ -1738,7 +1749,10 @@ function roleWorkbenchPage(){
  const admin=hasCapability('users:manage');
  const links=admin
   ? '<a class="btn primary" href="#/administration">管理人员与岗位</a><a class="btn" href="#/integrations">查看系统接入状态</a>'
-  : '<a class="btn primary" href="#/knowledge">进入知识与发布工作区</a>';
+  : isQualityWorkspace()
+    // 质量与运营人员的日常入口是脱敏反馈链路（A-027 AC4），知识发布不是它的主界面。
+    ? '<a class="btn primary" href="#/conversations/bad-cases">进入 Bad Case 库</a><a class="btn" href="#/knowledge">进入知识与发布工作区</a>'
+    : '<a class="btn primary" href="#/knowledge">进入知识与发布工作区</a>';
  return `<div class="page">${pageHead('总览','今日工作台',`当前岗位：${currentPhaseOneRole()}。请选择下方入口处理本岗位工作。`)}<section class="card padded"><h3>${admin?'管理工作入口':'知识与质量工作入口'}</h3><div class="row">${links}</div>${admin?`<p>已配置 ${(ui.managedAccounts||[]).length} 个实名账号。请在“组织与权限”中为各岗位配置账号，并使用对应账号登录。</p>`:''}</section></div>`;
 }
 function systemIntegrationsPage(){
@@ -1870,7 +1884,19 @@ function currentPage() {
     const route=routeInfo().route;
     return route==='administration'?managedAccountsPage():route==='integrations'?systemIntegrationsPage():roleWorkbenchPage();
   }
-  if(["content","publisher","quality"].includes(businessRole))return routeInfo().route==='knowledge'?productionKnowledgeGovernancePage():roleWorkbenchPage();
+  // 质量与运营人员的岗位范围是“授权科室脱敏数据”，会话模块内只开放脱敏的
+  // Bad Case 库；其余页面回到本岗位工作台（A-027 AC4）。
+  if(businessRole==="quality"){
+    const { route, id } = routeInfo();
+    if(route==='knowledge')return productionKnowledgeGovernancePage();
+    if(route==='conversations'&&id==='bad-cases'){
+      // 未授权的二级页面会改道到这里，保持地址栏与实际内容一致。
+      if(location.hash!=="#/conversations/bad-cases")history.replaceState(null,"","#/conversations/bad-cases");
+      return renderSubpage("conversations", "bad-cases", { badCases:ui.badCases, badCasesLoading:ui.badCasesLoading, badCasesError:ui.badCasesError });
+    }
+    return roleWorkbenchPage();
+  }
+  if(["content","publisher"].includes(businessRole))return routeInfo().route==='knowledge'?productionKnowledgeGovernancePage():roleWorkbenchPage();
   if (!handoverOnlyMode && !ui.managementDataReady) {
     const message = ui.managementDataError
       ? "本地持久化服务暂时不可用。为避免展示旧样例或写入浏览器缓存，后台没有加载任何业务记录。"
