@@ -42,7 +42,8 @@ import {
 import { getPostgresClient } from "./platform/postgres.mjs";
 import { createProductionReadiness } from "./platform/production-readiness.mjs";
 import { appendAuditEvent } from "./persistence/postgres-helpers.mjs";
-import { readLocalConversationRecord } from "./local-conversation-store.mjs";
+import { appendLocalConversationMessage, readLocalConversationRecord } from "./local-conversation-store.mjs";
+import { getHandover } from "./acquisition-operations-store.mjs";
 import {
   authorizeManagementPrincipal,
   createManagementAuthorizer,
@@ -1025,6 +1026,63 @@ export async function handleApiRequest(request, response) {
       const status = Number(error.status) || (businessError ? 400 : 503);
       sendError(request, response, requestId, status, businessError ? error.code : "APPOINTMENT_STORAGE_UNAVAILABLE", businessError ? error.message : "到院登记服务暂不可用，请稍后重试。", businessError ? error.details || [] : []);
     }
+    return true;
+  }
+
+  // A-023 AC2：人工顾问把消息发回客户会话（后台 → 客户，落在同一条会话记录里）。
+  const handoverReplyMatch = url.pathname.match(/^\/api\/admin\/acquisition\/handovers\/(ho_[a-f0-9-]+)\/reply$/i);
+  if (request.method === "POST" && handoverReplyMatch) {
+    const humanIdempotencyKey = String(request.headers["idempotency-key"] || "").trim();
+    if (humanIdempotencyKey.length < 8 || humanIdempotencyKey.length > 128) {
+      sendError(request, response, requestId, 400, "IDEMPOTENCY_KEY_REQUIRED", "发送人工消息必须提供8–128字符的Idempotency-Key");
+      return true;
+    }
+    let humanPayload;
+    try {
+      humanPayload = await readJsonBody(request);
+    } catch (error) {
+      sendError(request, response, requestId, error.code === "BODY_TOO_LARGE" ? 413 : 400, error.code || "INVALID_JSON", "请求体不是有效JSON");
+      return true;
+    }
+    const humanText = String(humanPayload?.text || "").trim();
+    if (!humanText || humanText.length > 1000) {
+      sendError(request, response, requestId, 400, "VALIDATION_ERROR", "人工消息不能为空且不能超过1000字符");
+      return true;
+    }
+    let humanPrincipal;
+    try {
+      humanPrincipal = await authorizeManagementRequest(request, {
+        requiredRoles:[MANAGEMENT_ROLES.operationsAgent],
+        requiredCapabilities:[PHASE_ONE_CAPABILITIES.conversationsTakeover],
+        tenantId:PUBLIC_TENANT_ID,
+        tenantField:"token.tenant_ids"
+      });
+    } catch (error) {
+      sendManagementAuthorizationError(request, response, requestId, error);
+      return true;
+    }
+    const humanHandover = getHandover(handoverReplyMatch[1], PUBLIC_TENANT_ID);
+    if (!humanHandover) {
+      sendError(request, response, requestId, 404, "HANDOVER_NOT_FOUND", "未找到指定接管任务");
+      return true;
+    }
+    if (humanHandover.status !== "active") {
+      sendError(request, response, requestId, 409, "HANDOVER_NOT_CLAIMED", "只有已接管的人工会话可以发送消息");
+      return true;
+    }
+    if (String(humanHandover.assignee || "") !== String(humanPrincipal.subject || "")) {
+      sendError(request, response, requestId, 403, "HANDOVER_ASSIGNMENT_FORBIDDEN", "只有当前接管人可以发送消息");
+      return true;
+    }
+    const humanMessage = appendLocalConversationMessage({
+      tenant:humanHandover.tenant_id,
+      channel:humanHandover.channel,
+      conversationId:humanHandover.conversation_id,
+      from:"human",
+      text:humanText,
+      messageId:`human-${humanIdempotencyKey}`
+    });
+    sendJson(request, response, requestId, 200, { message:humanMessage, handover_id:humanHandover.id });
     return true;
   }
 
