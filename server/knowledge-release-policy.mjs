@@ -322,8 +322,9 @@ export async function submitKnowledgeReview({ tenant_id:tenantId, release_id:rel
     throw error;
   }
   requireIdentityRole(identity, `knowledge.${normalizedType}_reviewer`);
-  const normalizedComments = String(comments || "").trim().slice(0, 2_000);
-  if (!normalizedComments) {
+  // 结论理由必填：先按上限截断再判空，空白理由一律拒绝。
+  const reviewReason = String(comments || "").trim().slice(0, 2_000);
+  if (!reviewReason) {
     const error = new Error("审核必须填写结论理由");
     error.code = "KNOWLEDGE_REVIEW_REASON_REQUIRED";
     error.status = 400;
@@ -335,7 +336,7 @@ export async function submitKnowledgeReview({ tenant_id:tenantId, release_id:rel
     reviewType:normalizedType,
     decision:String(decision || "").trim().toLowerCase(),
     identity,
-    comments:normalizedComments,
+    comments:reviewReason,
     scopeChecksum:String(scopeChecksum || "").trim().toLowerCase()
   });
 }

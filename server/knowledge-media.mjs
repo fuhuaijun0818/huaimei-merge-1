@@ -124,18 +124,25 @@ const localPathForAsset = (asset) => {
 
 export const publicKnowledgeMediaTypeForPath = (sourcePath = "") => publicMediaDescriptorForPath(sourcePath)?.type || null;
 
-const isPublicDeliveryEligible = (asset) => {
+// 失败原因用于对客提示：只有本来就有资格公开的对象才区分“已过期/已撤回”，
+// 受限或未审核对象一律按不存在处理，避免泄露内部资料是否存在。
+const publicDeliveryVerdict = (asset) => {
   const sourcePath = String(asset?.source_relative_path || "");
   const descriptor = publicMediaDescriptorForPath(sourcePath);
-  if (!asset || !descriptor) return false;
+  if (!asset || !descriptor) return { eligible:false, reason:"not_found" };
   const reviewedPublicMaterial = sourcePath.startsWith("公开资料/")
     && asset.review_status === "approved"
     && asset.reviewed_source === true
     && asset.default_agent_action === "public_media_candidate";
-  if ((!PUBLIC_PREFIX.test(sourcePath) && !reviewedPublicMaterial) || RESTRICTED_PATH.test(sourcePath)) return false;
-  if (Number(asset.size_bytes || 0) > maxBytesForDescriptor(descriptor)) return false;
-  return Boolean(localPathForAsset(asset));
+  if ((!PUBLIC_PREFIX.test(sourcePath) && !reviewedPublicMaterial) || RESTRICTED_PATH.test(sourcePath)) return { eligible:false, reason:"not_found" };
+  if (Number(asset.size_bytes || 0) > maxBytesForDescriptor(descriptor)) return { eligible:false, reason:"not_found" };
+  if (asset.withdrawn_at && Date.parse(asset.withdrawn_at) <= Date.now()) return { eligible:false, reason:"withdrawn" };
+  if (asset.expires_at && Date.parse(asset.expires_at) <= Date.now()) return { eligible:false, reason:"expired" };
+  if (!localPathForAsset(asset)) return { eligible:false, reason:"not_found" };
+  return { eligible:true, reason:"eligible" };
 };
+
+const isPublicDeliveryEligible = (asset) => publicDeliveryVerdict(asset).eligible;
 
 const mediaForAsset = (asset, displaySourcePath = asset?.source_relative_path) => {
   const descriptor = publicMediaDescriptorForPath(asset?.source_relative_path);
@@ -269,17 +276,23 @@ export function selectPublicKnowledgeMedia({ message = "", citations = [], inten
 }
 
 /** Resolve only opaque, policy-approved assets; callers never supply a path. */
-export function resolvePublicKnowledgeMedia(assetId = "") {
+export function resolvePublicKnowledgeMediaWithReason(assetId = "") {
   const id = String(assetId).trim();
-  if (!/^asset_[a-z0-9]{16}$/i.test(id)) return null;
+  if (!/^asset_[a-z0-9]{16}$/i.test(id)) return { ok:false, reason:"not_found" };
   const asset = loadAssets().get(id);
-  if (!isPublicDeliveryEligible(asset)) return null;
+  const verdict = publicDeliveryVerdict(asset);
+  if (!verdict.eligible) return { ok:false, reason:verdict.reason };
   const path = localPathForAsset(asset);
-  if (!path) return null;
+  if (!path) return { ok:false, reason:"not_found" };
   const stats = statSync(path);
   const descriptor = publicMediaDescriptorForPath(path);
-  if (!descriptor || !stats.isFile() || stats.size > maxBytesForDescriptor(descriptor)) return null;
-  return { path, size:stats.size, mime:descriptor.mime, type:descriptor.type, asset_id:id, title:titleFor(asset) };
+  if (!descriptor || !stats.isFile() || stats.size > maxBytesForDescriptor(descriptor)) return { ok:false, reason:"not_found" };
+  return { ok:true, reason:"eligible", media:{ path, size:stats.size, mime:descriptor.mime, type:descriptor.type, asset_id:id, title:titleFor(asset) } };
+}
+
+export function resolvePublicKnowledgeMedia(assetId = "") {
+  const result = resolvePublicKnowledgeMediaWithReason(assetId);
+  return result.ok ? result.media : null;
 }
 
 /**
@@ -307,10 +320,14 @@ export function publicKnowledgeMediaDenial(assetId = "") {
 
 export function getPublicKnowledgeMediaStatus() {
   const assets = loadAssets();
+  const reasons = [...assets.values()].map((asset) => publicDeliveryVerdict(asset).reason);
   return {
     version:PUBLIC_KNOWLEDGE_MEDIA_VERSION,
     manifest_loaded:assets.size > 0,
-    eligible_assets:[...assets.values()].filter(isPublicDeliveryEligible).length,
+    // 统计口径统一走 publicDeliveryVerdict，避免出现第二套“可对客”判断。
+    eligible_assets:reasons.filter((reason) => reason === "eligible").length,
+    expired_assets:reasons.filter((reason) => reason === "expired").length,
+    withdrawn_assets:reasons.filter((reason) => reason === "withdrawn").length,
     policy:"已审核公开资料包，以及医生介绍和项目介绍中的公开图片、PDF资料可对客预览；案例、术前术后、聊天与客户资料均不可对客发送",
     denial_reasons:["PUBLIC_MEDIA_EXPIRED", "PUBLIC_MEDIA_WITHDRAWN", "PUBLIC_MEDIA_NOT_FOUND"]
   };

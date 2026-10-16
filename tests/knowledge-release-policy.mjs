@@ -21,8 +21,10 @@ assert.deepEqual(configuredKnowledgeReleaseTenants({
   { caller_id:"web", tenant_ids:["client-f", "release-a"] },
   { caller_id:"wechat", tenant_ids:["client-g"] }
 ]), ["release-a", "release-b", "recovery-c", "default-d", "public-e", "client-f", "client-g"]);
-assert.equal(getKnowledgeAdmissionStatus("release-test", "v1").ready, false);
-assert.equal(isKnowledgeRecordAdmitted("KB-P-024", "release-test", "v1"), false);
+const packageState = loadHuameiKnowledge();
+const packageVersion = packageState.version;
+assert.equal(getKnowledgeAdmissionStatus("release-test", packageVersion).ready, false);
+assert.equal(isKnowledgeRecordAdmitted("KB-P-024", "release-test", packageVersion), false);
 assert.equal(retrieveHuameiKnowledge("6月份政策有哪些资料", { audience:"public", tenantId:"release-test" }).length, 0);
 
 assert.throws(() => publishKnowledgeRelease({
@@ -31,10 +33,9 @@ assert.throws(() => publishKnowledgeRelease({
 }), (error) => error.code === "KNOWLEDGE_APPROVAL_INCOMPLETE");
 
 const approvedRecordIds = ["kb_dir_66b8d7de378ce4ed", "kb_dir_a890e5160b02abb5"];
-const packageState = loadHuameiKnowledge();
 const release = publishKnowledgeRelease({
   tenant_id:"release-test",
-  package_version:"v1",
+  package_version:packageVersion,
   package_checksum:packageState.packageChecksum,
   record_list_checksum:computeApprovedKnowledgeRecordListChecksum(approvedRecordIds, { state:packageState }),
   approved_record_ids:approvedRecordIds,
@@ -46,9 +47,9 @@ const release = publishKnowledgeRelease({
 }, "admin-test");
 
 assert.equal(release.status, "active");
-assert.equal(getKnowledgeAdmissionStatus("release-test", "v1").ready, true);
-assert.equal(isKnowledgeRecordAdmitted("kb_dir_66b8d7de378ce4ed", "release-test", "v1"), true);
-assert.equal(isKnowledgeRecordAdmitted("KB-P-999", "release-test", "v1"), false);
+assert.equal(getKnowledgeAdmissionStatus("release-test", packageVersion).ready, true);
+assert.equal(isKnowledgeRecordAdmitted("kb_dir_66b8d7de378ce4ed", "release-test", packageVersion), true);
+assert.equal(isKnowledgeRecordAdmitted("KB-P-999", "release-test", packageVersion), false);
 const releasedHits = retrieveHuameiKnowledge("6月份政策有哪些资料", { audience:"public", tenantId:"release-test", limit:5 });
 assert.ok(releasedHits.length >= 1);
 assert.ok(releasedHits.every((item) => release.approved_record_ids.includes(item.item.record_id)));

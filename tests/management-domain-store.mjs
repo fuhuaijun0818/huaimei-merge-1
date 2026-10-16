@@ -15,7 +15,7 @@ assert.deepEqual(initial.overlay.productOverrides, []);
 // Development PostgreSQL tenants use underscores; the management overlay
 // must accept the same trusted tenant identifiers as the gateway/RLS layer.
 const underscoredTenant = getManagementDomainOverlay({ tenantId:"team_alpha" });
-assert.equal(underscoredTenant.tenant_id, "team_alpha");
+assert.equal(underscoredTenant.tenant_id, "team_alpha", "隔离开发库的下划线租户 ID 应可读取管理覆盖层");
 
 const overlay = {
   ...initial.overlay,

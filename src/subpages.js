@@ -2,6 +2,9 @@ import { store } from "./store.js";
 import { stageSteps } from "./data.js";
 import { icon } from "./icons.js";
 import { avatar, badge, card, customerCell, empty, escapeHtml, formatDate, metric, pageHead, physicianAvatar, relativeTime } from "./ui.js";
+import { templateVersionLabel } from "./modules/knowledge/message-template.js";
+import { roleCatalogEntry } from "./role-catalog.js";
+import { hasIdentityCapability } from "./modules/administration/identity-capabilities.js";
 
 export const moduleNavConfig = {
   workbench: [["overview", "总览"], ["team", "团队工作台"], ["approvals", "待人工确认"], ["takeovers", "人工接管队列"]],
@@ -119,6 +122,11 @@ const configurationRecords = (kind) => (store.state.configurationRecords || []).
 // 超级管理员拥有平台范围的管理员能力；不能因为这里仍沿用一期
 // “管理员”文案而把其排除在话术、分群等运营配置维护入口之外。
 const isPhaseOneAdministrator = () => ["系统管理员", "管理员", "管理者", "超级管理员"].includes(store.state.currentRole);
+// 话术库按岗位能力判断：服务端身份能力优先，未下发时按角色目录兜底。
+const canManageMessageTemplates = () => hasIdentityCapability("templates:manage")
+  || (roleCatalogEntry(store.state.currentRole)?.capabilities || []).includes("templates:manage");
+const canReadMessageTemplates = () => hasIdentityCapability("templates:read")
+  || (roleCatalogEntry(store.state.currentRole)?.capabilities || []).includes("templates:read");
 
 const segmentMembers = (segment, customers = store.state.customers || []) => {
   const criteria = segment.criteria || {};
@@ -251,8 +259,11 @@ function conversationBadCases({ badCases = [], badCasesLoading = false, badCases
 
 function conversationTemplates() {
   const templates = configurationRecords("message_template");
-  const canManage = isPhaseOneAdministrator();
-  const visibleTemplates = canManage ? templates : templates.filter((item) => item.presalesVisible !== false);
+  const canManage = canManageMessageTemplates();
+  // 有维护能力的岗位看到全部模板（含停用，便于撤回管理）；只读岗位只看到可对客使用的版本。
+  const visibleTemplates = canReadMessageTemplates()
+    ? templates
+    : templates.filter((item) => item.presalesVisible !== false);
   const useLabel = (item) => item.status === "启用" && item.presalesInsertable !== false
     ? badge("会话窗口可插入", "success")
     : badge(item.executionMode || "仅查看", item.executionMode === "强制转人工" ? "danger" : "outline");
@@ -260,7 +271,7 @@ function conversationTemplates() {
     ? `<button class="link" data-action="edit-message-template" data-id="${escapeHtml(item.id)}">编辑</button>`
     : (item.status === "启用" && item.presalesInsertable !== false ? "<span class=\"caption\">在会话窗口插入</span>" : "<span class=\"caption\">暂不可插入</span>");
   return subpage("conversations", "templates", "常用话术库", "已启用的话术模板可由售前人员查看，并在内部会话窗口插入后再结合当前客户情况发送；模板本身不会自动对外发送。管理员负责维护模板内容与启用状态。",
-    visibleTemplates.length ? `<section class="card">${table(["话术模板", "适用环节", "使用方式", "状态", "更新时间", "操作"], visibleTemplates.map((item) => [`<strong>${escapeHtml(item.name)}</strong>`,escapeHtml(item.scope || "未填写"),useLabel(item),badge(item.status || "草稿", item.status === "启用" ? "success" : "warning"),relativeTime(item.updatedAt),actionCell(item)]))}</section>` : empty("暂无可用话术模板", canManage ? "请按真实业务场景新建模板；启用后，售前人员即可在会话窗口查看和插入。" : "管理员启用话术后，会在这里提供给售前人员查看和插入。"), canManage ? `<button class="btn primary" data-action="new-message-template">${icon("plus",15)}新建话术模板</button>` : `<span class="caption">仅展示可用于当前售前会话的已授权话术</span>`);
+    visibleTemplates.length ? `<section class="card">${table(["话术模板", "分类", "版本", "适用环节", "使用方式", "状态", "更新时间", "操作"], visibleTemplates.map((item) => [`<strong>${escapeHtml(item.name)}</strong>`, escapeHtml(item.category || "通用话术"), `<span class="caption">${escapeHtml(templateVersionLabel(item.version))}</span>`, escapeHtml(item.scope || "未填写"), useLabel(item), badge(item.status || "草稿", item.status === "启用" ? "success" : "warning"), relativeTime(item.updatedAt), actionCell(item)]))}</section>` : empty("暂无可用话术模板", canManage ? "请按真实业务场景新建模板；启用后，售前人员即可在会话窗口查看和插入。" : "管理员启用话术后，会在这里提供给售前人员查看和插入。"), canManage ? `<button class="btn primary" data-action="new-message-template">${icon("plus",15)}新建话术模板</button>` : `<span class="caption">仅展示可用于当前售前会话的已授权话术</span>`);
 }
 
 function journeyTemplatePage() {

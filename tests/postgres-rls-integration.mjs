@@ -15,6 +15,7 @@ const { createPostgresClient } = await import("../server/platform/postgres.mjs")
 const { ensureTenant } = await import("../server/persistence/postgres-helpers.mjs");
 const runtime = createPostgresClient({ connectionString:runtimeUrl, applicationName:"huamei-rls-runtime-test" });
 const migrator = createPostgresClient({ connectionString:migrationUrl, applicationName:"huamei-rls-migration-test" });
+const originalRuntimeEnv = process.env.HUAMEI_RUNTIME_ENV;
 
 try {
   await migrator.query("SET ROLE huamei_owner");
@@ -61,7 +62,7 @@ try {
     (error) => error?.code === "42501"
   );
 
-  process.env.NODE_ENV = "production";
+  process.env.HUAMEI_RUNTIME_ENV = "production";
   await assert.rejects(
     () => runtime.tenantTransaction(unknownTenant, (client) => ensureTenant(client, unknownTenant)),
     (error) => error?.code === "TENANT_NOT_PROVISIONED"
@@ -69,6 +70,8 @@ try {
 
   console.log("✓ PostgreSQL运行账号最小权限、FORCE RLS、无上下文拒绝、跨租户隔离与生产禁自建租户通过");
 } finally {
+  if (originalRuntimeEnv === undefined) delete process.env.HUAMEI_RUNTIME_ENV;
+  else process.env.HUAMEI_RUNTIME_ENV = originalRuntimeEnv;
   try {
     await migrator.query("SET ROLE huamei_owner");
     await migrator.query("DELETE FROM tenants WHERE tenant_id = ANY($1::text[])", [[tenantA, tenantB, unknownTenant]]);

@@ -14,6 +14,7 @@ import { buildDoctorComparisonResponse, buildDoctorRecommendationResponse, build
 import { projectKnowledge } from "../src/project-knowledge.js";
 import { approvedKnowledgeRecordIds, getKnowledgeAdmissionStatus, isKnowledgeRecordAdmitted } from "./knowledge-release-policy.mjs";
 import { normalizeTenantId } from "./platform/tenant-context.mjs";
+import { publicationRequestContext } from "./knowledge-publication.mjs";
 import { isValidatedFormalLoadTaxonomyEntry } from "./platform/formal-load-taxonomy.mjs";
 import { postgresPersistenceEnabled } from "./persistence/postgres-helpers.mjs";
 import { getPostgresAgentRunStore } from "./persistence/postgres-agent-run-store.mjs";
@@ -88,7 +89,47 @@ const KNOWLEDGE_BOUND_INTENTS = new Set([
 // 项目资料必须完成医务与合规双审后，才可进入对客检索。
 // 未完成双审时仅使用去除机构宣传、绝对化表达后的审核视图，且不作为正式引用。
 const customerApprovedProjectKnowledge = () => projectKnowledge.filter((item) => item.allowedForCustomerResponse === true);
+
+// 发布包生效时，对客项目资料必须以“正式启用版本”为准：内置数据集只在没有生效包时兜底。
+// 否则会出现管理端已经激活或回滚、前台仍按内置资料回答的情况（C-013 AC4）。
+const projectNameFromPublishedChunk = (chunk) => {
+  const head = String(chunk?.title || "").split(/[｜|—–-]/)[0].trim();
+  if (head) return head;
+  const tag = (chunk?.tags || []).map((value) => String(value || "").trim()).filter(Boolean)[0];
+  return tag || "已发布资料";
+};
+
+const publishedProjectKnowledge = (tenantId) => {
+  const publication = publicationRequestContext.getStore();
+  if (!publication?.package || !(publication.revision > 0)) return null;
+  if (publication.tenantId !== normalizeTenantId(tenantId)) return null;
+  const chunks = publication.package.text_index?.chunks || [];
+  if (!chunks.length) return null;
+  return chunks.map((chunk) => ({
+    id: String(chunk.record_id || chunk.document_id || ""),
+    knowledge_id: String(chunk.record_id || chunk.document_id || ""),
+    project: projectNameFromPublishedChunk(chunk),
+    cardTitle: String(chunk.title || ""),
+    sourceTitle: String(chunk.title || ""),
+    brandOrModel: "",
+    parts: [String(chunk.title || ""), ...(chunk.tags || []).map((value) => String(value))],
+    cardTags: (chunk.tags || []).map((value) => String(value)),
+    efficacyLabels: [],
+    introduction: String(chunk.content || ""),
+    efficacy: String(chunk.content || ""),
+    excerpt: String(chunk.content || ""),
+    coverage: 100,
+    status: "正式发布包",
+    published: true,
+    package_id: String(publication.package.id || ""),
+    source_relative_path: chunk.source_reference || null,
+    expires_at: chunk.expires_at || null
+  })).filter((item) => item.id);
+};
+
 const searchableProjectKnowledge = (tenantId) => {
+  const published = publishedProjectKnowledge(tenantId);
+  if (published) return published;
   const approved = customerApprovedProjectKnowledge();
   if (approved.length) return approved;
   const admission = getKnowledgeAdmissionStatus(tenantId);

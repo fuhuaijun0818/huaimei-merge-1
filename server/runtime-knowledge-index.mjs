@@ -203,6 +203,21 @@ export function indexRuntimeKnowledgeDocument(document = {}) {
   };
 }
 
+export function removeRuntimeKnowledgeDocument({ tenant_id, id, document_id } = {}) {
+  const tenantId = normalizeTenantId(tenant_id);
+  const targetDocumentId = String(id || document_id || "").trim();
+  if (!targetDocumentId) return { removed:0, index_revision:currentSnapshot().state.revision };
+  const state = stateWithCollections();
+  const before = state.entries.length;
+  state.entries = state.entries.filter((entry) => !(entry.tenant_id === tenantId && entry.document_id === targetDocumentId));
+  const removed = before - state.entries.length;
+  if (removed) {
+    state.revision += 1;
+    store.save(state);
+  }
+  return { removed, index_revision:state.revision };
+}
+
 export function runtimeKnowledgeIndexStatus(tenantId) {
   const tenant = normalizeTenantId(tenantId);
   const { state, fingerprint } = currentSnapshot();

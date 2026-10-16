@@ -86,6 +86,12 @@ const runtimeEnvironment = String(
   process.env.HUAMEI_RUNTIME_ENV || process.env.HUAMEI_DEPLOYMENT_ENV || process.env.NODE_ENV || "development"
 ).trim().toLowerCase();
 const productionRuntime = ["prod", "production"].includes(runtimeEnvironment);
+// A local PostgreSQL acceptance environment can opt into the same fail-closed
+// audit path without making every developer's persistent test fixture write
+// to its database.
+const localManagementAuditEnabled = String(process.env.HUAMEI_LOCAL_MANAGEMENT_AUDIT_ENABLED || "").trim().toLowerCase() === "true";
+const managementAuditPersistenceEnabled = productionRuntime
+  || (localManagementAuditEnabled && postgresPersistenceEnabled(process.env));
 const requestSecurityStores = await createRequestSecurityStores({ env:process.env });
 const rateLimitStore = requestSecurityStores.fixedWindowStore;
 const idempotencyStore = requestSecurityStores.idempotencyStore;
@@ -431,10 +437,7 @@ const recordManagementAccess = async ({
   resourceId = "",
   outcome = "success"
 }) => {
-  // Local JSON deliberately has no audit table.  An isolated PostgreSQL
-  // environment does, and must exercise the same actor/request/outcome audit
-  // path as production rather than silently omitting authorization evidence.
-  if (!postgresPersistenceEnabled()) return;
+  if (!managementAuditPersistenceEnabled) return;
   const database = getPostgresClient({ env:process.env });
   try {
     await database.tenantTransaction(principal.tenantId, (client) => appendAuditEvent(client, {
@@ -483,7 +486,8 @@ const presalesOverlayView = (record = {}, principal) => {
   const visibleTasks = (Array.isArray(overlay.tasks) ? overlay.tasks : [])
     .filter((item) => customerIds.has(String(item?.customerId || "")));
   const templates = (Array.isArray(overlay.configurationRecords) ? overlay.configurationRecords : [])
-    .filter((item) => item?.kind === "message_template" && item?.presalesVisible !== false);
+    // C-018 AC3：售前只能拿到“允许使用”的版本——必须同时是已启用且对售前可见。
+    .filter((item) => item?.kind === "message_template" && item?.status === "启用" && item?.presalesVisible !== false);
   // 会话接待需要展示当前售前的昵称和工号，但不需要暴露管理员、组织、
   // 权限或审计资料。只下发已启用售前人员的最小展示字段。
   const presalesRoster = (Array.isArray(overlay.managementUsers) ? overlay.managementUsers : [])
@@ -627,7 +631,7 @@ export async function handleApiRequest(request, response) {
       sendError(request, response, requestId, 404, "PUBLIC_MEDIA_NOT_FOUND", "未找到可公开发送的资料图片");
       return true;
     }
-    sendMedia(request, response, media, { cacheControl:"public, max-age=3600", contentDisposition:"inline" });
+    sendMedia(request, response, verdict.media, { cacheControl:"public, max-age=3600", contentDisposition:"inline" });
     return true;
   }
 

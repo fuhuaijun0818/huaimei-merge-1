@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createJsonStateStore } from "./platform/json-state-store.mjs";
 import { normalizeTenantId } from "./platform/tenant-context.mjs";
-import { indexRuntimeKnowledgeDocument, runtimeKnowledgeIndexStatus } from "./runtime-knowledge-index.mjs";
+import { indexRuntimeKnowledgeDocument, removeRuntimeKnowledgeDocument, runtimeKnowledgeIndexStatus } from "./runtime-knowledge-index.mjs";
 
 // Raw materials, parsed derivatives and published knowledge deliberately live
 // in three separate layers. This module owns only the first two layers: an
@@ -60,6 +60,75 @@ const cleanLines = (value, limit = 240_000) => String(value || "")
   .replace(/\r\n?/g, "\n")
   .trim()
   .slice(0, limit);
+const parsePreviewFor = (value, filename) => {
+  const lines = cleanLines(value).split("\n");
+  const segments = [];
+  let block = [];
+  let startLine = 1;
+  const append = (endLine) => {
+    const content = block.join("\n").trim();
+    if (!content) return;
+    const ordinal = segments.length + 1;
+    const isTable = block.filter((line) => line.trim()).every((line) => /^\s*\|/.test(line));
+    segments.push({
+      id:`segment-${ordinal}`,
+      source_filename:sourceFilename(filename),
+      kind:isTable ? "table" : "paragraph",
+      paragraph:ordinal,
+      line_start:startLine,
+      line_end:endLine,
+      locator:`${isTable ? "表格" : "段落"} ${ordinal} · 第 ${startLine}${endLine > startLine ? `–${endLine}` : ""} 行`,
+      content:cleanLines(content, 1_200)
+    });
+  };
+  lines.forEach((line, index) => {
+    if (line.trim()) {
+      if (!block.length) startLine = index + 1;
+      block.push(line);
+      return;
+    }
+    append(index);
+    block = [];
+  });
+  append(lines.length);
+  return segments.slice(0, 120);
+};
+const parseAssessmentFor = (value, filename) => {
+  const preview = parsePreviewFor(value, filename).map((segment) => ({ ...segment, issue_codes:[] }));
+  const lines = cleanLines(value).split("\n");
+  const issues = [];
+  const mark = (code, message, lineStart, lineEnd = lineStart, segment = null) => {
+    const locator = `第 ${lineStart}${lineEnd > lineStart ? `–${lineEnd}` : ""} 行`;
+    issues.push({ code, message, locator, line_start:lineStart, line_end:lineEnd, segment_id:segment?.id || null });
+    if (segment && !segment.issue_codes.includes(code)) segment.issue_codes.push(code);
+  };
+  let blankStart = null;
+  lines.forEach((line, index) => {
+    const lineNumber = index + 1;
+    if (!line.trim()) {
+      blankStart ??= lineNumber;
+      return;
+    }
+    if (blankStart && lineNumber - blankStart >= 2) mark("EMPTY_BLOCK", "检测到连续空白块，请确认是否遗漏正文。", blankStart, lineNumber - 1);
+    blankStart = null;
+    if (/[\uFFFD\u0001-\u0008\u000B\u000C\u000E-\u001F]/u.test(line)) {
+      mark("GARBLED_TEXT", "检测到乱码或不可见控制字符，请人工核对原文件。", lineNumber, lineNumber, preview.find((segment) => segment.line_start <= lineNumber && segment.line_end >= lineNumber));
+    }
+  });
+  if (blankStart && lines.length - blankStart >= 1) mark("EMPTY_BLOCK", "检测到连续空白块，请确认是否遗漏正文。", blankStart, lines.length);
+  preview.filter((segment) => segment.kind === "table").forEach((segment) => {
+    const tableLines = String(segment.content || "").split("\n").filter((line) => line.trim());
+    const columnCounts = tableLines.map((line) => line.trim().replace(/^\||\|$/g, "").split("|").length);
+    const hasDivider = tableLines.some((line) => line.trim().replace(/^\||\|$/g, "").split("|").every((cell) => /^:?-{3,}:?$/.test(cell.trim())));
+    if (tableLines.length < 2 || !hasDivider || new Set(columnCounts).size !== 1) {
+      mark("TABLE_STRUCTURE_INVALID", "表格列数或分隔行异常，请按原文件人工核对。", segment.line_start, segment.line_end, segment);
+    }
+  });
+  return {
+    preview,
+    quality:{ status:issues.length ? "needs_attention" : "ready", issues }
+  };
+};
 const cleanList = (value, limit = 12) => [...new Set((Array.isArray(value) ? value : [])
   .map((item) => clean(item, 80))
   .filter(Boolean))].slice(0, limit);
@@ -68,7 +137,7 @@ const canonical = (value) => Array.isArray(value) ? value.map(canonical)
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const invalid = (code, message, details = []) => Object.assign(new Error(message), { code, status:400, details });
 const forbidden = (code, message) => Object.assign(new Error(message), { code, status:403 });
-const conflict = (code, message) => Object.assign(new Error(message), { code, status:409 });
+const conflict = (code, message, details = []) => Object.assign(new Error(message), { code, status:409, details });
 const sourceFilename = (value) => clean(value, 160).replace(/[^\w.\-\u4e00-\u9fff（）()]/g, "_");
 const extensionOf = (filename) => String(filename || "").toLowerCase().match(/\.([a-z0-9]{1,12})$/)?.[1] || "";
 const firstMeaningfulLine = (content, fallback) => content
@@ -128,6 +197,34 @@ const versionHistoryFor = (document) => {
   });
 };
 
+// Raw originals remain in the private version snapshots.  A correction record
+// is deliberately exposed only by detailDocument (after department access has
+// been checked), never by the list/public projection used elsewhere.
+const correctionHistoryFor = (document) => {
+  const versions = document.versions || [];
+  const snapshots = [...versions, document];
+  return versions.flatMap((version, index) => {
+    const next = snapshots[index + 1] || document;
+    if (String(version.raw_text || "") === String(next.raw_text || "")) return [];
+    return [{
+      from_version:Number(version.version),
+      to_version:Number(next.version),
+      original_source:{
+        source_filename:version.source_filename || null,
+        source_sha256:version.source_sha256 || null,
+        source_asset_id:version.source_asset_id || null,
+        source_reference:version.source_reference || null
+      },
+      original_content_hash:version.content_hash || null,
+      corrected_content_hash:next.content_hash || null,
+      corrected_by:next.updated_by || next.created_by || null,
+      corrected_at:next.updated_at || next.created_at || null,
+      // This is an authorized-detail field, not a list or retrieval field.
+      original_text:String(version.raw_text || "")
+    }];
+  });
+};
+
 const publicDocument = (document) => {
   if (!document) return null;
   const {
@@ -138,6 +235,7 @@ const publicDocument = (document) => {
     review_idempotency_keys:ignoredReviewKeys,
     versions:ignoredVersions,
     mutations:ignoredMutations,
+    parse_preview:ignoredParsePreview,
     ...safe
   } = document;
   return clone({ ...safe,
@@ -148,6 +246,14 @@ const publicDocument = (document) => {
     version_history:versionHistoryFor(document)
   });
 };
+
+const detailDocument = (document) => ({
+  ...publicDocument(document),
+  text_content:document.raw_text || "",
+  parse_preview:clone(document.parse_preview || parseAssessmentFor(document.raw_text || "", document.source_filename).preview),
+  parse_quality:clone(document.parse_quality || parseAssessmentFor(document.raw_text || "", document.source_filename).quality),
+  correction_history:clone(correctionHistoryFor(document))
+});
 
 const appendEvent = (state, event) => {
   state.events.unshift(event);
@@ -209,14 +315,26 @@ const normalizeMetadata = (payload = {}) => {
   const tags = cleanList(payload.tags);
   const effectiveAt = String(payload.effective_at || "").trim() || null;
   const expiresAt = String(payload.expires_at || "").trim() || null;
-  if (!department || !allowedContentTypes.has(contentType) || !owner) {
-    throw invalid("KNOWLEDGE_INTAKE_METADATA_REQUIRED", "请补充所属科室、内容类型和内容负责人");
+  const metadataErrors = [
+    !department && { field:"department", message:"请填写所属科室" },
+    !allowedContentTypes.has(contentType) && { field:"content_type", message:"请选择受支持的内容类型" },
+    !owner && { field:"owner", message:"请填写内容负责人" }
+  ].filter(Boolean);
+  if (metadataErrors.length) {
+    throw invalid("KNOWLEDGE_INTAKE_METADATA_REQUIRED", "请补充所属科室、内容类型和内容负责人", metadataErrors);
   }
-  if ((effectiveAt && Number.isNaN(Date.parse(effectiveAt))) || (expiresAt && Number.isNaN(Date.parse(expiresAt)))) {
-    throw invalid("KNOWLEDGE_EFFECTIVE_TIME_INVALID", "生效时间或失效时间格式不正确");
+  const timeFormatErrors = [
+    effectiveAt && Number.isNaN(Date.parse(effectiveAt)) && { field:"effective_at", message:"生效日期格式不正确" },
+    expiresAt && Number.isNaN(Date.parse(expiresAt)) && { field:"expires_at", message:"失效日期格式不正确" }
+  ].filter(Boolean);
+  if (timeFormatErrors.length) {
+    throw invalid("KNOWLEDGE_EFFECTIVE_TIME_INVALID", "生效时间或失效时间格式不正确", timeFormatErrors);
   }
   if (effectiveAt && expiresAt && Date.parse(expiresAt) <= Date.parse(effectiveAt)) {
-    throw invalid("KNOWLEDGE_EFFECTIVE_RANGE_INVALID", "失效时间必须晚于生效时间");
+    throw invalid("KNOWLEDGE_EFFECTIVE_RANGE_INVALID", "失效时间必须晚于生效时间", [
+      { field:"effective_at", message:"生效日期必须早于失效日期" },
+      { field:"expires_at", message:"失效日期必须晚于生效日期" }
+    ]);
   }
   return {
     source_filename:filename,
@@ -243,6 +361,8 @@ const createDocument = ({ state, tenantId, actor, normalized, rawText = "", asse
   if (duplicate) return { document:duplicate, duplicate:true };
   const now = nowIso();
   const fallbackTitle = normalized.source_filename.replace(/\.[^.]+$/, "");
+  const parsed = parserStatus === "parsed" ? parseAssessmentFor(rawText, normalized.source_filename) : { preview:[], quality:{ status:"not_available", issues:[] } };
+  const needsAttention = parsed.quality.status === "needs_attention";
   const document = {
     id:`kidoc_${randomUUID()}`,
     tenant_id:tenantId,
@@ -254,11 +374,13 @@ const createDocument = ({ state, tenantId, actor, normalized, rawText = "", asse
     title:clean(rawText ? firstMeaningfulLine(rawText, fallbackTitle) : fallbackTitle, 120),
     excerpt:rawText ? clean(rawText, 500) : null,
     content_hash:contentHash,
-    parser_status:parserStatus,
-    parse_summary:parseSummary,
-    status,
+    parser_status:needsAttention ? "needs_attention" : parserStatus,
+    parse_summary:needsAttention ? "检测到解析质量问题，已标为待处理；修正前不会建立内部检索索引。" : parseSummary,
+    parse_preview:parsed.preview,
+    parse_quality:parsed.quality,
+    status:needsAttention ? "parsing_pending" : status,
     knowledge_base_status:"internal_only",
-    retrieval_index_status:parserStatus === "parsed" ? "indexing" : "awaiting_parse",
+    retrieval_index_status:needsAttention ? "awaiting_correction" : parserStatus === "parsed" ? "indexing" : "awaiting_parse",
     retrieval_index_mode:null,
     embedding_model:null,
     indexed_chunk_count:0,
@@ -310,7 +432,7 @@ const indexDraftDocument = (state, document, actor) => {
     indexed_at:now,
     graph_build_status:"not_requested",
     graph_build_reason:"内部草稿不进入对客图谱；正式发布须绑定评测、媒体与索引版本。",
-    parse_summary:`已完成受控解析并建立 ${indexed.chunk_count} 个内部检索块，尚未对客发布。`,
+    parse_summary:`已完成受控解析并建立 ${indexed.chunk_count} 个内部检索块；解析预览可定位 ${document.parse_preview?.length || 0} 个源段，尚未对客发布。`,
     updated_at:now
   });
   appendEvent(state, {
@@ -324,6 +446,23 @@ const indexDraftDocument = (state, document, actor) => {
     chunk_count:indexed.chunk_count,
     at:now
   });
+  return document;
+};
+
+const quarantineDraftDocument = (state, document, actor) => {
+  const removed = knowledgeIntakeContext.getStore() ? 0 : removeRuntimeKnowledgeDocument(document).removed;
+  document.status = "parsing_pending";
+  document.parser_status = "needs_attention";
+  document.retrieval_index_status = "awaiting_correction";
+  document.retrieval_index_mode = null;
+  document.indexed_chunk_count = 0;
+  document.indexed_at = null;
+  document.knowledge_record_id = null;
+  document.graph_build_status = "not_requested";
+  document.graph_build_reason = "解析质量待处理；修正前不建立内部或对客检索。";
+  document.parse_summary = `检测到 ${document.parse_quality?.issues?.length || 0} 项解析质量问题，已标为待处理；${removed ? "已移除旧的内部检索块。" : "尚未建立内部检索块。"}`;
+  appendEvent(state, { id:`kievent_${randomUUID()}`, tenant_id:document.tenant_id, type:"knowledge_intake.parse_quarantined", document_id:document.id,
+    department:document.department, actor, issue_codes:(document.parse_quality?.issues || []).map((item) => item.code), at:nowIso() });
   return document;
 };
 
@@ -356,7 +495,8 @@ function createKnowledgeIntakeDocumentImpl(payload = {}) {
     parserStatus:"parsed", parseSummary:"已完成受控文本解析，正在建立检索索引。"
   });
   if (created.duplicate) return { document:publicDocument(created.document), replayed:true, duplicate:true };
-  indexDraftDocument(state, created.document, actor);
+  if (created.document.parser_status === "needs_attention") quarantineDraftDocument(state, created.document, actor);
+  else indexDraftDocument(state, created.document, actor);
   created.document.create_payload_hash = payloadHash;
   saveState(state);
   return { document:publicDocument(created.document), replayed:false, duplicate:false };
@@ -371,7 +511,10 @@ function prepareKnowledgeIntakeAssetImpl(payload = {}) {
   const mime = assertMime(profile, payload.mime);
   const expectedSize = Number(payload.size);
   if (!Number.isInteger(expectedSize) || expectedSize < 1 || expectedSize > profile.maxBytes) {
-    throw invalid("KNOWLEDGE_ASSET_SIZE_INVALID", `文件大小必须在1字节至${Math.floor(profile.maxBytes / 1024 / 1024) || 1}MB之间`);
+    const maxLabel = profile.maxBytes < 1024 * 1024
+      ? `${profile.maxBytes / 1024}KB`
+      : `${profile.maxBytes / 1024 / 1024}MB`;
+    throw invalid("KNOWLEDGE_ASSET_SIZE_INVALID", `文件大小必须在1字节至${maxLabel}之间`);
   }
   assertDepartmentAccess(normalized.department, payload.permitted_departments);
   const payloadHash = sha256(JSON.stringify({ ...normalized, mime, expectedSize }));
@@ -470,7 +613,10 @@ async function completeKnowledgeIntakeAssetImpl({ tenant_id, asset_id, actor, id
     state, tenantId, actor:author, normalized:normalizeMetadata(asset), rawText, asset, idempotencyKey:key,
     parserStatus, parseSummary, status
   });
-  if (!created.duplicate) indexDraftDocument(state, created.document, author);
+  if (!created.duplicate) {
+    if (created.document.parser_status === "needs_attention") quarantineDraftDocument(state, created.document, author);
+    else indexDraftDocument(state, created.document, author);
+  }
   asset.status = "completed";
   asset.document_id = created.document.id;
   asset.complete_idempotency_key = key;
@@ -520,7 +666,7 @@ function getKnowledgeIntakeDocumentImpl({ tenant_id, document_id, permitted_depa
   const current = stateWithCollections().documents.find((item) => item.tenant_id === normalizeTenantId(tenant_id) && item.id === clean(document_id, 80));
   if (!current) return null;
   assertDepartmentAccess(current.department, permitted_departments);
-  return { ...publicDocument(current), text_content:current.raw_text || "" };
+  return detailDocument(current);
 }
 
 // This synchronous store has one writer per process. Version checks protect
@@ -541,7 +687,14 @@ function mutateDocument(payload, action, mutate) {
     return { document:clone(replay.result), replayed:true };
   }
   if (current.parser_status !== "parsed" && action !== "draft_updated") throw conflict("KNOWLEDGE_INTAKE_PARSE_PENDING", "请先完成受控解析或人工校订正文");
-  if (!Number.isInteger(payload.expected_version) || payload.expected_version !== current.version) throw conflict("KNOWLEDGE_VERSION_CONFLICT", "资料版本已变化，请刷新后重新确认");
+  if (!Number.isInteger(payload.expected_version) || payload.expected_version !== current.version) {
+    throw conflict("KNOWLEDGE_VERSION_CONFLICT", "资料版本已变化，请比较最新版本后重试", [{
+      field:"expected_version",
+      message:`资料当前已更新为 v${current.version}，请比较后重试`,
+      expected_version:payload.expected_version,
+      current_version:current.version
+    }]);
+  }
   const now = nowIso();
   mutate(current, { state, author, now });
   current.updated_at = now;
@@ -564,12 +717,15 @@ function updateKnowledgeIntakeDocumentImpl(payload = {}) {
     if (Buffer.byteLength(text, "utf8") > 256 * 1024) throw invalid("KNOWLEDGE_TEXT_TOO_LARGE", "校订正文不能超过256KB");
     const title = clean(payload.title ?? current.title, 120);
     if (!title) throw invalid("KNOWLEDGE_TITLE_REQUIRED", "请填写资料标题");
+    const parsed = parseAssessmentFor(text, current.source_filename);
+    const needsAttention = parsed.quality.status === "needs_attention";
     const { versions:ignoredVersions, mutations:ignoredMutations, ...snapshot } = current;
     current.versions = [...(current.versions || []), clone(snapshot)];
-    Object.assign(current, metadata, { title, raw_text:text, excerpt:clean(text, 500), content_hash:sha256(text), version:current.version + 1,
-      parser_status:"parsed", hospital_confirmation:null, submitted_by:null, submitted_at:null, submit_idempotency_key:null,
+    Object.assign(current, metadata, { title, raw_text:text, excerpt:clean(text, 500), content_hash:sha256(text), parse_preview:parsed.preview, parse_quality:parsed.quality, version:current.version + 1,
+      parser_status:needsAttention ? "needs_attention" : "parsed", status:needsAttention ? "parsing_pending" : "draft", hospital_confirmation:null, submitted_by:null, submitted_at:null, submit_idempotency_key:null,
       updated_by:author, updated_at:now });
-    indexDraftDocument(state, current, author);
+    if (needsAttention) quarantineDraftDocument(state, current, author);
+    else indexDraftDocument(state, current, author);
   });
 }
 
