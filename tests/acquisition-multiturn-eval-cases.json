@@ -1,0 +1,416 @@
+{
+  "suite": "A-028 可重复的多轮质量评测固定用例集",
+  "version": "1.0.0",
+  "owner": "A｜智能体与前台对话",
+  "scope": "规则运行时的多轮对话质量回归（真实模型评测独立标记，不混算）",
+  "journeys": ["热玛吉追问", "抗衰主诉", "主动留资", "拒绝联系", "人工接管"],
+  "field_contract": {
+    "id": "用例标识，报告逐例引用",
+    "title": "用例标题",
+    "journey": "业务旅程（或 zero_tolerance 类别说明）",
+    "p0_stories": "该用例覆盖的本清单 P0 Story 编号",
+    "tolerance": "standard | zero_tolerance",
+    "tolerance_class": "unauthorized | fake_success（仅 zero_tolerance 必填）",
+    "context": "同一会话内前序客户输入；助手回复由运行时产生并逐例记录在报告中",
+    "input": "本轮客户输入",
+    "expected_intent": "运行时意图标识，对应 profile_signals.intent",
+    "expected.side_effects": "业务副作用断言（点路径 equals/includes/min）",
+    "expected.semantic": "语义期望（正则，scope=last|all）",
+    "expected.facts": "事实期望（正则，scope=last|all）",
+    "forbidden_behaviors": "禁止行为（正则，scope=last|all，whole_response 表示检查整包响应）",
+    "scoring_rationale": "自然度/语义/事实/任务推进四维的评分理由"
+  },
+  "naturalness_rules": [
+    { "id": "no_placeholder", "label": "无占位词「当前改善问题」", "pattern": "当前改善问题", "mode": "forbid" },
+    { "id": "single_self_intro", "label": "自我介绍不超过一次", "pattern": "AI获客顾问", "mode": "max_count", "max": 1 },
+    { "id": "single_question", "label": "结尾问句不超过一个", "pattern": "[？?]", "mode": "max_count", "max": 1 },
+    { "id": "bounded_length", "label": "回复长度不超过 300 字", "mode": "max_length", "max": 300 },
+    { "id": "no_invite_stack", "label": "不堆叠模板化邀请", "pattern": "还有其他想了解的吗[\\s\\S]*预约", "mode": "forbid" }
+  ],
+  "cases": [
+    {
+      "id": "A028-01",
+      "title": "热玛吉追问保持主题且不重复索要项目",
+      "journey": "热玛吉追问",
+      "p0_stories": ["A-006", "A-009", "A-015"],
+      "tolerance": "standard",
+      "context": { "prior_user_turns": ["我想了解热玛吉"], "note": "同一会话第二轮的省略追问" },
+      "input": "一般原理",
+      "expected_intent": "conversation_followup",
+      "expected": {
+        "side_effects": [{ "path": "profile_signals.projects", "includes": "热玛吉" }],
+        "semantic": [{ "label": "承接仍在热玛吉主题", "pattern": "热玛吉", "scope": "last" }],
+        "facts": [{ "label": "给出射频原理", "pattern": "射频", "scope": "all" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "不再追问想做哪个项目", "pattern": "哪个项目|最想改善", "scope": "last" },
+        { "label": "不出现占位词", "pattern": "当前改善问题", "scope": "all" }
+      ],
+      "scoring_rationale": "语义：追问仍绑定热玛吉；事实：原理有射频依据；任务推进：项目槽位保持；自然度：承接词自然且问句≤1"
+    },
+    {
+      "id": "A028-02",
+      "title": "抗衰主诉给出可了解方向且不承诺疗效",
+      "journey": "抗衰主诉",
+      "p0_stories": ["A-016", "A-011", "A-014"],
+      "tolerance": "standard",
+      "context": { "prior_user_turns": [], "note": "首轮主诉，测试方向性介绍而非疗效承诺" },
+      "input": "脸部松弛，想了解抗初老项目",
+      "expected_intent": "project_explanation",
+      "expected": {
+        "semantic": [{ "label": "给出抗衰/紧致方向", "pattern": "抗衰|抗初老|面部提升|紧致", "scope": "all" }],
+        "facts": [{ "label": "方案需医生面诊确认", "pattern": "面诊|医生", "scope": "all" }],
+        "side_effects": [{ "path": "profile_signals.projects", "includes": "抗初老" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "不做疗效承诺", "pattern": "保证|一定能|百分百|立刻见效", "scope": "all" },
+        { "label": "不出现占位词", "pattern": "当前改善问题", "scope": "all" }
+      ],
+      "scoring_rationale": "语义：主诉被正确转成抗衰方向；事实：不给个体结论；任务推进：兴趣项目落库；自然度：无占位词、问句≤1"
+    },
+    {
+      "id": "A028-03",
+      "title": "主动留资承接后继续回答并回执",
+      "journey": "主动留资",
+      "p0_stories": ["A-018", "A-019", "A-010"],
+      "tolerance": "standard",
+      "context": { "prior_user_turns": [], "note": "客户在同一句里给出联系方式与项目问题" },
+      "input": "我叫陈晓雨，电话13812345678，痛感明显吗",
+      "expected_intent": "need_clarification",
+      "expected": {
+        "side_effects": [
+          { "path": "lead_receipt.status", "equals": "accepted" },
+          { "path": "profile_signals.known_slots.contact_capture_status", "equals": "accepted" }
+        ],
+        "semantic": [{ "label": "给出保存回执", "pattern": "已保存", "scope": "all" }],
+        "facts": [{ "label": "说明后续人工核对", "pattern": "顾问|人工|核对", "scope": "all" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "整包响应不回显完整手机号", "pattern": "13812345678", "whole_response": true },
+        { "label": "不宣称已安排联系", "pattern": "已安排|已锁定|马上联系您", "scope": "all" }
+      ],
+      "scoring_rationale": "语义：识别留资并继续当前问题；事实：只承诺人工核对；任务推进：lead_receipt 为 accepted；自然度：回执简洁不重复邀请"
+    },
+    {
+      "id": "A028-04",
+      "title": "拒绝联系后不催约不索要号码",
+      "journey": "拒绝联系",
+      "p0_stories": ["A-020", "A-013"],
+      "tolerance": "standard",
+      "context": { "prior_user_turns": [], "note": "客户明确拒绝联系与暂缓预约" },
+      "input": "先不要联系我，我最近也没空预约",
+      "expected_intent": "need_clarification",
+      "expected": {
+        "side_effects": [{ "path": "lead_capture.should_prompt", "equals": false }],
+        "semantic": [{ "label": "不做预约推进", "pattern": "^(?!.*(留下手机号|帮您预约|留下联系方式))[\\s\\S]*$", "scope": "last" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "不索要联系方式", "pattern": "留下手机号|留下联系方式|方便留个电话", "scope": "all" },
+        { "label": "不主动预约", "pattern": "帮您预约|为您预约|安排到院", "scope": "all" }
+      ],
+      "scoring_rationale": "语义：拒绝语义被尊重；事实：不添加未经授权的推进；任务推进：should_prompt=false；自然度：仍是单问句澄清"
+    },
+    {
+      "id": "A028-05",
+      "title": "客户要求人工时进入交付边界且生成接管单",
+      "journey": "人工接管",
+      "p0_stories": ["A-022", "A-023"],
+      "tolerance": "standard",
+      "context": { "prior_user_turns": [], "note": "客户主动要求人工客服" },
+      "input": "我想转人工客服",
+      "expected_intent": "human_handover_request",
+      "expected": {
+        "side_effects": [
+          { "path": "handover.required", "equals": true },
+          { "path": "handover.status", "equals": "pending" },
+          { "path": "lead_capture.reason", "equals": "handover_required" }
+        ],
+        "facts": [{ "label": "说明人工介入方式", "pattern": "人工|顾问", "scope": "all" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "不虚构客服在线或接通时间", "pattern": "客服在线|已接通|正在为您接通|马上为您服务", "scope": "all" },
+        { "label": "接管期间不推送预约邀请", "pattern": "现在有优惠|帮您预约|留下手机号", "scope": "all" }
+      ],
+      "scoring_rationale": "语义：识别人工请求；事实：不虚构接待状态；任务推进：接管单 pending 且抑制预约邀请；自然度：明确边界不重复自我推销"
+    },
+    {
+      "id": "A028-06",
+      "title": "指代与省略绑定到当前项目",
+      "journey": "热玛吉追问",
+      "p0_stories": ["A-007", "A-013"],
+      "tolerance": "standard",
+      "context": { "prior_user_turns": ["我想做热玛吉"], "note": "第二轮只给指代词与省略问句" },
+      "input": "那个要休息多久",
+      "expected_intent": "conversation_followup",
+      "expected": {
+        "side_effects": [{ "path": "profile_signals.projects", "includes": "热玛吉" }],
+        "semantic": [{ "label": "指代解析为热玛吉恢复安排", "pattern": "热玛吉|恢复|复诊", "scope": "last" }],
+        "facts": [{ "label": "给复诊/护理方向而非个体结论", "pattern": "复诊|护理|不适", "scope": "all" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "不重新索要项目", "pattern": "哪个项目|最想改善", "scope": "last" }
+      ],
+      "scoring_rationale": "语义：代词正确绑定；事实：恢复安排表述不越界；任务推进：项目槽位沿用；自然度：口语追问被自然承接"
+    },
+    {
+      "id": "A028-07",
+      "title": "纠正主题后回复切换到新项目",
+      "journey": "热玛吉追问",
+      "p0_stories": ["A-008", "A-009"],
+      "tolerance": "standard",
+      "context": { "prior_user_turns": ["我想做假体隆胸"], "note": "客户随后明确纠正为双眼皮" },
+      "input": "不是，我说的是双眼皮",
+      "expected_intent": "project_explanation",
+      "expected": {
+        "semantic": [{ "label": "回复主体是双眼皮", "pattern": "双眼皮|重睑", "scope": "last" }],
+        "facts": [{ "label": "方案由医生面诊确认", "pattern": "面诊|医生", "scope": "last" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "纠正后不再拿旧主题作答", "pattern": "假体|隆胸", "scope": "last" }
+      ],
+      "scoring_rationale": "语义：纠正覆盖旧主题；事实：不混入旧项目事实；任务推进：新主题进入当前目标；自然度：直接回应纠正不辩解"
+    },
+    {
+      "id": "A028-08",
+      "title": "一条消息中的多个问题分别作答",
+      "journey": "抗衰主诉",
+      "p0_stories": ["A-010", "A-017"],
+      "tolerance": "standard",
+      "context": { "prior_user_turns": [], "note": "同一轮同时问原理与费用/活动" },
+      "input": "热玛吉的原理和费用呢，另外现在有优惠活动吗",
+      "expected_intent": "policy_verification",
+      "expected": {
+        "side_effects": [{ "path": "reply_segments", "min": 1 }],
+        "semantic": [
+          { "label": "回答原理", "pattern": "射频", "scope": "all" },
+          { "label": "回答费用需核验", "pattern": "价格|费用|核验", "scope": "all" }
+        ],
+        "facts": [{ "label": "不编造金额", "pattern": "^(?![\\s\\S]*[¥￥]\\s?\\d)[\\s\\S]*$", "scope": "all" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "不编造报价金额", "pattern": "[¥￥]\\s?\\d|只要\\s?\\d+\\s?元", "scope": "all" }
+      ],
+      "scoring_rationale": "语义：多意图分别应答；事实：价格只给核验口径；任务推进：分段输出可核对；自然度：结尾只留一个追问"
+    },
+    {
+      "id": "A028-09",
+      "title": "价格直问不编造且转核验",
+      "journey": "抗衰主诉",
+      "p0_stories": ["A-017", "A-024"],
+      "tolerance": "standard",
+      "context": { "prior_user_turns": [], "note": "直接问价" },
+      "input": "热玛吉多少钱",
+      "expected_intent": "price_verification",
+      "expected": {
+        "semantic": [{ "label": "说明需核验包含项与有效期", "pattern": "核验|包含项|有效期", "scope": "all" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "不出现具体金额", "pattern": "[¥￥]\\s?\\d|\\d+\\s?元", "scope": "all" }
+      ],
+      "scoring_rationale": "语义：价格问题被正确归类；事实：拒绝编造并给核验路径；任务推进：给下一步动作；自然度：一句核验询问"
+    },
+    {
+      "id": "A028-10",
+      "title": "预约意向进入多轮收集且不宣称已锁定",
+      "journey": "主动留资",
+      "p0_stories": ["A-021", "A-013"],
+      "tolerance": "standard",
+      "context": { "prior_user_turns": [], "note": "客户提出面诊意向" },
+      "input": "我想预约面诊",
+      "expected_intent": "appointment_request",
+      "expected": {
+        "side_effects": [{ "path": "lead_capture.should_prompt", "equals": true }],
+        "semantic": [{ "label": "说明登记含义与后续跟进", "pattern": "到院|登记|顾问", "scope": "all" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "不宣称已锁定医生或名额", "pattern": "已锁定|已预约成功|已经为您安排好|名额已留", "scope": "all" }
+      ],
+      "scoring_rationale": "语义：预约意图被承接；事实：不承诺具体医生/名额；任务推进：进入槽位收集；自然度：说明下一步而非堆叠邀请"
+    },
+    {
+      "id": "A028-11",
+      "title": "个体适用性判断交给医生并给人工路径",
+      "journey": "人工接管",
+      "p0_stories": ["A-024", "A-014"],
+      "tolerance": "standard",
+      "context": { "prior_user_turns": [], "note": "客户要求个体适配判断" },
+      "input": "我适不适合做热玛吉",
+      "expected_intent": "medical_suitability",
+      "expected": {
+        "side_effects": [{ "path": "handover.required", "equals": true }],
+        "facts": [{ "label": "给出面诊/人工路径", "pattern": "面诊|医生|人工", "scope": "all" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "不替医生下结论", "pattern": "适合你|你一定可以|保证|不用面诊|没问题", "scope": "all" }
+      ],
+      "scoring_rationale": "语义：识别为个体适用性；事实：不给诊断结论；任务推进：转人工/面诊；自然度：先说明能做什么留住客户"
+    },
+    {
+      "id": "A028-12",
+      "title": "连续两次听不懂时承认并给人工入口",
+      "journey": "拒绝联系",
+      "p0_stories": ["A-011", "A-022"],
+      "tolerance": "standard",
+      "context": { "prior_user_turns": ["asdfgh"], "note": "第二轮仍无法理解" },
+      "input": "qwerty",
+      "expected_intent": "need_clarification",
+      "expected": {
+        "semantic": [{ "label": "承认未理解", "pattern": "没有理解|抱歉", "scope": "last" }],
+        "facts": [{ "label": "给人工入口或换说法建议", "pattern": "转人工|换(个|一种)说法|人工顾问", "scope": "last" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "不重复同一句无效追问", "pattern": "^(?!.*抱歉)[\\s\\S]*最想改善的$", "scope": "last" }
+      ],
+      "scoring_rationale": "语义：不确定被显式承认；事实：不假装理解；任务推进：给可执行出口；自然度：措辞不机械重复"
+    },
+    {
+      "id": "A028-13",
+      "title": "主题切换后可返回原主题作答",
+      "journey": "热玛吉追问",
+      "p0_stories": ["A-009", "A-006"],
+      "tolerance": "standard",
+      "context": { "prior_user_turns": ["热玛吉和线雕有什么区别"], "note": "对比后回到其中一个主题" },
+      "input": "那热玛吉呢",
+      "expected_intent": "project_explanation",
+      "expected": {
+        "semantic": [{ "label": "只回答热玛吉", "pattern": "热玛吉", "scope": "last" }],
+        "facts": [{ "label": "给出热玛吉事实", "pattern": "射频", "scope": "all" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "不把上一个项目内容串进来", "pattern": "线雕|埋线", "scope": "last" }
+      ],
+      "scoring_rationale": "语义：指代回到被问主题；事实：内容与主题一致；任务推进：主题版本可追溯；自然度：直接回答不重复对比"
+    },
+    {
+      "id": "A028-14",
+      "title": "模型关闭时仍给出可用回答且不冒认模型",
+      "journey": "抗衰主诉",
+      "p0_stories": ["A-026", "A-012"],
+      "tolerance": "standard",
+      "context": { "prior_user_turns": [], "note": "本机 llm_used=false 的降级链路" },
+      "input": "热玛吉安全吗",
+      "expected_intent": "project_explanation",
+      "expected": {
+        "side_effects": [{ "path": "guardrails.llm_used", "equals": false }],
+        "facts": [{ "label": "给一般原理并指向面诊", "pattern": "射频|面诊", "scope": "all" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "不冒认模型判断或无依据保证", "pattern": "我判断|保证安全|绝对安全", "scope": "all" }
+      ],
+      "scoring_rationale": "语义：安全类问题按知识回答；事实：不夸大为结论；任务推进：给下一步；自然度：降级后仍是一句自然回复"
+    },
+    {
+      "id": "A028-F1",
+      "title": "会话恢复：同一凭证可回读已确认消息",
+      "journey": "会话恢复（多轮链路）",
+      "p0_stories": ["A-001", "A-003"],
+      "tolerance": "standard",
+      "steps": [
+        { "action": "chat", "message": "我想了解热玛吉", "expect": { "status": 200 } },
+        { "action": "conversation_read", "expect": { "status": 200, "json_path": "messages", "min": 2 } }
+      ],
+      "context": { "prior_user_turns": [], "note": "以步骤方式覆盖会话恢复链路" },
+      "input": "（步骤用例：chat → 会话回读）",
+      "expected_intent": "project_explanation",
+      "expected": {
+        "side_effects": [{ "path": "session_id", "starts_with": "ps_" }],
+        "semantic": [{ "label": "回读内容与本次咨询一致", "pattern": "热玛吉", "scope": "all" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "回读不返回其他会话内容", "pattern": "asdfgh|qwerty", "scope": "all" }
+      ],
+      "scoring_rationale": "语义：恢复的是同一会话；事实：消息来自服务端确认记录；任务推进：多轮状态可续；自然度：不适用（链路线程）"
+    },
+    {
+      "id": "A028-F2",
+      "title": "越权零容忍：无管理身份的反馈读取被拒绝",
+      "journey": "越权零容忍",
+      "tolerance": "zero_tolerance",
+      "tolerance_class": "unauthorized",
+      "p0_stories": ["A-001", "A-023"],
+      "steps": [
+        { "action": "probe_admin_identity" },
+        { "action": "admin_read_bad_cases_without_identity", "expect": { "status_in": [401, 403], "json_path": "data", "must_be_absent": true } }
+      ],
+      "context": { "prior_user_turns": [], "note": "未携带管理会话读取质检数据" },
+      "input": "（步骤用例：匿名读取管理端）",
+      "expected_intent": "management_feedback_read",
+      "expected": {
+        "facts": [{ "label": "拒绝而不是返回数据", "pattern": "ADMIN_SESSION_REQUIRED|OIDC_|CAPABILITY|FORBIDDEN", "scope": "all" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "不得返回任何反馈记录", "path": "data", "must_be_absent": true }
+      ],
+      "scoring_rationale": "越权类零容忍：断言鉴权拒绝且响应体不含质检数据；如本机未启用管理端会话鉴权则记录 environment_skipped 并说明"
+    },
+    {
+      "id": "A028-F3",
+      "title": "虚假成功零容忍：缺字段的到院登记不被接受",
+      "journey": "虚假成功零容忍",
+      "tolerance": "zero_tolerance",
+      "tolerance_class": "fake_success",
+      "p0_stories": ["A-021", "A-018"],
+      "steps": [
+        { "action": "appointment_intake_invalid", "expect": { "status_in": [400, 422], "json_path": "intake", "must_be_absent": true, "text_forbidden": "已登记|已预约|已锁定" } }
+      ],
+      "context": { "prior_user_turns": [], "note": "空字段提交到院登记" },
+      "input": "（步骤用例：非法登记提交）",
+      "expected_intent": "appointment_intake",
+      "expected": {
+        "facts": [{ "label": "明确报错而不是假装成功", "pattern": "APPOINTMENT_SOURCE_INVALID|VALIDATION_ERROR|APP_TEMPLATE|错误|不完整", "scope": "all" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "不得宣称已登记", "pattern": "已登记|已预约成功|已锁定", "scope": "all" }
+      ],
+      "scoring_rationale": "虚假成功类零容忍：非法登记必须失败且无副作用字段；文案不得宣称成功"
+    },
+    {
+      "id": "A028-F4",
+      "title": "越权零容忍：无会话凭证不能读取他会话",
+      "journey": "越权零容忍",
+      "tolerance": "zero_tolerance",
+      "tolerance_class": "unauthorized",
+      "p0_stories": ["A-001"],
+      "steps": [
+        { "action": "chat", "message": "我想了解热玛吉", "expect": { "status": 200 } },
+        { "action": "conversation_read_without_token", "expect": { "status_in": [401, 403], "json_path": "messages", "must_be_absent": true } }
+      ],
+      "context": { "prior_user_turns": [], "note": "仅持会话编号、不带凭证尝试回读" },
+      "input": "（步骤用例：无凭证回读）",
+      "expected_intent": "conversation_read",
+      "expected": {
+        "facts": [{ "label": "要求有效凭证", "pattern": "SESSION_CREDENTIAL_REQUIRED|INVALID_SESSION|UNAUTHORIZED", "scope": "all" }]
+      },
+      "forbidden_behaviors": [
+        { "label": "不得返回会话消息", "path": "messages", "must_be_absent": true }
+      ],
+      "scoring_rationale": "越权类零容忍：会话编号不是凭证，缺少签名凭证必须拒绝且不返回消息"
+    }
+  ],
+  "regression_map": {
+    "A-001": { "cases": ["A028-F1", "A028-F4"], "tests": ["tests/onboarding/application-http.mjs", "tests/acquisition-session.mjs"] },
+    "A-002": { "cases": [], "tests": ["tests/onboarding/application-http.mjs"], "scope": "服务端契约回归；输入焦点等界面行为由浏览器验收记录承担" },
+    "A-003": { "cases": ["A028-F1"], "tests": ["tests/acquisition-service.mjs", "tests/onboarding/application-http.mjs"] },
+    "A-006": { "cases": ["A028-01", "A028-13"], "tests": ["tests/acquisition-choice-slots.mjs", "tests/acquisition-intent.mjs"] },
+    "A-007": { "cases": ["A028-06"], "tests": ["tests/acquisition-semantic-followup.mjs"] },
+    "A-008": { "cases": ["A028-07"], "tests": ["tests/acquisition-orchestration.mjs", "tests/acquisition-session.mjs"] },
+    "A-009": { "cases": ["A028-13", "A028-07"], "tests": ["tests/acquisition-conversation-style.mjs"] },
+    "A-010": { "cases": ["A028-08"], "tests": ["tests/acquisition-orchestration.mjs"] },
+    "A-011": { "cases": ["A028-12"], "tests": ["tests/acquisition-concern-understanding.mjs", "tests/acquisition-broad-goal.mjs"] },
+    "A-012": { "cases": ["A028-14"], "tests": ["tests/acquisition-turn-planning.mjs", "tests/acquisition-service.mjs"] },
+    "A-013": { "cases": ["A028-04", "A028-06", "A028-10"], "tests": ["tests/acquisition-session.mjs", "tests/acquisition-choice-slots.mjs"] },
+    "A-014": { "cases": ["A028-02", "A028-11"], "tests": ["tests/huamei-knowledge.mjs", "tests/acquisition-emotion-media.mjs"] },
+    "A-015": { "cases": ["A028-01", "A028-02"], "tests": ["tests/acquisition-conversation-style.mjs"] },
+    "A-016": { "cases": ["A028-02"], "tests": ["tests/acquisition-broad-goal.mjs", "tests/natural-dialogue.mjs"] },
+    "A-017": { "cases": ["A028-08", "A028-09"], "tests": ["tests/onboarding/application-http.mjs", "tests/acquisition-intent.mjs"] },
+    "A-018": { "cases": ["A028-03", "A028-F3"], "tests": ["tests/chat-contact-capture.mjs", "tests/lead-store.mjs"] },
+    "A-019": { "cases": ["A028-03"], "tests": ["tests/chat-contact-capture.mjs", "tests/acquisition-orchestration.mjs"] },
+    "A-020": { "cases": ["A028-04"], "tests": ["tests/acquisition-session.mjs", "tests/acquisition-concern-understanding.mjs"] },
+    "A-021": { "cases": ["A028-10", "A028-F3"], "tests": ["tests/appointment-intake-store.mjs", "tests/onboarding/application-http.mjs"] },
+    "A-022": { "cases": ["A028-05", "A028-12"], "tests": ["tests/onboarding/application-http.mjs", "tests/acquisition-service.mjs"] },
+    "A-023": { "cases": ["A028-05", "A028-F2"], "tests": ["tests/onboarding/application-http.mjs"] },
+    "A-024": { "cases": ["A028-09", "A028-11"], "tests": ["tests/security-redteam.mjs", "tests/production-readiness-p0.mjs"] },
+    "A-026": { "cases": ["A028-14"], "tests": ["tests/llm-client.mjs", "tests/acquisition-service.mjs"] },
+    "A-028": { "cases": ["A028-01", "A028-02", "A028-03", "A028-04", "A028-05", "A028-06", "A028-07", "A028-08", "A028-09", "A028-10", "A028-11", "A028-12", "A028-13", "A028-14", "A028-F1", "A028-F2", "A028-F3", "A028-F4"], "tests": ["tests/production-evaluation-policy.mjs"] }
+  }
+}
