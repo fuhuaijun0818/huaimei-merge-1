@@ -162,6 +162,8 @@ button { -webkit-tap-highlight-color: transparent; }
 .public-media-card img { display: block; width: 100%; max-height: 300px; object-fit: contain; background: #fff; }
 .public-media-caption { padding: 7px 9px; display: block; color: #806e70; font-size: 11px; line-height: 1.45; }
 .public-media-card em { margin-left: 6px; color: #b17a45; font-size: 10px; font-style: normal; }
+.public-media-unavailable { min-height: 96px; padding: 18px 12px; display: grid; align-content: center; cursor: default; background: #fff7f6; }
+.public-media-unavailable .public-media-caption { padding: 0; color: #a35b5f; font-size: 12px; }
 .public-media-pdf { min-height: 126px; padding: 20px; display: grid; align-content: center; gap: 7px; color: #806e70; background: linear-gradient(145deg,#fff,#fff4f3); }
 .public-media-pdf strong { width: fit-content; padding: 3px 7px; border-radius: 5px; color: #a35b5f; background: #f6dddd; font-size: 11px; letter-spacing: .08em; }
 .public-media-pdf span { font-size: 12px; }

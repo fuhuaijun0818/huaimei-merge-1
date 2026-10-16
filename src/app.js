@@ -4,6 +4,10 @@ const conversationReads = createConversationReadState();
 import { logoutAdminSession } from "./admin-session.js";
 import { ROLE_CATALOG, roleCatalogEntry } from "./role-catalog.js";
 import { getManagementIdentity, getManagementAccounts, saveManagedAccount, getMemberIntegrationStatus, getKnowledgePublications, writeKnowledgePublication } from "./operations-client.js";
+import { summarizePublicationRollback } from "./modules/knowledge/publication-rollback-diff.js";
+import { indexStatusLabel, summarizeDocumentPublicationStatus, PUBLICATION_STATUS_LEGEND } from "./modules/knowledge/publication-status.js";
+import { MESSAGE_TEMPLATE_CATEGORIES, MESSAGE_TEMPLATE_VARIABLES, renderTemplatePreview, normalizeTemplateCategory, extractTemplateVariables, templateVersionLabel } from "./modules/knowledge/message-template.js";
+import { setIdentityCapabilities } from "./modules/administration/identity-capabilities.js";
 import { sanitizeDisplayData, store } from "./store.js";
 import {
   claimManagementAppointmentIntake,
@@ -32,6 +36,32 @@ import {
 } from "./ui.js";
 import { entityNavRoute, entityTitle, moduleNavConfig, moduleSubnav, renderEntityPage, renderSubpage } from "./subpages.js";
 import { handoverOnlyMode, knowledgeGovernanceEnabled, knowledgeIntakeEnabled, realManagementActions } from "./management-runtime.js";
+
+// 知识资料的筛选仅在当前浏览器标签页内保留：刷新和前进/后退可以恢复，
+// 不写入跨会话的 localStorage，也不会把检索关键词暴露到地址栏或浏览历史。
+const KNOWLEDGE_INTAKE_FILTER_STORAGE_KEY = "huamei:knowledge-intake-filter-state:v1";
+const knowledgeIntakeFilterDefaults = Object.freeze({ query:"", status:"", contentType:"", publicScope:"" });
+const knowledgeIntakeFilterOptions = Object.freeze({
+  status:new Set(["", "parsing_pending", "draft", "release_candidate"]),
+  contentType:new Set(["", "项目介绍", "医生介绍", "服务流程", "活动权益", "公开海报", "排班说明", "其他"]),
+  publicScope:new Set(["", "internal", "customer_summary", "public_full"])
+});
+const loadKnowledgeIntakeFilterState = () => {
+  try {
+    const raw = globalThis.sessionStorage?.getItem(KNOWLEDGE_INTAKE_FILTER_STORAGE_KEY);
+    if (!raw) return { ...knowledgeIntakeFilterDefaults };
+    const stored = JSON.parse(raw);
+    return {
+      query:typeof stored?.query === "string" ? stored.query.slice(0, 120) : "",
+      status:knowledgeIntakeFilterOptions.status.has(stored?.status) ? stored.status : "",
+      contentType:knowledgeIntakeFilterOptions.contentType.has(stored?.contentType) ? stored.contentType : "",
+      publicScope:knowledgeIntakeFilterOptions.publicScope.has(stored?.publicScope) ? stored.publicScope : ""
+    };
+  } catch {
+    return { ...knowledgeIntakeFilterDefaults };
+  }
+};
+const initialKnowledgeIntakeFilters = loadKnowledgeIntakeFilterState();
 
 const ui = {
   taskTab: "全部",
@@ -64,11 +94,12 @@ const ui = {
   knowledgeIntakeDocuments: [],
   knowledgeIntakeLoading: false,
   knowledgeIntakeError: "",
-  knowledgeIntakeQuery: "",
-  knowledgeIntakeStatus: "",
-  knowledgeIntakeContentType: "",
-  knowledgeIntakePublicScope: "",
+  knowledgeIntakeQuery: initialKnowledgeIntakeFilters.query,
+  knowledgeIntakeStatus: initialKnowledgeIntakeFilters.status,
+  knowledgeIntakeContentType: initialKnowledgeIntakeFilters.contentType,
+  knowledgeIntakePublicScope: initialKnowledgeIntakeFilters.publicScope,
   knowledgeIntakeRequestToken: 0,
+  knowledgeVersionConflict: null,
   physicianQuery: "",
   physicianStatus: "全部状态",
   physicianSpecialty: "全部领域",
@@ -109,6 +140,32 @@ const ui = {
   managementDataError: "",
   managementPersistenceState: "initializing",
   managementPersistenceError: ""
+};
+
+const persistKnowledgeIntakeFilterState = () => {
+  const filters = {
+    query:ui.knowledgeIntakeQuery.slice(0, 120),
+    status:ui.knowledgeIntakeStatus,
+    contentType:ui.knowledgeIntakeContentType,
+    publicScope:ui.knowledgeIntakePublicScope
+  };
+  try {
+    if (Object.values(filters).every((value) => !value)) {
+      globalThis.sessionStorage?.removeItem(KNOWLEDGE_INTAKE_FILTER_STORAGE_KEY);
+      return;
+    }
+    globalThis.sessionStorage?.setItem(KNOWLEDGE_INTAKE_FILTER_STORAGE_KEY, JSON.stringify(filters));
+  } catch {
+    // 隐私模式或浏览器禁用会话存储时，筛选仍在当前页面内正常生效。
+  }
+};
+
+const clearKnowledgeIntakeFilterState = () => {
+  ui.knowledgeIntakeQuery = "";
+  ui.knowledgeIntakeStatus = "";
+  ui.knowledgeIntakeContentType = "";
+  ui.knowledgeIntakePublicScope = "";
+  persistKnowledgeIntakeFilterState();
 };
 
 // 一期后台当前只使用本系统已建档的数据。不要将旧演示大盘数字混入客户、
@@ -543,7 +600,7 @@ function conversationsPage() {
   const imChannels = phaseOneImChannels();
   return `<div class="page reception-page" style="padding-bottom:20px">${pageHead("客户沟通", "会话与接待", isPresalesWorkspace() ? "这里展示已进入聊天的客户会话。售前人员可实名接管、确认后将会话交回机器人，并调用已启用的常用话术；所有操作都会留下审计记录。" : "查看实时咨询、未读消息和接待状态；选择客户后处理对应会话。", isPresalesWorkspace() ? "" : `<button class="btn" data-action="conversation-stats">${icon("chart",15)}会话质量检查</button><button class="btn primary" data-action="new-conversation">${icon("plus",15)}发起会话</button>`)}
     <section class="card conversation-layout">
-      <aside class="conversation-list"><div class="conversation-filter"><strong>接待工作台</strong><div class="caption" role="status">${ui.conversationSyncError || "会话实时同步"}</div><div class="search-field" style="min-width:0;margin-top:12px">${icon("search",15)}<input id="reception-search" class="field" aria-label="搜索客户或会话" placeholder="搜索客户、渠道、会话内容" value="${escapeHtml(ui.conversationQuery)}"/></div><div class="reception-filters">${["全部","待人工","人工接待","机器人","已结束"].map(filter=>`<button class="tab-btn ${ui.conversationFilter===filter?'active':''}" data-action="conversation-filter" data-id="${filter}">${filter}<span>${store.state.conversations.filter(item=>filter==='全部'||groupOf(item)===filter).length}</span></button>`).join('')}</div></div><div class="conversation-items">${['待人工','人工接待','机器人','已结束'].map(group=>{const items=conversations.filter(item=>groupOf(item)===group);return items.length?`<details class="reception-group" open><summary>${group} <span>${items.length}</span></summary>${items.map(conversation=>{const itemCustomer=store.customer(conversation.customerId);if(!itemCustomer)return '';return `<button class="conversation-item ${conversation.id===current.id?'active':''}" data-search="${escapeHtml([itemCustomer.name,conversation.channel,conversation.lastMessage].join(' ').toLowerCase())}" data-action="select-conversation" data-id="${escapeHtml(conversation.id)}">${avatar(itemCustomer,'sm')}<div style="min-width:0"><div class="row"><span class="conversation-name">${escapeHtml(itemCustomer.name)}</span></div><div class="conversation-preview">${escapeHtml(conversation.lastMessage||'暂无消息')}</div><div class="customer-meta">${escapeHtml(conversation.channel)} · ${relativeTime(conversation.updatedAt)}</div></div>${conversationReads.unread(conversation)?`<span class="unread" aria-label="${conversationReads.unread(conversation)}条未读消息">${Math.min(conversationReads.unread(conversation),99)}${conversationReads.unread(conversation)>99?"+":""}</span>`:''}</button>`;}).join('')}</details>`:'';}).join('')}<p id="reception-empty" class="caption" hidden>没有匹配的会话，请调整搜索或分组。</p></div></aside>
+      <aside class="conversation-list"><div class="conversation-filter"><strong>接待工作台</strong><div class="caption" role="status">${ui.conversationSyncError || "会话实时同步"}</div><div class="search-field" style="min-width:0;margin-top:12px">${icon("search",15)}<input id="reception-search" class="field" aria-label="搜索客户或会话" placeholder="搜索客户、渠道、会话内容" value="${escapeHtml(ui.conversationQuery)}"/></div><div class="reception-filters">${["全部","待人工","人工接待","机器人","已结束"].map(filter=>`<button class="tab-btn ${ui.conversationFilter===filter?'active':''}" data-action="conversation-filter" data-id="${filter}">${filter}<span>${store.state.conversations.filter(item=>filter==='全部'||groupOf(item)===filter).length}</span></button>`).join('')}</div></div><div class="conversation-items" data-paginated-list="conversations" data-pagination-item=".conversation-item">${['待人工','人工接待','机器人','已结束'].map(group=>{const items=conversations.filter(item=>groupOf(item)===group);return items.length?`<details class="reception-group" open><summary>${group} <span>${items.length}</span></summary>${items.map(conversation=>{const itemCustomer=store.customer(conversation.customerId);if(!itemCustomer)return '';return `<button class="conversation-item ${conversation.id===current.id?'active':''}" data-search="${escapeHtml([itemCustomer.name,conversation.channel,conversation.lastMessage].join(' ').toLowerCase())}" data-action="select-conversation" data-id="${escapeHtml(conversation.id)}">${avatar(itemCustomer,'sm')}<div style="min-width:0"><div class="row"><span class="conversation-name">${escapeHtml(itemCustomer.name)}</span></div><div class="conversation-preview">${escapeHtml(conversation.lastMessage||'暂无消息')}</div><div class="customer-meta">${escapeHtml(conversation.channel)} · ${relativeTime(conversation.updatedAt)}</div></div>${conversationReads.unread(conversation)?`<span class="unread" aria-label="${conversationReads.unread(conversation)}条未读消息">${Math.min(conversationReads.unread(conversation),99)}${conversationReads.unread(conversation)>99?"+":""}</span>`:''}</button>`;}).join('')}</details>`:'';}).join('')}<p id="reception-empty" class="caption" hidden>没有匹配的会话，请调整搜索或分组。</p></div></aside>
       <section class="chat"><header class="chat-head">${avatar(customer,"sm")}<div><strong>${customer.name}</strong><div class="customer-meta">${escapeHtml(current.channel)} · ${conversationStatusLabel(current.status)}</div></div><div class="caption" style="margin-left:6px;line-height:1.45"><strong style="color:var(--ink)">当前接待：${escapeHtml(assignee.title)}</strong><br/>${escapeHtml(assignee.detail)}</div><span class="spacer"></span><button class="btn small ghost" data-entity="conversation" data-id="${current.id}">详情</button>${acquisitionConversationControls(current, customer)}<button class="btn icon-only ghost" data-customer="${customer.id}" aria-label="客户360">${icon("users",17)}</button></header>
         <div class="chat-body">${(current.messages || []).map((message) => `<div class="message ${message.from === "customer" ? "customer" : message.from === "system" ? "system" : ""}">${message.from !== "system" ? `<div class="avatar sm" style="display:grid;place-items:center;background:${message.from === "customer" ? "#f0d4db" : "#ebe5f4"};color:${message.from === "customer" ? "var(--brand)" : "#7651a8"};font-size:10px;font-weight:800">${escapeHtml(message.from === "customer" ? customer.name.slice(0,1) : message.from === "staff" ? String(assignee.title || customer.owner).slice(0,1) : "AI")}</div>` : ""}<div><div class="message-bubble">${escapeHtml(message.text)}</div><div class="message-time">${formatDate(message.at)}</div></div></div>`).join("")}</div>
         ${acquisitionConversationComposer(current, customer)}
@@ -1567,6 +1624,14 @@ function mountListPagination({ key, items, anchor, host, variant = "table" }) {
   const start = (page - 1) * pageSize;
   const end = start + pageSize;
   items.forEach((item, index) => { item.hidden = index < start || index >= end; });
+  // 分组列表（如会话收件箱按“待人工/人工接待/机器人/已结束”分组）需要同步隐藏空分组，
+  // 否则翻页后会出现只剩标题的空分组。
+  [...anchor.children]
+    .filter((child) => !child.classList?.contains("table-pagination"))
+    .forEach((group) => {
+      const groupItems = items.filter((item) => group === item || group.contains(item));
+      if (groupItems.length) group.hidden = groupItems.every((item) => item.hidden);
+    });
 
   let pager = Array.from(host.children).find((child) => child.classList?.contains("table-pagination") && child.dataset.paginationKey === key);
   if (!pager) {
@@ -1596,7 +1661,11 @@ function hydrateListPagination() {
 
   [...root.querySelectorAll("[data-paginated-list]")].forEach((list, index) => {
     const itemSelector = list.dataset.paginationItem || "article";
-    const items = [...list.children].filter((item) => item.matches(itemSelector));
+    // 指定 data-pagination-item 时允许条目嵌在分组容器内（会话收件箱按状态分组），
+    // 未指定时保持原有“直接子元素”语义。
+    const items = list.dataset.paginationItem
+      ? [...list.querySelectorAll(itemSelector)]
+      : [...list.children].filter((item) => item.matches(itemSelector));
     mountListPagination({
       key:listPaginationKey(list.dataset.paginatedList || `collection-${index}`, index),
       items,
@@ -1687,22 +1756,32 @@ const knowledgeVersionChangeLabels = {
 };
 
 function knowledgeIntakePanel() {
-  if (!knowledgeIntakeEnabled || !hasCapability("knowledge:read")) return "";
+  if (!knowledgeIntakeEnabled) return "";
+  // 无权限不能静默消失：要让使用人知道是权限问题，而不是没有资料。
+  if (!hasCapability("knowledge:read")) {
+    return `<section class="card governance-releases" style="margin-bottom:16px"><div class="card-head"><div><div class="card-title">知识资料与发布准备</div><div class="card-subtitle">资料仅限被授权查看知识资料的岗位。</div></div></div><div class="risk-banner" style="margin:0 16px 16px">${icon("shield",14)}当前岗位没有“查看知识资料”的权限，资料列表不可见。如需处理资料，请由系统管理员调整岗位能力或改用有权限的账号。</div></section>`;
+  }
   const documents = Array.isArray(ui.knowledgeIntakeDocuments) ? ui.knowledgeIntakeDocuments : [];
+  const filterActive = Boolean(ui.knowledgeIntakeQuery || ui.knowledgeIntakeStatus || ui.knowledgeIntakeContentType || ui.knowledgeIntakePublicScope);
   const rows = documents.map((document) => {
     const [label, tone] = knowledgeIntakeStatus(document.status);
+    const parseNeedsAttention = document.parser_status === "needs_attention";
+    const parseLabel = parseNeedsAttention ? "解析待处理" : document.parser_status === "parsed" ? "解析完成" : "待受控解析";
+    const indexState = indexStatusLabel(document.retrieval_index_status);
+    const publication = summarizeDocumentPublicationStatus({ document, publications:ui.publications });
+    const publicationCaption = publication.package_id ? `包 ${escapeHtml(publication.package_id)}` : "尚未进入任何发布包";
     const missing = (document.publication_readiness?.missing || []).map((key) => knowledgeMissingLabels[key] || key).join("、");
     const actions = !hasCapability("knowledge:manage") ? `<span class="caption">仅查看发布准备状态</span>` : `<div class="stack" style="gap:6px"><button class="btn small" data-action="edit-knowledge-intake" data-id="${escapeHtml(document.id)}">查看 / 校订</button>${document.parser_status === "parsed" ? `<button class="btn small" data-action="confirm-knowledge-intake" data-id="${escapeHtml(document.id)}">登记院方确认</button>` : ""}${document.publication_readiness?.ready && document.status !== "release_candidate" ? `<button class="btn small primary" data-action="candidate-knowledge-intake" data-id="${escapeHtml(document.id)}">准备发布候选</button>` : ""}</div>`;
-    return `<tr><td><strong>${escapeHtml(document.title || document.source_filename)}</strong><div class="caption">${escapeHtml(document.source_filename)} · v${Number(document.version)}</div></td><td>${escapeHtml(document.department)}</td><td>${escapeHtml(document.content_type)}</td><td>${badge(document.parser_status === "parsed" ? "解析完成" : "待受控解析", document.parser_status === "parsed" ? "success" : "warning")}<div class="caption">${Number(document.indexed_chunk_count || 0)} 个内部检索块</div></td><td>${badge(label,tone)}<div class="caption">${missing ? `待补：${escapeHtml(missing)}` : "待正式评测与发布"}</div></td><td>${badge("未对客发布", "outline")}</td><td>${formatDate(document.updated_at)}</td><td>${actions}</td></tr>`;
-  }).join("") || `<tr><td colspan="8" class="governance-empty-cell">暂无录入资料。上传后先保存为内部草稿。</td></tr>`;
+    return `<tr><td><strong>${escapeHtml(document.title || document.source_filename)}</strong><div class="caption">${escapeHtml(document.source_filename)} · v${Number(document.version)}</div></td><td>${escapeHtml(document.department)}</td><td>${escapeHtml(document.content_type)}</td><td>${badge(parseLabel, document.parser_status === "parsed" ? "success" : "warning")} ${badge(indexState.label, indexState.tone)}<div class="caption">${Number(document.indexed_chunk_count || 0)} 个内部检索块</div></td><td>${badge(label,tone)}<div class="caption">${missing ? `待补：${escapeHtml(missing)}` : "待正式评测与发布"}</div></td><td>${badge(publication.label, publication.tone)}<div class="caption">${publicationCaption}</div></td><td>${formatDate(document.updated_at)}</td><td>${actions}</td></tr>`;
+  }).join("") || `<tr><td colspan="8" class="governance-empty-cell">${filterActive ? "没有匹配的资料。可调整关键词或筛选条件，或点击上方“清除筛选”后再试。" : "暂无录入资料。上传后先保存为内部草稿。"}</td></tr>`;
   const typeOptions = ["", "项目介绍", "医生介绍", "服务流程", "活动权益", "公开海报", "排班说明", "其他"];
   const statusOptions = [["", "全部状态"], ["parsing_pending", "待受控解析"], ["draft", "内部草稿"], ["release_candidate", "候选待评测"]];
   const scopeOptions = [["", "全部用途"], ["internal", "仅内部"], ["customer_summary", "对客摘要候选"], ["public_full", "完整公开候选"]];
-  const filterActive = Boolean(ui.knowledgeIntakeQuery || ui.knowledgeIntakeStatus || ui.knowledgeIntakeContentType || ui.knowledgeIntakePublicScope);
   return `<section class="card governance-releases" style="margin-bottom:16px"><div class="card-head"><div><div class="card-title">知识资料与发布准备</div><div class="card-subtitle">上传、校订、登记院方线下确认，再准备发布候选。资料仅限当前授权科室。</div></div><div class="row"><button class="btn small" data-action="refresh-knowledge-intake" ${ui.knowledgeIntakeLoading ? "disabled" : ""}>刷新</button>${hasCapability("knowledge:manage") ? `<button class="btn small primary" data-action="new-knowledge-intake">上传原始素材</button>` : ""}</div></div>
-    ${ui.knowledgeIntakeError ? `<div class="risk-banner">资料列表暂时无法读取，请稍后重试。</div>` : ""}
+    ${ui.knowledgeIntakeError ? `<div class="risk-banner">${icon("alert",14)}<div><strong>资料列表暂时无法读取</strong><br/>请确认本地持久化服务与数据库可用后重试。<div class="row" style="margin-top:8px"><button class="btn small" data-action="refresh-knowledge-intake" ${ui.knowledgeIntakeLoading ? "disabled" : ""}>重试</button><span class="caption">错误码：${escapeHtml(ui.knowledgeIntakeError)}</span></div></div></div>` : ""}
     <div class="toolbar knowledge-intake-filters" style="padding:0 16px 12px"><div class="search-field"><span>${icon("search",15)}</span><input id="knowledge-intake-search" class="field" value="${escapeHtml(ui.knowledgeIntakeQuery)}" placeholder="搜索标题、文件名、来源或标签" /></div><select class="select" id="knowledge-intake-status">${statusOptions.map(([value,label]) => `<option value="${value}" ${ui.knowledgeIntakeStatus === value ? "selected" : ""}>${label}</option>`).join("")}</select><select class="select" id="knowledge-intake-content-type"><option value="">全部内容类型</option>${typeOptions.filter(Boolean).map((value) => `<option ${ui.knowledgeIntakeContentType === value ? "selected" : ""}>${value}</option>`).join("")}</select><select class="select" id="knowledge-intake-public-scope">${scopeOptions.map(([value,label]) => `<option value="${value}" ${ui.knowledgeIntakePublicScope === value ? "selected" : ""}>${label}</option>`).join("")}</select>${filterActive ? `<button class="btn small ghost" data-action="clear-knowledge-intake-filters">清除筛选</button>` : ""}<span class="caption">${ui.knowledgeIntakeLoading ? "正在筛选…" : `当前 ${documents.length} 条`}</span></div>
-    <div class="table-wrap"><table class="data-table"><thead><tr><th>原始素材 / 版本</th><th>科室</th><th>内容类型</th><th>解析与检索</th><th>准备状态</th><th>对客状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="caption" style="padding:0 16px 10px">${escapeHtml(PUBLICATION_STATUS_LEGEND)}</div>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>原始素材 / 版本</th><th>科室</th><th>内容类型</th><th>解析与索引</th><th>资料状态</th><th>发布状态</th><th>更新时间</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>
     <div class="guardrail" style="margin:12px 16px 16px">${icon("shield",14)}候选资料仍为内部资料。编辑正文或元数据后，院方确认失效，需重新登记。正式评测、激活和回滚在下方发布包中操作，未激活内容不会进入对客检索。</div></section>`;
 }
 
@@ -1716,10 +1795,42 @@ function publicationPanel(){
  if(!hasCapability('knowledge:read')&&!hasCapability('evaluations:read'))return '';
  return `<section class="card padded"><div class="row between"><h3>正式发布包</h3><div>${hasCapability('knowledge:publish')?'<button class="btn primary" data-action="build-publication">构建候选包</button>':''}<button class="btn" data-action="refresh-publications">刷新</button></div></div><p>构建完成不等于对客启用。每个包固定内容、文本索引、证据关系图及规则版本；正式评测通过后才可激活。</p>${ui.publicationError?`<p role="alert">${escapeHtml(ui.publicationError)}</p>`:''}${(ui.publications||[]).map(p=>`<article class="card padded" style="margin:12px 0"><strong>${escapeHtml(p.id)}</strong><p>${escapeHtml(publicationStatus(p.status))} · ${p.chunk_count} 个文本块 · ${p.documents.length} 份资料</p><p class="caption">${p.documents.map(d=>escapeHtml(`${d.title} v${d.version} · ${d.department}`)).join('；')}</p><div class="row">${hasCapability('evaluations:run')?`<button class="btn" data-action="publication-evaluate" data-id="${escapeHtml(p.id)}">提交已签名评测</button>`:''}${hasCapability('knowledge:publish')&&!p.active&&p.status!=='withdrawn'?`<button class="btn" data-action="publication-activate" data-id="${escapeHtml(p.id)}">激活</button><button class="btn" data-action="publication-rollback" data-id="${escapeHtml(p.id)}">回滚至此包</button>`:''}${hasCapability('knowledge:withdraw')&&p.status!=='withdrawn'?`<button class="btn" data-action="publication-withdraw" data-id="${escapeHtml(p.id)}">撤销</button>`:''}</div></article>`).join('')||'<p>当前授权范围内暂无发布包。</p>'}</section>`;
 }
+// 回滚前必须让操作人看到“换成哪一版、影响哪些资料”，而不是只勾一个看不到内容的确认框。
+function publicationRollbackComparisonBlock(target){
+  const publications = Array.isArray(ui.publications) ? ui.publications : [];
+  const current = publications.find((item) => item.active) || null;
+  const diff = summarizePublicationRollback({ current, target });
+  const documentLine = (document) => `<li>${escapeHtml(document.title)} v${Number(document.version)} · ${escapeHtml(document.department || "未标注科室")}${document.from_version ? `（原 v${Number(document.from_version)}）` : ""}</li>`;
+  const documentList = (items, emptyLabel) => items.length
+    ? `<ul class="caption" style="margin:6px 0 0;padding-left:18px">${items.map(documentLine).join("")}</ul>`
+    : `<p class="caption" style="margin:6px 0 0">${emptyLabel}</p>`;
+  const column = (title, summary, items, emptyLabel) => `<section class="card padded">
+      <strong>${title}</strong>
+      <p class="caption" style="margin:6px 0 0">${summary ? `${escapeHtml(summary.id)}<br/>${summary.document_count} 份资料 · ${summary.chunk_count} 个文本块` : "无"}</p>
+      ${summary ? documentList(items, emptyLabel) : ""}
+    </section>`;
+  const departments = diff.departments.length ? diff.departments.map((item) => escapeHtml(item)).join("、") : "未标注";
+  return `<section class="stack" style="margin:12px 0;gap:10px">
+      <div><strong>回滚影响对比</strong><div class="caption" style="margin-top:4px">${escapeHtml(diff.impact)}</div></div>
+      <div class="grid cols-2">
+        ${column("当前对客启用", diff.current, diff.current_documents, "当前没有启用版本")}
+        ${column(`回滚目标${diff.same_package ? "（即当前版本）" : ""}`, diff.target, diff.target_documents, "目标包没有可展示的资料")}
+      </div>
+      <div class="card padded">
+        <strong>差异明细</strong>
+        <p class="caption" style="margin:6px 0 0">新增或改版 ${diff.added.length + diff.version_changed.length} 份 · 回滚后停用 ${diff.removed.length} 份 · 内容不变 ${diff.unchanged.length} 份</p>
+        ${diff.added.length ? `<p class="caption" style="margin:8px 0 0">新增资料</p>${documentList(diff.added, "")}` : ""}
+        ${diff.version_changed.length ? `<p class="caption" style="margin:8px 0 0">版本变化</p>${documentList(diff.version_changed, "")}` : ""}
+        ${diff.removed.length ? `<p class="caption" style="margin:8px 0 0">回滚后不再对客可见</p>${documentList(diff.removed, "")}` : ""}
+        <p class="caption" style="margin:8px 0 0">涉及科室：${departments}</p>
+      </div>
+    </section>`;
+}
+
 function showPublicationModal(id,action){
  const pkg=(ui.publications||[]).find(p=>p.id===id);
  const candidates=(ui.knowledgeIntakeDocuments||[]).filter(d=>d.status==='release_candidate'&&d.publication_readiness?.ready);
- const content=action==='build'?candidates.map(d=>`<label style="display:block;margin:12px 0"><input type="checkbox" name="document_ids" value="${escapeHtml(d.id)}"> ${escapeHtml(d.title)} v${d.version}</label>`).join('')||'<p>暂无符合条件的候选资料，请先由内容专员补齐确认依据。</p>':action==='evaluate'?'<label>正式评测报告 JSON（含可信签名）<input type="file" name="report" accept="application/json,.json" required></label>':`${formField('操作原因','reason','',{required:true,type:'textarea',full:true})}<label><input type="checkbox" name="confirmed" required> 已核对目标发布包与影响范围</label>`;
+  const content=action==='build'?candidates.map(d=>`<label style="display:block;margin:12px 0"><input type="checkbox" name="document_ids" value="${escapeHtml(d.id)}"> ${escapeHtml(d.title)} v${d.version}</label>`).join('')||'<p>暂无符合条件的候选资料，请先由内容专员补齐确认依据。</p>':action==='evaluate'?'<label>正式评测报告 JSON（含可信签名）<input type="file" name="report" accept="application/json,.json" required></label>':`${action==='rollback'?publicationRollbackComparisonBlock(pkg):''}${formField('操作原因','reason','',{required:true,type:'textarea',full:true})}<label><input type="checkbox" name="confirmed" required> 已核对目标发布包与影响范围</label>`;
  openModal({title:action==='build'?'构建不可变候选包':action==='evaluate'?'提交正式评测':`确认${{activate:'激活',rollback:'回滚',withdraw:'撤销'}[action]}`,desc:pkg?.id||'只允许纳入具有有效院方依据和公开许可的候选资料',body:`<form id="publication-form" data-package-id="${escapeHtml(id||'')}" data-operation="${action}" data-revision="${pkg?.head_revision||0}" data-request-key="${crypto.randomUUID()}">${content}</form>`,footer:'<button class="btn" data-action="modal-close">取消</button><button class="btn primary" form="publication-form" type="submit">确认提交</button>'});
 }
 async function refreshManagedAccounts(){
@@ -1756,7 +1867,7 @@ function qualityFeedbackPanel(){
 
 function productionKnowledgeGovernancePage() {
   const actions = `${knowledgeIntakeEnabled && hasCapability("knowledge:manage") ? `<button class="btn primary" data-action="new-knowledge-intake">${icon("plus",15)}录入资料</button>` : ""}`;
-  return `<div class="page">${pageHead("知识库与图谱", "知识与合规", "资料解析后保存为内部草稿；补齐来源与院方确认后准备候选，完成正式发布才能用于对客问答。", actions)}${hasCapability("knowledge:read") ? knowledgeIntakePanel() : ""}${publicationPanel()}${hasCapability("feedback:manage") ? qualityFeedbackPanel() : ""}</div>`;
+  return `<div class="page">${pageHead("知识库与图谱", "知识与合规", "资料解析后保存为内部草稿；补齐来源与院方确认后准备候选，完成正式发布才能用于对客问答。", actions)}${knowledgeIntakePanel()}${publicationPanel()}${hasCapability("feedback:manage") ? qualityFeedbackPanel() : ""}</div>`;
 }
 
 function knowledgePage() {
@@ -2291,11 +2402,12 @@ function showConfigurationRecordModal(kind, recordId = "") {
   const formStart = `<form id="configuration-record-form" data-kind="${kind}" data-record-id="${escapeHtml(record?.id || "")}"><div class="form-grid">`;
   const guardrail = `<div class="form-group full"><div class="guardrail">${icon("shield",14)}${kind === "journey_template" ? "模板只用于创建本地旅程草稿；不会自动加入客户、发送消息或调用外部渠道。" : kind === "segment" ? "分群只计算当前系统内已保存的客户信息；关联旅程不会自动触达任何客户。" : "话术模板是表达草稿；每次对客使用前仍需结合知识、授权、阶段与合规规则复核。"}</div></div>`;
   if (kind === "message_template") {
+    const variableBlock = `<div class="form-group full"><span class="form-label">变量与预览</span><div class="caption">可用变量（只允许以下命名）：${MESSAGE_TEMPLATE_VARIABLES.map((item) => `<code>{{${escapeHtml(item.name)}}}</code>`).join("、")}</div><div class="caption" style="margin-top:6px">${MESSAGE_TEMPLATE_VARIABLES.map((item) => `${escapeHtml(item.name)}＝${escapeHtml(item.description)}`).join("；")}</div><div class="caption" style="margin-top:8px">预览只保留占位符本身，不会替换成真实客户数据：</div><pre id="message-template-preview" class="caption" style="white-space:pre-wrap;margin:6px 0 0;padding:10px;border:1px solid #eadbda;border-radius:8px;background:#fffafa">${escapeHtml(renderTemplatePreview(record?.content || ""))}</pre></div>`;
     openModal({
       title:editing ? "编辑话术模板" : "新建话术模板",
-      desc:"维护可复用的表达草稿。模板不存放客户数据，也不会绕过人工确认和合规门禁。",
+      desc:`维护可复用的表达草稿。模板不存放客户数据，也不会绕过人工确认和合规门禁。${editing ? `当前版本 ${templateVersionLabel(record?.version)}，修改内容会生成新版本。` : "新模板从 v1 开始。"}`,
       wide:true,
-      body:`${formStart}${formField("模板名称","name",record?.name || "",{required:true})}${formField("适用环节","scope",record?.scope || "",{required:true})}${formField("使用方式","executionMode",record?.executionMode || "人工确认",{type:"select",items:["人工确认","需合规检查","强制转人工"]})}${statusField}${formField("模板内容","content",record?.content || "",{type:"textarea",full:true,required:true})}${guardrail}</div></form>`,
+      body:`${formStart}${formField("模板名称","name",record?.name || "",{required:true})}${formField("分类","category",record?.category || MESSAGE_TEMPLATE_CATEGORIES[0],{type:"select",items:MESSAGE_TEMPLATE_CATEGORIES})}${formField("适用环节","scope",record?.scope || "",{required:true})}${formField("使用方式","executionMode",record?.executionMode || "人工确认",{type:"select",items:["人工确认","需合规检查","强制转人工"]})}${statusField}${formField("模板内容","content",record?.content || "",{type:"textarea",full:true,required:true})}${variableBlock}${guardrail}</div></form>`,
       footer:`<button class="btn" data-action="modal-close">取消</button><button class="btn primary" type="submit" form="configuration-record-form">${editing ? "保存模板" : "创建模板"}</button>`
     });
     return;
@@ -2651,7 +2763,7 @@ async function handleAction(action, id, target) {
   if (action === "reception-tab") { ui.receptionTab=id;render(true);return; }
   if (action === "copy-reply-draft") { const text=document.querySelector('#message-input')?.value.trim();if(!text)return toast('请先输入回复内容','warning');try{await navigator.clipboard.writeText(text);toast('回复已复制，请在已批准渠道确认发送','success');}catch{toast('复制失败，请选中文本手动复制','warning');}return; }
 
-  if (action === "admin-logout") { try { target.disabled=true;await logoutAdminSession(); } catch(error){toast(error.message,"error");target.disabled=false;} return; }
+  if (action === "admin-logout") { try { target.disabled=true;await logoutAdminSession();clearKnowledgeIntakeFilterState(); } catch(error){toast(error.message,"error");target.disabled=false;} return; }
   if (action === "list-page") {
     const listKey = target?.dataset.listKey;
     if (!listKey) return;
@@ -2683,7 +2795,10 @@ async function handleAction(action, id, target) {
   }
   switch (action) {
     case "reload-management-data": await hydrateManagementDomain({ announce:true }); break;
-    case "modal-close": clearRevealedContact({ markHidden:false }); closeModal(); break;
+    case "modal-close":
+      if (unsavedFormDirty && !globalThis.confirm("当前表单有未保存的修改，确定放弃并关闭吗？")) break;
+      markUnsavedFormDirty(false);
+      clearRevealedContact({ markHidden:false }); closeModal(); break;
     case "refresh":
       if (handoverOnlyMode) {
         await Promise.all([syncAcquisitionHandovers(true), syncAppointmentOperations(true)]);
@@ -2903,16 +3018,21 @@ async function handleAction(action, id, target) {
     case "refresh-knowledge-governance": await hydrateKnowledgeGovernance({ force:true, announce:true }); break;
     case "refresh-knowledge-intake": await hydrateKnowledgeIntake({ force:true, announce:true }); break;
     case "clear-knowledge-intake-filters":
-      ui.knowledgeIntakeQuery = "";
-      ui.knowledgeIntakeStatus = "";
-      ui.knowledgeIntakeContentType = "";
-      ui.knowledgeIntakePublicScope = "";
+      clearKnowledgeIntakeFilterState();
       await hydrateKnowledgeIntake({ force:true });
       break;
     case "new-knowledge-intake": showKnowledgeIntakeModal(); break;
     case "edit-knowledge-intake": await showKnowledgeMaintenanceModal(id, "edit"); break;
     case "confirm-knowledge-intake": await showKnowledgeMaintenanceModal(id, "confirmation"); break;
     case "candidate-knowledge-intake": await showKnowledgeMaintenanceModal(id, "candidate"); break;
+    case "knowledge-conflict-reload": {
+      const conflictState = ui.knowledgeVersionConflict;
+      ui.knowledgeVersionConflict = null;
+      if (conflictState) await showKnowledgeMaintenanceModal(conflictState.document.id, conflictState.action);
+      else closeModal();
+      break;
+    }
+    case "knowledge-conflict-retry": await retryKnowledgeVersionConflict(target); break;
     case "knowledge-page": {
       ui.knowledgePage = Math.max(1, Number(id) || 1);
       render(true);
@@ -3194,7 +3314,7 @@ function showKnowledgeIntakeModal() {
     title:"上传原始知识素材",
     desc:"素材先隔离保存并计算文件指纹，解析后建立内部草稿。对客使用须补齐来源、有效期、院方确认和正式发布。",
     body:`<form id="knowledge-intake-form"><div class="form-grid">
-      <label class="form-group full"><span class="form-label">选择原始素材</span><input class="form-control" type="file" name="source_file" accept=".txt,.md,.markdown,.csv,.json,.pdf,.docx,.jpg,.jpeg,.png,.webp,text/plain,text/markdown,text/csv,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png,image/webp" required /><small class="caption">支持 TXT、Markdown、CSV、JSON、PDF、DOCX、JPG、PNG、WEBP；PDF/DOCX/图片单个不超过 32MB，文本不超过 256KB。</small></label>
+      <label class="form-group full"><span class="form-label">选择原始素材</span><input class="form-control" type="file" name="source_file" accept=".txt,.md,.markdown,.csv,.json,.pdf,.docx,.jpg,.jpeg,.png,.webp,text/plain,text/markdown,text/csv,application/json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png,image/webp" required /><small class="caption">支持 TXT、Markdown、CSV、JSON、PDF、DOCX、JPG、PNG、WEBP。文本单个不超过 256KB；JPG/PNG/WEBP 单个不超过 16MB；PDF/DOCX 单个不超过 32MB。内容类型仅限下方列出的选项，服务端会再次校验格式、MIME、大小和内容类型。</small></label>
       ${formField("所属科室","department","",{required:true})}
       ${formField("内容类型","content_type","项目介绍",{type:"select",items:["项目介绍","医生介绍","服务流程","活动权益","公开海报","排班说明","其他"]})}
       ${formField("内容负责人","owner","",{required:true})}
@@ -3210,6 +3330,12 @@ const localKnowledgeDate = (value) => {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0,16) : "";
 };
+// 详情弹窗与列表必须给出一致的发布状态：不能再写死“尚未对客发布”。
+function publicationStatusLabel(knowledgeDocument) {
+  const status = summarizeDocumentPublicationStatus({ document:knowledgeDocument, publications:ui.publications });
+  return status.package_id ? `${status.label}（包 ${status.package_id}）` : status.label;
+}
+
 async function showKnowledgeMaintenanceModal(id, action) {
   try {
     const document = await getManagementKnowledgeIntakeDocument(id);
@@ -3222,6 +3348,19 @@ async function showKnowledgeMaintenanceModal(id, action) {
         return `<div class="row between"><span>v${Number(item.version)} → v${Number(item.version) + 1}</span><span class="caption">${escapeHtml(changes.join("、") || "未检测到业务字段变化")}</span></div>`;
       }).join("")}</div></div>`
       : `<div class="caption" style="margin:10px 0">当前是首个版本，暂无历史差异。</div>`;
+    const correctionHistory = (document.correction_history || []).length
+      ? `<section class="card padded" style="margin:12px 0"><strong>人工校订记录</strong><p class="caption" style="margin:6px 0 10px">以下原文快照、来源与操作记录仅对当前授权人员展示，不代表对客发布。</p><div class="stack" style="gap:10px">${document.correction_history.slice().reverse().map((item) => {
+        const source = item.original_source || {};
+        return `<details><summary><strong>v${Number(item.from_version)} → v${Number(item.to_version)}</strong><span class="caption"> · 校订人：${escapeHtml(item.corrected_by || "未知")} · ${escapeHtml(formatDate(item.corrected_at))}</span></summary><div class="caption" style="margin-top:8px">原始文件：${escapeHtml(source.source_filename || "未命名素材")}<br/>原始文件指纹：${escapeHtml(source.source_sha256 || "未记录")}<br/>原始素材编号：${escapeHtml(source.source_asset_id || "无")}${source.source_reference ? `<br/>来源凭据：${escapeHtml(source.source_reference)}` : ""}<br/>正文指纹：${escapeHtml(item.original_content_hash || "未记录")} → ${escapeHtml(item.corrected_content_hash || "未记录")}</div><details style="margin-top:8px"><summary>查看原文快照</summary><div class="caption" style="white-space:pre-wrap;max-height:240px;overflow:auto;margin-top:8px">${escapeHtml(item.original_text || "（原文为空）")}</div></details></details>`;
+      }).join("")}</div></section>`
+      : `<div class="caption" style="margin:10px 0">尚无人工校订记录。</div>`;
+    const parseIssues = Array.isArray(document.parse_quality?.issues) ? document.parse_quality.issues : [];
+    const parseQuality = document.parse_quality?.status === "needs_attention"
+      ? `<div class="risk-banner" style="margin:10px 0">${icon("alert",14)}<div><strong>解析待处理</strong><br/>${parseIssues.map((issue) => `${escapeHtml(issue.locator || "来源未知")}：${escapeHtml(issue.message || issue.code || "需要人工核对")}`).join("<br/>")}</div></div>`
+      : `<div class="caption" style="margin:10px 0">解析质量检查通过；预览仅限当前授权人员核对。</div>`;
+    const parsePreview = Array.isArray(document.parse_preview) && document.parse_preview.length
+      ? `<section class="card padded" style="margin:12px 0"><strong>解析预览与来源定位</strong><p class="caption" style="margin:6px 0 10px">原文件：${escapeHtml(document.source_filename || "未命名素材")}。以下预览仅限当前授权人员核对，不代表对客发布。</p>${parseQuality}<div class="stack" style="gap:8px">${document.parse_preview.map((segment) => `<details><summary><strong>${escapeHtml(segment.locator || `段落 ${segment.paragraph || "—"}`)}</strong>${segment.issue_codes?.length ? ` ${badge("待处理", "warning")}` : ""}<span class="caption"> · ${escapeHtml(segment.source_filename || document.source_filename || "未命名素材")}</span></summary><div class="caption" style="white-space:pre-wrap;margin-top:8px">${escapeHtml(segment.content || "（空段落）")}</div></details>`).join("")}</div></section>`
+      : `<div class="risk-banner" style="margin:12px 0">${icon("alert",14)}当前资料尚未产生可预览的解析源段；请等待受控解析完成，系统不会伪造正文、段落或页码。</div>`;
     const fields = action === "edit" ? `
       ${formField("标题", "title", document.title, { required:true, full:true })}
       ${formField("校订正文", "text_content", document.text_content, { type:"textarea", required:true, full:true })}
@@ -3235,10 +3374,93 @@ async function showKnowledgeMaintenanceModal(id, action) {
       ${formField("确认时间", "confirmed_at", "", { type:"datetime-local", required:true })}
       ${formField("确认有效截止", "confirmation_expires_at", "", { type:"datetime-local", required:true })}` : `<p class="page-desc">候选仅固定当前版本供后续评测准备，不会改变对客知识源。${missing ? `尚缺：${escapeHtml(missing)}` : "来源、院区、用途、有效期与本版本院方确认已齐备。"}</p>`;
     openModal({ title:action === "edit" ? "查看与校订资料" : action === "confirmation" ? "登记院方线下确认" : "准备发布候选",
-      desc:`${document.title} · 当前 v${document.version} · 尚未对客发布`,
-      body:`<form id="knowledge-maintenance-form" data-document-id="${escapeHtml(id)}" data-version="${Number(document.version)}" data-operation="${action}"><div class="form-grid">${fields}</div>${confirmationSummary}${versionHistory}<div class="guardrail">${action === "edit" ? "保存将形成新版本并使原确认失效；原始文件指纹与历史版本保留。" : "线下凭据仅覆盖当前版本，由当前登录人员实名登记；仍需正式评测和发布。"}</div><div class="caption">正文指纹：${escapeHtml(document.content_hash)}</div></form>`,
+      desc:`${document.title} · 当前 v${document.version} · ${publicationStatusLabel(document)}`,
+      body:`<form id="knowledge-maintenance-form" data-document-id="${escapeHtml(id)}" data-version="${Number(document.version)}" data-operation="${action}"><div class="form-grid">${fields}</div>${parsePreview}${confirmationSummary}${versionHistory}${correctionHistory}<div class="guardrail">${action === "edit" ? "保存将形成新版本并使原确认失效；原始文件指纹与历史版本保留。" : "线下凭据仅覆盖当前版本，由当前登录人员实名登记；仍需正式评测和发布。"}</div><div class="caption">正文指纹：${escapeHtml(document.content_hash)}</div></form>`,
       footer:`<button class="btn" data-action="modal-close">取消</button><button class="btn primary" type="submit" form="knowledge-maintenance-form" ${action === "candidate" && !document.publication_readiness?.ready ? "disabled" : ""}>${action === "edit" ? "保存新版本" : action === "confirmation" ? "保存确认记录" : "准备候选"}</button>` });
   } catch (error) { toast(error.message || "资料读取失败", "danger"); }
+}
+
+function showKnowledgeVersionConflictModal({ document, action, payload }) {
+  const previousVersion = Number(payload.expected_version) || 0;
+  ui.knowledgeVersionConflict = { document, action, payload:{ ...payload }, previousVersion };
+  const localContent = String(payload.text_content || "").trim();
+  const latestContent = String(document.text_content || "").trim();
+  openModal({
+    title:"发现并发修改",
+    desc:`你基于 v${previousVersion} 的修改与服务端当前 v${document.version} 不一致；本次修改尚未写入。`,
+    body:`<div class="risk-banner">${icon("alert", 16)}请先比较两份内容。选择“加载最新版本”会放弃本次未保存修改；选择“基于最新版本重试保存”会创建后续新版本，不会原地覆盖现有版本。</div>
+      <div class="grid cols-2" style="margin-top:12px">
+        <section class="card padded"><strong>你的待保存修改 · 基于 v${previousVersion}</strong><p class="caption" style="margin-top:8px">标题</p><p>${escapeHtml(payload.title || "（未填写）")}</p><p class="caption">正文</p><div class="caption" style="white-space:pre-wrap;max-height:180px;overflow:auto">${escapeHtml(localContent || "（未修改正文）")}</div></section>
+        <section class="card padded"><strong>服务端最新版本 · v${Number(document.version)}</strong><p class="caption" style="margin-top:8px">标题</p><p>${escapeHtml(document.title || "（无标题）")}</p><p class="caption">正文</p><div class="caption" style="white-space:pre-wrap;max-height:180px;overflow:auto">${escapeHtml(latestContent || "（无正文）")}</div></section>
+      </div>
+      <div class="caption" style="margin-top:12px">最新版本变更：${escapeHtml((document.version_history || []).slice(-1)[0]?.changed_fields_to_next?.map((field) => knowledgeVersionChangeLabels[field] || field).join("、") || "请以服务端内容为准")}</div>`,
+    footer:`<button class="btn" data-action="knowledge-conflict-reload">加载最新版本</button><button class="btn primary" data-action="knowledge-conflict-retry">基于最新版本重试保存</button>`
+  });
+}
+
+async function retryKnowledgeVersionConflict(target) {
+  const conflictState = ui.knowledgeVersionConflict;
+  if (!conflictState) return toast("未找到待重试的资料修改，请重新打开资料", "warning");
+  if (target) { target.disabled = true; target.textContent = "正在比较并保存…"; }
+  try {
+    const latest = await getManagementKnowledgeIntakeDocument(conflictState.document.id);
+    if (Number(latest.version) !== Number(conflictState.document.version)) {
+      showKnowledgeVersionConflictModal({ ...conflictState, document:latest });
+      toast("资料在比较期间再次更新，请重新确认差异", "warning");
+      return;
+    }
+    await mutateManagementKnowledgeIntakeDocument(conflictState.document.id, conflictState.action, {
+      ...conflictState.payload,
+      expected_version:Number(latest.version)
+    });
+    ui.knowledgeVersionConflict = null;
+    closeModal();
+    await hydrateKnowledgeIntake({ force:true });
+    toast("已基于最新版本保存为后续新版本，请重新登记院方确认", "success");
+  } catch (error) {
+    if (error.code === "KNOWLEDGE_VERSION_CONFLICT") {
+      try {
+        const latest = await getManagementKnowledgeIntakeDocument(conflictState.document.id);
+        showKnowledgeVersionConflictModal({ ...conflictState, document:latest });
+        toast("资料再次被修改，请重新比较后决定是否重试", "warning");
+        return;
+      } catch { /* Preserve the original conflict for a later retry. */ }
+    }
+    toast(error.message || "重试保存失败，未写入任何修改", "danger");
+  } finally {
+    if (target?.isConnected) { target.disabled = false; target.textContent = "基于最新版本重试保存"; }
+  }
+}
+
+function clearKnowledgeFieldErrors(form) {
+  form.querySelectorAll("[data-knowledge-field-error]").forEach((item) => item.remove());
+  form.querySelectorAll("[aria-invalid='true']").forEach((control) => {
+    control.removeAttribute("aria-invalid");
+    if (typeof control.setCustomValidity === "function") control.setCustomValidity("");
+  });
+}
+
+function showKnowledgeFieldErrors(form, error) {
+  const details = Array.isArray(error?.details) ? error.details.filter((item) => item?.field && item?.message) : [];
+  if (!details.length) return false;
+  clearKnowledgeFieldErrors(form);
+  let firstControl = null;
+  for (const detail of details) {
+    const control = form.elements.namedItem(detail.field);
+    if (!control || typeof control.setCustomValidity !== "function") continue;
+    control.setCustomValidity(detail.message);
+    control.setAttribute("aria-invalid", "true");
+    const message = document.createElement("small");
+    message.className = "field-error";
+    message.dataset.knowledgeFieldError = "true";
+    message.textContent = detail.message;
+    (control.closest(".form-group") || control.parentElement)?.append(message);
+    firstControl ||= control;
+  }
+  if (!firstControl) return false;
+  firstControl.focus();
+  firstControl.reportValidity();
+  return true;
 }
 
 function sendCurrentMessage(conversationId) {
@@ -3308,6 +3530,7 @@ function filterReceptionList() {
   const empty=document.querySelector('#reception-empty');if(empty)empty.hidden=Boolean(visible);
 }
 document.addEventListener("input", (event) => {
+  if (isGuardedFormTarget(event.target)) markUnsavedFormDirty(true);
   if(event.target.id==='reception-search'){ui.conversationQuery=event.target.value;filterReceptionList();}
   if(event.target.id==='reception-phrase-search'){let count=0;document.querySelectorAll('[data-phrase-search]').forEach(item=>{item.hidden=!item.dataset.phraseSearch.includes(event.target.value.trim().toLowerCase());if(!item.hidden)count++;});document.querySelectorAll('.reception-phrases details').forEach(group=>{group.hidden=![...group.querySelectorAll('[data-phrase-search]')].some(item=>!item.hidden);});const empty=document.querySelector('#reception-phrase-empty');if(empty)empty.hidden=Boolean(count);}
 
@@ -3322,10 +3545,16 @@ document.addEventListener("input", (event) => {
   if (event.target.id === "knowledge-search") { ui.knowledgeQuery = event.target.value; ui.knowledgePage = 1; clearTimeout(window.__knowledgeSearchTimer); window.__knowledgeSearchTimer = setTimeout(() => render(true), 180); }
   if (event.target.id === "knowledge-intake-search") {
     ui.knowledgeIntakeQuery = event.target.value;
+    persistKnowledgeIntakeFilterState();
     clearTimeout(window.__knowledgeIntakeSearchTimer);
     window.__knowledgeIntakeSearchTimer = setTimeout(() => void hydrateKnowledgeIntake({ force:true }), 220);
   }
   if (event.target.id === "physician-search") { ui.physicianQuery = event.target.value; clearTimeout(window.__physicianSearchTimer); window.__physicianSearchTimer = setTimeout(() => render(true), 180); }
+  // 话术模板内容变化时即时刷新预览：预览始终保留变量占位符，不替换客户数据。
+  if (event.target.name === "content" && event.target.closest("#configuration-record-form")?.dataset.kind === "message_template") {
+    const preview = document.querySelector("#message-template-preview");
+    if (preview) preview.textContent = renderTemplatePreview(event.target.value);
+  }
   const avatarDraft = routeAvatarPhysician() ? avatarDraftFor(routeAvatarPhysician()) : null;
   if (event.target.id === "avatar-title" && avatarDraft) avatarDraft.title = event.target.value;
   if (event.target.id === "avatar-script") {
@@ -3336,6 +3565,7 @@ document.addEventListener("input", (event) => {
 });
 
 document.addEventListener("change", (event) => {
+  if (isGuardedFormTarget(event.target)) markUnsavedFormDirty(true);
   if (event.target.matches?.("[data-pagination-size]")) {
     const listKey = event.target.dataset.listKey;
     if (listKey) {
@@ -3347,16 +3577,19 @@ document.addEventListener("change", (event) => {
   }
   if (event.target.id === "knowledge-intake-status") {
     ui.knowledgeIntakeStatus = event.target.value;
+    persistKnowledgeIntakeFilterState();
     void hydrateKnowledgeIntake({ force:true });
     return;
   }
   if (event.target.id === "knowledge-intake-content-type") {
     ui.knowledgeIntakeContentType = event.target.value;
+    persistKnowledgeIntakeFilterState();
     void hydrateKnowledgeIntake({ force:true });
     return;
   }
   if (event.target.id === "knowledge-intake-public-scope") {
     ui.knowledgeIntakePublicScope = event.target.value;
+    persistKnowledgeIntakeFilterState();
     void hydrateKnowledgeIntake({ force:true });
     return;
   }
@@ -3387,9 +3620,26 @@ document.addEventListener("change", (event) => {
   if (event.target.id === "analytics-range") { ui.analyticsRange = event.target.value; toast(`分析时间范围已切换为${event.target.value}`, "success"); }
 });
 
+// C-030 AC3：长表单的未保存提醒与防重复提交。
+const UNSAVED_GUARD_FORM_IDS = new Set(["knowledge-intake-form", "knowledge-maintenance-form", "configuration-record-form", "publication-form", "product-form", "journey-create-form", "agent-form"]);
+let unsavedFormDirty = false;
+const markUnsavedFormDirty = (value) => { unsavedFormDirty = Boolean(value); };
+const isGuardedFormTarget = (target) => {
+  const form = target?.closest?.("form");
+  return Boolean(form && UNSAVED_GUARD_FORM_IDS.has(form.id));
+};
+
 document.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target;
+  // C-030 AC3：长表单未保存时离开/关闭要提醒，避免误关丢内容。
+  if (UNSAVED_GUARD_FORM_IDS.has(form.id)) markUnsavedFormDirty(true);
+  // C-030 AC3：同一表单提交进行中忽略重复提交，并禁用提交按钮，避免长表单被重复写入。
+  if (form.dataset.submitting === "true") return;
+  const submitter = form.querySelector('button[type="submit"]');
+  form.dataset.submitting = "true";
+  if (submitter) submitter.disabled = true;
+  try {
   if(form.id==='publication-form'){
     try{
       const action=form.dataset.operation;const data=new FormData(form);let payload;
@@ -3518,14 +3768,19 @@ document.addEventListener("submit", async (event) => {
     const recordId = String(form.dataset.recordId || "");
     let payload;
     if (kind === "message_template") {
+      const content = data.content.trim();
+      const { unknown } = extractTemplateVariables(content);
+      if (unknown.length) return toast(`模板变量未定义：${unknown.map((name) => `{{${name}}}`).join("、")}；请改用已命名变量`, "warning");
       payload = {
         kind,
         name:data.name.trim(),
+        category:normalizeTemplateCategory(data.category),
         scope:data.scope.trim(),
         executionMode:data.executionMode,
         status:data.status,
-        content:data.content.trim()
+        content
       };
+      if (!recordId) payload.version = 1;
       if (!payload.name || !payload.scope || !payload.content) return toast("请补齐模板名称、适用环节和模板内容", "warning");
     } else if (kind === "journey_template") {
       const nodes = String(data.nodes || "").split(/[、,，\n]/).map((item) => item.trim()).filter(Boolean).slice(0, 40);
@@ -3588,6 +3843,7 @@ document.addEventListener("submit", async (event) => {
   }
   if (form.id === "knowledge-maintenance-form") {
     const action = form.dataset.operation;
+    clearKnowledgeFieldErrors(form);
     const payload = { ...data, expected_version:Number(form.dataset.version) };
     if (action === "edit") {
       payload.applicable_campuses = String(data.applicable_campuses || "").split(/[、,，]/).map((part) => part.trim()).filter(Boolean);
@@ -3604,15 +3860,35 @@ document.addEventListener("submit", async (event) => {
       await hydrateKnowledgeIntake({ force:true });
       toast(action === "edit" ? "已保存新版本，请重新登记院方确认" : action === "confirmation" ? "确认凭据已登记，尚未对客发布" : "候选已准备，等待正式评测与发布", "success");
     } catch (error) {
-      toast(error.status === 409 ? "版本或请求状态已变化，请关闭后重新打开资料" : error.message || "资料维护失败", "danger");
+      if (error.code === "KNOWLEDGE_VERSION_CONFLICT") {
+        try {
+          const latest = await getManagementKnowledgeIntakeDocument(form.dataset.documentId);
+          showKnowledgeVersionConflictModal({ document:latest, action, payload });
+          toast("资料已被其他操作更新，请比较后选择下一步", "warning");
+          return;
+        } catch {
+          toast("资料版本已变化，但无法读取最新版本；本次修改未保存", "danger");
+          return;
+        }
+      }
+      const fieldErrorShown = showKnowledgeFieldErrors(form, error);
+      toast(fieldErrorShown ? "请修正标红字段后重试" : error.status === 409 ? "版本或请求状态已变化，请关闭后重新打开资料" : error.message || "资料维护失败", "danger");
       if (submit) submit.disabled = false;
     }
     return;
   }
   if (form.id === "knowledge-intake-form") {
+    clearKnowledgeFieldErrors(form);
     const file = form.querySelector('input[name="source_file"]')?.files?.[0];
     if (!file) return toast("请先选择需要录入的资料文件", "warning");
-    if (file.size < 1 || file.size > 32 * 1024 * 1024) return toast("单次原始素材需在1字节至32MB之间", "warning");
+    const extension = String(file.name || "").toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || "";
+    const maxBytes = ["txt", "md", "markdown", "csv", "json"].includes(extension)
+      ? 256 * 1024
+      : ["jpg", "jpeg", "png", "webp"].includes(extension)
+        ? 16 * 1024 * 1024
+        : 32 * 1024 * 1024;
+    const maxLabel = maxBytes === 256 * 1024 ? "256KB" : maxBytes === 16 * 1024 * 1024 ? "16MB" : "32MB";
+    if (file.size < 1 || file.size > maxBytes) return toast(`该格式单次原始素材需在1字节至${maxLabel}之间；服务端会再次校验。`, "warning");
     const submit = form.querySelector('button[type="submit"]') || document.querySelector(`[form="${form.id}"][type="submit"]`);
     if (submit) { submit.disabled = true; submit.textContent = "正在上传并解析…"; }
     try {
@@ -3628,10 +3904,12 @@ document.addEventListener("submit", async (event) => {
       ui.knowledgeIntakeDocuments = [created.document, ...(ui.knowledgeIntakeDocuments || []).filter((item) => item.id !== created.document.id)];
       closeModal();
       const parsePending = created.document.parser_status === "pending_controlled_parse";
-      toast(created.duplicate ? "发现相同资料，已保留既有内部记录" : created.replayed ? "素材已入库，无需重复处理" : parsePending ? "原始素材已隔离保存，正在等待受控解析" : "原始素材已完成受控解析并保存为内部草稿", "success");
+      const parseNeedsAttention = created.document.parser_status === "needs_attention";
+      toast(created.duplicate ? "发现相同资料，已保留既有内部记录" : created.replayed ? "素材已入库，无需重复处理" : parseNeedsAttention ? "检测到解析质量问题，已标为待处理且未建立检索块" : parsePending ? "原始素材已隔离保存，正在等待受控解析" : "原始素材已完成受控解析并保存为内部草稿", parseNeedsAttention ? "warning" : "success");
       await hydrateKnowledgeIntake({ force:true });
     } catch (error) {
-      toast(error.code === "KNOWLEDGE_DEPARTMENT_FORBIDDEN" ? "当前账号无权维护该科室资料" : error.message || "资料解析或保存失败", "danger");
+      const fieldErrorShown = showKnowledgeFieldErrors(form, error);
+      toast(fieldErrorShown ? "请修正标红字段后重试" : error.code === "KNOWLEDGE_DEPARTMENT_FORBIDDEN" ? "当前账号无权维护该科室资料" : error.message || "资料解析或保存失败", "danger");
       if (submit) { submit.disabled = false; submit.textContent = "上传并受控解析"; }
     }
     return;
@@ -3811,6 +4089,12 @@ document.addEventListener("submit", async (event) => {
       closeModal();
       toast("医师档案已创建并加入团队", "success");
     }
+  }
+  } finally {
+    form.dataset.submitting = "false";
+    if (submitter?.isConnected) submitter.disabled = false;
+    // 提交成功会关闭弹窗；弹窗已关闭即视为已保存，仍打开则保留未保存提醒。
+    if (UNSAVED_GUARD_FORM_IDS.has(form.id) && !document.querySelector(".modal-backdrop")) markUnsavedFormDirty(false);
   }
 });
 
@@ -4180,14 +4464,16 @@ window.addEventListener("pagehide", () => {
   pauseHandoverPolling();
 });
 window.addEventListener("pageshow", () => resumeHandoverPolling({ immediate:true }));
-window.addEventListener("beforeunload", () => {
+window.addEventListener("beforeunload", (event) => {
   clearRevealedContact({ markHidden:false });
   handoverPollingDestroyed = true;
   pauseHandoverPolling();
+  // C-030 AC3：存在未保存的长表单内容时，浏览器需要二次确认后再离开。
+  if (unsavedFormDirty) event.preventDefault();
 });
 const bootstrapManagementApplication = async () => {
   render();
-  try{ui.managementIdentity=await getManagementIdentity();ui.identityError='';store.state.currentRole=ui.managementIdentity.role;}
+  try{ui.managementIdentity=await getManagementIdentity();ui.identityError='';store.state.currentRole=ui.managementIdentity.role;setIdentityCapabilities(ui.managementIdentity.capabilities);}
   catch(e){ui.identityError=e.message;render();return;}
   ui.managementDataReady=true;
   if(hasCapability('users:manage'))await refreshManagedAccounts();

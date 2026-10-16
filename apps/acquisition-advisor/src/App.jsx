@@ -96,6 +96,42 @@ function KnowledgeSources({ citations = [], onPreview }) {
   );
 }
 
+// 旧链接可能指向已过期或已撤回的公开资料：加载失败时回读一次错误码，
+// 给出与“不存在”不同的提示，而不是只留一个破图。
+const PUBLIC_MEDIA_FAILURE_HINTS = {
+  PUBLIC_MEDIA_EXPIRED: "该资料已过有效期，请让顾问发送最新版本",
+  PUBLIC_MEDIA_WITHDRAWN: "该资料已撤回，不再对外提供"
+};
+const PUBLIC_MEDIA_FALLBACK_HINT = "资料暂时无法加载，请让顾问重新发送";
+
+function PublicMediaCard({ item, src, onPreview }) {
+  const [failure, setFailure] = useState("");
+  const isPdf = item.type === "pdf";
+  const handleImageError = async () => {
+    try {
+      const response = await fetch(src, { credentials:"same-origin", cache:"no-store" });
+      if (response.ok) { setFailure(PUBLIC_MEDIA_FALLBACK_HINT); return; }
+      const body = await response.json().catch(() => null);
+      setFailure(PUBLIC_MEDIA_FAILURE_HINTS[body?.error?.code] || PUBLIC_MEDIA_FALLBACK_HINT);
+    } catch {
+      setFailure(PUBLIC_MEDIA_FALLBACK_HINT);
+    }
+  };
+  if (failure) {
+    return (
+      <div className="public-media-card public-media-unavailable" role="status">
+        <span className="public-media-caption">{failure}</span>
+      </div>
+    );
+  }
+  return (
+    <button className="public-media-card" type="button" onClick={() => onPreview({ ...item, url:src })} title={`点击预览${isPdf ? " PDF" : "图片"}`}>
+      {isPdf ? <span className="public-media-pdf" aria-hidden="true"><strong>PDF</strong><span>点击预览公开资料</span></span> : <img src={src} alt={item.alt || item.title || "公开宣传资料"} loading="lazy" onError={handleImageError} />}
+      <span className="public-media-caption">{item.title || "公开宣传资料"}{item.requires_verification ? <em>资料需核验</em> : null}</span>
+    </button>
+  );
+}
+
 function PublicKnowledgeMedia({ media = [], onPreview }) {
   if (!media.length) return null;
   return (
@@ -103,13 +139,7 @@ function PublicKnowledgeMedia({ media = [], onPreview }) {
       {media.slice(0, 2).map((item) => {
         const src = publicMediaUrl(item?.url);
         if (!src) return null;
-        const isPdf = item.type === "pdf";
-        return (
-          <button className="public-media-card" type="button" key={item.id || src} onClick={() => onPreview({ ...item, url:src })} title={`点击预览${isPdf ? " PDF" : "图片"}`}>
-            {isPdf ? <span className="public-media-pdf" aria-hidden="true"><strong>PDF</strong><span>点击预览公开资料</span></span> : <img src={src} alt={item.alt || item.title || "公开宣传资料"} loading="lazy" />}
-            <span className="public-media-caption">{item.title || "公开宣传资料"}{item.requires_verification ? <em>资料需核验</em> : null}</span>
-          </button>
-        );
+        return <PublicMediaCard key={item.id || src} item={item} src={src} onPreview={onPreview} />;
       })}
     </div>
   );

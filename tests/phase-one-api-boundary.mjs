@@ -38,7 +38,13 @@ const sharedEnv = {
   ...process.env,
   NODE_ENV:"development",
   HUAMEI_RUNTIME_ENV:"development",
+  HUAMEI_PERSISTENCE_BACKEND:"local_json",
   HUAMEI_HOST:"127.0.0.1",
+  HUAMEI_LOCAL_REQUIRE_AUTH:"false",
+  HUAMEI_ADMIN_SESSION_AUTH:"false",
+  // Keep this offline boundary regression isolated from an operator's local
+  // PostgreSQL acceptance-audit configuration.
+  HUAMEI_LOCAL_MANAGEMENT_AUDIT_ENABLED:"false",
   HUAMEI_LLM_ENABLED:"false",
   HUAMEI_GRAPHRAG_ENABLED:"false",
   HUAMEI_PUBLIC_TENANT_ID:tenantId,
@@ -175,8 +181,9 @@ try {
       audit:[{ id:"AUDIT-SECRET", action:"不应下发" }],
       handovers:[{ id:"H-SECRET", assignee:"admin" }],
       configurationRecords:[
-        { id:"TPL-PRESALES", kind:"message_template", title:"欢迎话术", content:"您好，我是安安。", presalesVisible:true },
-        { id:"TPL-ADMIN", kind:"message_template", title:"仅管理员话术", content:"内部使用", presalesVisible:false },
+        { id:"TPL-PRESALES", kind:"message_template", title:"欢迎话术", content:"您好，我是安安。", status:"启用", presalesVisible:true },
+        { id:"TPL-ADMIN", kind:"message_template", title:"仅管理员话术", content:"内部使用", status:"启用", presalesVisible:false },
+        { id:"TPL-DISABLED", kind:"message_template", title:"已停用话术", content:"已停用内容", status:"停用", presalesVisible:true },
         { id:"CFG-SECRET", kind:"system_config", value:"不应下发" }
       ],
       productOverrides:[{ id:"P-SECRET", price:"99999" }],
@@ -224,7 +231,7 @@ try {
     assert.deepEqual(overlay.productOverrides, [], "售前不得获得医院产品维护数据");
     assert.deepEqual(overlay.physicianOverrides, [], "售前不得获得医生维护数据");
     assert.deepEqual(overlay.knowledgeOverrides, [], "售前不得获得知识库维护数据");
-    assert.deepEqual(overlay.configurationRecords.map((item) => item.id), ["TPL-PRESALES"], "售前只可取得可见常用话术");
+    assert.deepEqual(overlay.configurationRecords.map((item) => item.id), ["TPL-PRESALES"], "售前只可取得已启用且可见的常用话术（停用与仅管理员话术都不得下发）");
     assert.deepEqual(overlay.conversations.map((item) => item.id), ["V-CHAT"]);
     assert.deepEqual(overlay.customers.map((item) => item.id), ["C-CHAT"], "仅已进入聊天的客户可下发至售前工作集");
     assert.deepEqual(overlay.tasks.map((item) => item.id), ["T-CHAT"]);

@@ -5,6 +5,7 @@ import {
   resolvePhaseOneManagementRole
 } from "./data.js";
 import { MANAGEMENT_DATA_MODEL_VERSION, normalizeManagementState } from "./management-data-governance.js";
+import { nextTemplateVersion } from "./modules/knowledge/message-template.js";
 
 const KEY = "huamei-ai-saas-mvp-v1";
 const clone = (value) => JSON.parse(JSON.stringify(value));
@@ -35,8 +36,12 @@ const enforcePhaseOneRoleModel = (state) => {
 
 const normalizeMessageTemplateAccess = (record = {}) => {
   if (record.kind !== "message_template") return record;
+  const version = Number(record.version);
   return {
     ...record,
+    // C-018：模板必须有分类与版本，售前侧只按启用状态与可见性获取。
+    category:String(record.category || "").trim() || "通用话术",
+    version:Number.isSafeInteger(version) && version > 0 ? version : 1,
     // The template library is readable by sales staff.  A template can be
     // inserted only in an internal conversation composer and still never
     // triggers an external send by itself.
@@ -903,7 +908,12 @@ class Store extends EventTarget {
     const record = (this.state.configurationRecords || []).find((item) => item.id === id);
     if (!record) return null;
     const now = new Date().toISOString();
-    Object.assign(record, sanitizeDisplayData(normalizeMessageTemplateAccess({ ...record, ...payload, updatedAt:now })));
+    const merged = { ...record, ...payload, updatedAt:now };
+    // 只有模板内容变化才形成新版本；单纯启用/停用不改版本。
+    if (record.kind === "message_template" && payload.content !== undefined && String(payload.content) !== String(record.content)) {
+      merged.version = nextTemplateVersion({ previousVersion:record.version, previousContent:record.content, content:payload.content });
+    }
+    Object.assign(record, sanitizeDisplayData(normalizeMessageTemplateAccess(merged)));
     this.state.audit.unshift({ id:`L-${Date.now()}`, at:now, actor:"当前用户", action:"更新运营配置", object:`${record.kind} · ${record.name}`, result:`状态：${record.status}`, severity:"中" });
     this.save();
     return record;

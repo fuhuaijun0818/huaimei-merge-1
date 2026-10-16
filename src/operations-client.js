@@ -8,11 +8,19 @@ const requestHeaders = ({ json = false, idempotencyKey = "" } = {}) => {
 };
 
 const managementRequest = async (path, options = {}) => {
-  const response = await fetch(path, {
-    ...options,
-    credentials:"same-origin",
-    cache:"no-store"
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      credentials:"same-origin",
+      cache:"no-store"
+    });
+  } catch (cause) {
+    const error = new Error("网络连接中断或本地服务不可用，资料未完成上传，请恢复后重试");
+    error.code = "MANAGEMENT_NETWORK_UNAVAILABLE";
+    error.cause = cause;
+    throw error;
+  }
   let body = {};
   try { body = await response.json(); } catch {}
   if (response.ok) return body;

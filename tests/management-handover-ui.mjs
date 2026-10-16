@@ -9,6 +9,8 @@ const [app, store, client, leadStore] = await Promise.all([
 ]);
 
 assert.match(client, /credentials:"same-origin"/, "管理端必须支持服务端HttpOnly会话");
+assert.match(client, /MANAGEMENT_NETWORK_UNAVAILABLE/, "网络中断必须给出可理解的失败原因");
+assert.match(client, /资料未完成上传，请恢复后重试/, "上传中断不得被误报为成功");
 assert.match(client, /\/api\/admin\/acquisition\/handovers/);
 assert.match(client, /\/api\/admin\/acquisition\/bad-cases/);
 assert.match(client, /\/api\/admin\/acquisition\/human-work/);
@@ -53,6 +55,20 @@ assert.doesNotMatch(app, /new-schedule-slot|schedule-slot-form|确认预约前�
 assert.match(app, /到院登记待跟进/);
 assert.match(app, /记录跟进/);
 assert.match(app, /资料仅限当前授权科室/);
+assert.match(app, /正在上传并解析…/, "资料上传必须显示明确等待状态");
+assert.match(app, /showKnowledgeFieldErrors/, "资料维护服务端字段错误必须定位到对应表单项");
+assert.match(app, /请修正标红字段后重试/, "资料维护字段错误必须给出明确的修正提示");
+assert.match(app, /showKnowledgeVersionConflictModal/, "资料并发修改必须打开版本比较界面");
+assert.match(app, /基于最新版本重试保存/, "资料并发冲突必须由用户显式确认后重试，不能自动覆盖");
+assert.match(app, /knowledge-conflict-reload/, "资料并发冲突必须允许加载服务端最新版本");
+assert.match(app, /解析预览与来源定位/, "已解析资料必须提供受控预览和来源定位");
+assert.match(app, /当前资料尚未产生可预览的解析源段/, "未完成受控解析时不得伪造预览内容");
+assert.match(app, /解析待处理/, "空块、乱码和异常表格必须明确标为待处理");
+assert.match(app, /parseIssues/, "异常表格的服务端质量状态必须可呈现给操作人");
+assert.match(app, /人工校订记录/, "授权详情必须展示人工校订的来源与操作记录");
+assert.match(app, /查看原文快照/, "人工校订必须可在授权详情核验原文快照");
+assert.match(app, /correction_history/, "人工校订记录必须来自服务端受控详情字段");
+assert.match(app, /form\.id === "knowledge-intake-form"[\s\S]{0,220}clearKnowledgeFieldErrors/, "原始素材录入表单也必须清除旧字段错误");
 assert.match(app, /客户回答/);
 assert.match(app, /browser_storage_allowed !== false/, "前端必须拒绝不满足禁止浏览器存储约束的披露响应");
 assert.match(app, /contactRevealHideTimer = window\.setTimeout\(\(\) => clearRevealedContact\(\), 30_000\)/, "明文联系方式必须自动从页面清除");

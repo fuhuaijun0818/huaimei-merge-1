@@ -12,6 +12,9 @@ assert.deepEqual(initial.overlay.customers, []);
 assert.deepEqual(initial.overlay.conversations, []);
 assert.deepEqual(initial.overlay.productOverrides, []);
 
+const seededTenant = getManagementDomainOverlay({ tenantId:"team_alpha" });
+assert.equal(seededTenant.tenant_id, "team_alpha", "隔离开发库的下划线租户 ID 应可读取管理覆盖层");
+
 const overlay = {
   ...initial.overlay,
   customers:[{

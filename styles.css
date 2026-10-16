@@ -703,6 +703,8 @@ a { color: inherit; text-decoration: none; }
 .form-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 14px; }
 .form-group { display: grid; gap: 6px; }
 .form-group.full { grid-column: 1 / -1; }
+.form-group :is(input, select, textarea)[aria-invalid="true"] { border-color: var(--danger, #b4233f); box-shadow: 0 0 0 2px rgba(180, 35, 63, .12); }
+.field-error { color: var(--danger, #b4233f); font-size: 12px; line-height: 1.4; }
 .form-label { font-size: 11px; color: var(--muted); font-weight: 620; }
 .form-control { width: 100%; min-height: 38px; border: 1px solid var(--line); border-radius: 10px; padding: 0 11px; outline: none; background: white; }
 textarea.form-control { min-height: 88px; padding: 10px 11px; resize: vertical; line-height: 1.55; }

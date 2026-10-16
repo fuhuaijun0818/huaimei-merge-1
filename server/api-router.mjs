@@ -15,7 +15,7 @@ import {
   resolveAppointmentIntake, changeCustomerAppointment
 } from "./appointment-intake-store.mjs";
 import { getLlmStatus } from "./llm-client.mjs";
-import { resolvePublicKnowledgeMedia } from "./knowledge-media.mjs";
+import { resolvePublicKnowledgeMedia, resolvePublicKnowledgeMediaWithReason } from "./knowledge-media.mjs";
 import { getKnowledgeGovernanceOverview } from "./knowledge-governance-overview.mjs";
 import {
   completeKnowledgeIntakeAsset, createKnowledgeIntakeDocument,
@@ -41,7 +41,7 @@ import {
 } from "./platform/request-security.mjs";
 import { getPostgresClient } from "./platform/postgres.mjs";
 import { createProductionReadiness } from "./platform/production-readiness.mjs";
-import { appendAuditEvent } from "./persistence/postgres-helpers.mjs";
+import { appendAuditEvent, postgresPersistenceEnabled } from "./persistence/postgres-helpers.mjs";
 import {
   authorizeManagementPrincipal,
   createManagementAuthorizer,
@@ -76,6 +76,12 @@ const runtimeEnvironment = String(
   process.env.HUAMEI_RUNTIME_ENV || process.env.HUAMEI_DEPLOYMENT_ENV || process.env.NODE_ENV || "development"
 ).trim().toLowerCase();
 const productionRuntime = ["prod", "production"].includes(runtimeEnvironment);
+// A local PostgreSQL acceptance environment can opt into the same fail-closed
+// audit path without making every developer's persistent test fixture write
+// to its database.
+const localManagementAuditEnabled = String(process.env.HUAMEI_LOCAL_MANAGEMENT_AUDIT_ENABLED || "").trim().toLowerCase() === "true";
+const managementAuditPersistenceEnabled = productionRuntime
+  || (localManagementAuditEnabled && postgresPersistenceEnabled(process.env));
 const requestSecurityStores = await createRequestSecurityStores({ env:process.env });
 const rateLimitStore = requestSecurityStores.fixedWindowStore;
 const idempotencyStore = requestSecurityStores.idempotencyStore;
@@ -308,7 +314,7 @@ const recordManagementAccess = async ({
   resourceId = "",
   outcome = "success"
 }) => {
-  if (!productionRuntime) return;
+  if (!managementAuditPersistenceEnabled) return;
   const database = getPostgresClient({ env:process.env });
   try {
     await database.tenantTransaction(principal.tenantId, (client) => appendAuditEvent(client, {
@@ -357,7 +363,8 @@ const presalesOverlayView = (record = {}, principal) => {
   const visibleTasks = (Array.isArray(overlay.tasks) ? overlay.tasks : [])
     .filter((item) => customerIds.has(String(item?.customerId || "")));
   const templates = (Array.isArray(overlay.configurationRecords) ? overlay.configurationRecords : [])
-    .filter((item) => item?.kind === "message_template" && item?.presalesVisible !== false);
+    // C-018 AC3：售前只能拿到“允许使用”的版本——必须同时是已启用且对售前可见。
+    .filter((item) => item?.kind === "message_template" && item?.status === "启用" && item?.presalesVisible !== false);
   // 会话接待需要展示当前售前的昵称和工号，但不需要暴露管理员、组织、
   // 权限或审计资料。只下发已启用售前人员的最小展示字段。
   const presalesRoster = (Array.isArray(overlay.managementUsers) ? overlay.managementUsers : [])
@@ -487,13 +494,25 @@ export async function handleApiRequest(request, response) {
   }
 
   const publicKnowledgeMediaMatch = url.pathname.match(/^\/api\/public\/knowledge-media\/(asset_[a-z0-9]{16})$/i);
-  if (request.method === "GET" && publicKnowledgeMediaMatch) {
-    const media = resolvePublicKnowledgeMedia(publicKnowledgeMediaMatch[1]);
-    if (!media) {
+  if (request.method === "GET" && url.pathname.startsWith("/api/public/knowledge-media/")) {
+    // 非白名单对象一律按“不存在”处理；只有本来就有资格公开的对象才区分已过期/已撤回，
+    // 这样旧链接能得到明确提示，又不会泄露受限或未审核资料是否存在。
+    const verdict = publicKnowledgeMediaMatch
+      ? resolvePublicKnowledgeMediaWithReason(publicKnowledgeMediaMatch[1])
+      : { ok:false, reason:"not_found" };
+    if (!verdict.ok) {
+      if (verdict.reason === "expired") {
+        sendError(request, response, requestId, 410, "PUBLIC_MEDIA_EXPIRED", "该资料已过有效期，请向顾问索取最新版本");
+        return true;
+      }
+      if (verdict.reason === "withdrawn") {
+        sendError(request, response, requestId, 410, "PUBLIC_MEDIA_WITHDRAWN", "该资料已撤回，不再对外提供");
+        return true;
+      }
       sendError(request, response, requestId, 404, "PUBLIC_MEDIA_NOT_FOUND", "未找到可公开发送的资料图片");
       return true;
     }
-    sendMedia(request, response, media, { cacheControl:"public, max-age=3600", contentDisposition:"inline" });
+    sendMedia(request, response, verdict.media, { cacheControl:"public, max-age=3600", contentDisposition:"inline" });
     return true;
   }
 

@@ -141,7 +141,10 @@ const tenantRecord = (root, tenantId) => {
 
 const assertTenantId = (tenantId) => {
   const normalized = String(tenantId || "").trim();
-  if (!/^[a-z0-9][a-z0-9-]{1,62}$/i.test(normalized)) {
+  // Development tenants are seeded as e.g. `team_alpha`; accept underscores
+  // alongside the established alphanumeric and hyphen form. The value remains
+  // strictly bounded and cannot contain path separators or whitespace.
+  if (!/^[a-z0-9][a-z0-9_-]{1,62}$/i.test(normalized)) {
     throw operationError("MANAGEMENT_TENANT_INVALID", "租户标识不合法", 400);
   }
   return normalized;

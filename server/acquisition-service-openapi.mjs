@@ -177,8 +177,8 @@ export const createAcquisitionServiceOpenApi = (origin = "http://127.0.0.1:4180"
           { $ref:"#/components/parameters/ReleaseId" },
           { name:"reviewType", in:"path", required:true, schema:{ enum:["business", "medical", "compliance"] } }
         ],
-        requestBody:{ required:true, content:{ "application/json":{ schema:{ type:"object", required:["decision","scope_checksum"], properties:{ decision:{ enum:["approved", "rejected", "changes_requested"] }, scope_checksum:{ $ref:"#/components/schemas/Sha256" }, comments:{ type:"string", maxLength:2000 } } } } } },
-        responses:{ "201":{ description:"实名审核已记录" }, "403":{ description:"审核角色或租户不匹配" }, "409":{ description:"该审核阶段已有不可变决策" } }
+        requestBody:{ required:true, content:{ "application/json":{ schema:{ type:"object", required:["decision","scope_checksum","comments"], properties:{ decision:{ enum:["approved", "rejected", "changes_requested"] }, scope_checksum:{ $ref:"#/components/schemas/Sha256" }, comments:{ type:"string", minLength:1, maxLength:2000 } } } } } },
+        responses:{ "201":{ description:"实名审核已记录" }, "400":{ description:"缺少审核理由或范围指纹无效" }, "403":{ description:"审核角色或租户不匹配" }, "409":{ description:"该审核阶段已有不可变决策" } }
       }
     },
     "/v1/knowledge/releases/{releaseId}/receipt":{

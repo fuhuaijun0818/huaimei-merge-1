@@ -171,6 +171,13 @@ export function createPostgresKnowledgeReleaseStore(options = {}) {
       error.code = "KNOWLEDGE_REVIEW_ROLE_FORBIDDEN";
       throw error;
     }
+    const reviewReason = String(comments || "").trim().slice(0, 2_000);
+    if (!reviewReason) {
+      const error = new Error("审核必须填写结论理由");
+      error.code = "KNOWLEDGE_REVIEW_REASON_REQUIRED";
+      error.status = 400;
+      throw error;
+    }
     const reviewedAt = new Date().toISOString();
     const evidence = {
       scope_checksum:String(scopeChecksum || ""),
@@ -185,7 +192,7 @@ export function createPostgresKnowledgeReleaseStore(options = {}) {
           $1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9
          ) AS id`,
         [tenantId, releaseId, reviewType, identity.subject, expectedRole, decision,
-          String(comments || "").slice(0, 2_000), JSON.stringify(evidence), reviewedAt]
+          reviewReason, JSON.stringify(evidence), reviewedAt]
       );
       await appendAuditEvent(client, {
         tenantId,
@@ -214,7 +221,7 @@ export function createPostgresKnowledgeReleaseStore(options = {}) {
   const releaseReceipt = async ({ tenantId, releaseId }) => {
     const result = await database.tenantQuery(tenantId,
       `SELECT r.*,
-              v.id AS review_id, v.review_type, v.decision, v.reviewed_at
+              v.id AS review_id, v.review_type, v.decision, v.reviewer_id, v.comments, v.reviewed_at
        FROM knowledge_releases r
        LEFT JOIN knowledge_reviews v
          ON v.tenant_id=r.tenant_id AND v.release_record_id=r.id
@@ -234,6 +241,8 @@ export function createPostgresKnowledgeReleaseStore(options = {}) {
       approvals[row.review_type] = {
         status:row.decision,
         review_id:String(row.review_id),
+        reviewer_id:row.reviewer_id,
+        reason:row.comments,
         reviewed_at:new Date(row.reviewed_at).toISOString()
       };
     }
