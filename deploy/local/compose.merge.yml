@@ -1,0 +1,63 @@
+# 集成/融合阶段专用的隔离开发依赖（PostgreSQL + Redis）。
+# 与 A（huamei-a-dev，55434/56380）、B（huamei-b-dev，55432/6379）、C（huamei-c-dev，55433/56379）
+# 并列：项目名、端口、卷、网络完全独立，互不影响。
+# 启动：docker compose --env-file deploy/local/.env.merge -f deploy/local/compose.merge.yml up -d
+name: huamei-merge
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${HUAMEI_POSTGRES_DB:-huamei_team_dev_merge}"
+      POSTGRES_USER: "${HUAMEI_POSTGRES_USER:-postgres}"
+      POSTGRES_PASSWORD: "${HUAMEI_POSTGRES_PASSWORD:?Set HUAMEI_POSTGRES_PASSWORD in deploy/local/.env.merge}"
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C"
+    ports:
+      - "127.0.0.1:${HUAMEI_POSTGRES_PORT:-55435}:5432"
+    volumes:
+      - huamei_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - huamei_merge_backend
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: "${HUAMEI_REDIS_PASSWORD:?Set HUAMEI_REDIS_PASSWORD in deploy/local/.env.merge}"
+    command:
+      - /bin/sh
+      - -ec
+      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$$REDIS_PASSWORD"
+    ports:
+      - "127.0.0.1:${HUAMEI_REDIS_PORT:-56381}:6379"
+    volumes:
+      - huamei_redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - huamei_merge_backend
+
+volumes:
+  huamei_postgres_data:
+    name: huamei-merge_huamei_postgres_data
+  huamei_redis_data:
+    name: huamei-merge_huamei_redis_data
+
+networks:
+  huamei_merge_backend:
+    name: huamei-merge_backend
