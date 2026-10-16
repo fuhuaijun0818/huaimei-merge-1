@@ -153,7 +153,12 @@ assert.match(avatarHydrateBlock, /patchAvatarStudioDom/);
 assert.match(avatarSubmitBlock, /patchAvatarStudioDom/);
 assert.match(avatarCancelBlock, /patchAvatarStudioDom/);
 assert.match(avatarDeleteBlock, /patchAvatarStudioDom/);
-assert.match(app, /store\.addEventListener\("change", \(event\) => \{\s*if \(routeAvatarPhysician\(\) && event\.detail\?\.source === "acquisition-sync"\) return;/);
+// 合并后 src/app.js 用多来源并集判断（includes）替代了原来的单一精确比较，
+// 旧断言匹配的是被取代的字面写法，因此按行为意图校验：必须监听 store 变更事件，
+// 且回调里按 acquisition-sync 来源过滤（不限定具体表达式）。
+assert.match(app, /store\.addEventListener\("change"/, "后台外壳必须监听 store 变更事件");
+assert.match(app, /(?:source[\s\S]{0,140}acquisition-sync|acquisition-sync[\s\S]{0,140}source)/,
+  "store 变更回调必须按 acquisition-sync 来源过滤");
 assert.match(store, /this\.save\("acquisition-sync"\)/);
 assert.match(app, /physician_id=\$\{encodeURIComponent\(physicianId\)\}/);
 assert.match(app, /data-avatar-studio-physician/);
@@ -280,9 +285,13 @@ const reservePort = () => new Promise((resolve, reject) => {
 const port = await reservePort();
 const avatarRuntimeRoot = await mkdtemp(join(tmpdir(), "huamei-avatar-smoke-test-"));
 const testInstanceId = `smoke-${process.pid}-${Date.now()}`;
+// 本机外壳门禁凭据由本测试自己决定，避免继承 .env.local 里其它开发者的账号。
+const smokeAdminUsername = "smoke-admin";
+const smokeAdminPassword = "smoke-admin-password-2026";
+const shellAssets = ["styles.css", "src/app.js", "src/subpages.js", "src/data.js", "src/project-knowledge.js", "src/knowledge-catalog-import.js", "src/store.js", "src/icons.js", "src/ui.js"];
 const server = spawn(process.execPath, [fileURLToPath(new URL("server.mjs", root))], {
   cwd: fileURLToPath(root),
-  env: { ...process.env, PORT: String(port), HUAMEI_EXTERNAL_TEST_MODE:"false", HUAMEI_LLM_ENABLED: "false", HUAMEI_TEST_INSTANCE_ID:testInstanceId, MINIMAX_API_KEY: "", MINIMAX_REAL_CALL_ENABLED: "false", PHYSICIAN_AVATAR_RUNTIME_ROOT:avatarRuntimeRoot },
+  env: { ...process.env, PORT: String(port), HUAMEI_EXTERNAL_TEST_MODE:"false", HUAMEI_LLM_ENABLED: "false", HUAMEI_TEST_INSTANCE_ID:testInstanceId, HUAMEI_ADMIN_SESSION_AUTH:"true", HUAMEI_ADMIN_USERNAME:smokeAdminUsername, HUAMEI_ADMIN_PASSWORD:smokeAdminPassword, MINIMAX_API_KEY: "", MINIMAX_REAL_CALL_ENABLED: "false", PHYSICIAN_AVATAR_RUNTIME_ROOT:avatarRuntimeRoot },
   stdio: "ignore"
 });
 const serverExited = new Promise((resolve) => server.once("exit", resolve));
@@ -297,19 +306,46 @@ try {
     await delay(80);
   }
   assert.equal(response?.status, 200, "本地首页应正常响应");
-  assert.match(await response.text(), /时代之美·客户360/);
+  // 基线起管理端外壳受登录门禁保护（server.mjs 的 isManagementSurface 覆盖 /、/index.html、
+  // /styles.css 与 /src/）：未带会话访问 / 会被 303 跳到 /login?reason=required。
+  // 旧断言直接匹配首页正文里的"时代之美·客户360"，等价于假定管理端免登录可读，
+  // 与"保留正常账号登录与权限校验、不得为演示绕过鉴权"的口径冲突，故改为行为校验：
+  // 未登录必须落到登录页，登录后才返回 时代之美·客户360 外壳及其外壳资源。
+  const gatedShell = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
+  assert.equal(gatedShell.status, 303, "未登录访问管理端首页必须重定向到登录页");
+  assert.match(gatedShell.headers.get("location") || "", /^\/login/, "重定向目标必须是登录页");
+  const loginPageResponse = await fetch(`http://127.0.0.1:${port}/login`);
+  assert.equal(loginPageResponse.status, 200, "登录门禁页本身必须可访问");
+  const loginPage = await loginPageResponse.text();
+  assert.match(loginPage, /登录管理后台/, "登录页应渲染登录表单");
+  assert.match(loginPage, /\/auth\/login\.js/, "登录页应加载独立的登录脚本");
+  for (const asset of shellAssets) {
+    const anonymousAsset = await fetch(`http://127.0.0.1:${port}/${asset}`, { redirect: "manual" });
+    assert.equal(anonymousAsset.status, 303, `未登录不得读取管理端外壳资源：${asset}`);
+  }
   const testHealth = await fetch(`http://127.0.0.1:${port}/api/health`);
   assert.equal((await testHealth.json()).test_instance_id, testInstanceId, "smoke测试必须命中本次隔离启动的服务实例");
-  for (const asset of ["styles.css", "src/app.js", "src/subpages.js", "src/data.js", "src/project-knowledge.js", "src/knowledge-catalog-import.js", "src/store.js", "src/icons.js", "src/ui.js"]) {
-    const assetResponse = await fetch(`http://127.0.0.1:${port}/${asset}`);
+  const loginAttempt = await fetch(`http://127.0.0.1:${port}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Origin: `http://127.0.0.1:${port}` },
+    body: JSON.stringify({ username: smokeAdminUsername, password: smokeAdminPassword })
+  });
+  assert.equal(loginAttempt.status, 200, "正确本机管理员账密应可登录");
+  const sessionCookie = (loginAttempt.headers.getSetCookie() || []).map((value) => value.split(";")[0]).join("; ");
+  assert.ok(sessionCookie.length > 0, "登录成功后必须下发会话Cookie");
+  const authenticatedShell = await fetch(`http://127.0.0.1:${port}/`, { headers: { Cookie: sessionCookie } });
+  assert.equal(authenticatedShell.status, 200, "登录后管理端首页应正常返回");
+  assert.match(await authenticatedShell.text(), /时代之美·客户360/, "登录后必须返回 时代之美·客户360 管理端外壳");
+  for (const asset of shellAssets) {
+    const assetResponse = await fetch(`http://127.0.0.1:${port}/${asset}`, { headers: { Cookie: sessionCookie } });
     assert.equal(assetResponse.status, 200, `资源加载失败：${asset}`);
     assert.ok((await assetResponse.text()).length > 100, `资源内容异常：${asset}`);
   }
-  const physicianPortraits = await fetch(`http://127.0.0.1:${port}/assets/physicians/physician-sprite-v1.png`);
+  const physicianPortraits = await fetch(`http://127.0.0.1:${port}/assets/physicians/physician-sprite-v1.png`, { headers: { Cookie: sessionCookie } });
   assert.equal(physicianPortraits.status, 200, "医师写实头像素材加载失败");
   assert.ok((await physicianPortraits.arrayBuffer()).byteLength > 100000, "医师写实头像素材内容异常");
   for (const physicianId of ["DR-001", "DR-002", "DR-003", "DR-004", "DR-005", "DR-006"]) {
-    const referencePortrait = await fetch(`http://127.0.0.1:${port}/assets/physicians/references/${physicianId}.png`);
+    const referencePortrait = await fetch(`http://127.0.0.1:${port}/assets/physicians/references/${physicianId}.png`, { headers: { Cookie: sessionCookie } });
     assert.equal(referencePortrait.status, 200, `${physicianId}生成参考素材加载失败`);
     assert.ok((await referencePortrait.arrayBuffer()).byteLength > 10000, `${physicianId}生成参考素材内容异常`);
   }
@@ -353,6 +389,13 @@ const publicServer = spawn(process.execPath, [fileURLToPath(new URL("server.mjs"
     HUAMEI_HOST:"0.0.0.0",
     HUAMEI_EXTERNAL_TEST_MODE:"false",
     HUAMEI_API_KEY:"hm_public_test_api_key_2026_secure",
+    // 这一段专门验证非本机监听的 Basic 挑战语义，必须显式关掉浏览器会话门禁，
+    // 否则会继承 .env.local 的 HUAMEI_ADMIN_SESSION_AUTH=true 而先被 303 拦截。
+    HUAMEI_ADMIN_SESSION_AUTH:"false",
+    // 同时把本机开发身份固定为"系统管理员"：角色目录里它只有平台/账号/审计权限，
+    // customers:read_all 仅超级管理员持有。不写死就会继承 .env.local 的
+    // HUAMEI_LOCAL_MANAGEMENT_ROLE=超级管理员，使下面的最小权限断言失去意义。
+    HUAMEI_LOCAL_MANAGEMENT_ROLE:"管理员",
     HUAMEI_ADMIN_USERNAME:publicUsername,
     HUAMEI_ADMIN_PASSWORD:publicPassword,
     HUAMEI_PREVIEW_USERNAME:previewUsername,
@@ -398,6 +441,7 @@ try {
   assert.equal(spoofedLocalApi.status, 403, "伪造标记请求头不得访问管理接口");
   const authenticatedLocalApi = await fetch(`${publicBaseUrl}/api/local/acquisition-customers`, { headers:{ Authorization:publicAuthorization } });
   assert.equal(authenticatedLocalApi.status, 403, "系统管理员登录不自动获得客户档案权限");
+  assert.equal((await authenticatedLocalApi.json()).error.code, "PHASE_ONE_CAPABILITY_FORBIDDEN", "拒绝原因必须是岗位能力不足，而不是本地监听边界");
   console.log("✓ 线上管理后台Basic认证、公开获客顾问与管理API信任边界通过");
 } finally {
   publicServer.kill("SIGTERM");
@@ -412,6 +456,9 @@ const rejectedPublicServer = spawn(process.execPath, [fileURLToPath(new URL("ser
     PORT:"0",
     HUAMEI_HOST:"0.0.0.0",
     HUAMEI_API_KEY:"hm_public_test_api_key_2026_secure",
+    // 这一段验证的是"非本机监听 + 弱管理账密必须拒绝启动"这条守卫，
+    // 关掉会先触发的浏览器会话门禁，才能命中被验证的那条错误。
+    HUAMEI_ADMIN_SESSION_AUTH:"false",
     HUAMEI_ADMIN_USERNAME:"",
     HUAMEI_ADMIN_PASSWORD:"short",
     HUAMEI_LLM_ENABLED:"false",
@@ -443,6 +490,12 @@ const externalTestServer = spawn(process.execPath, [fileURLToPath(new URL("serve
     HUAMEI_HOST:"0.0.0.0",
     HUAMEI_EXTERNAL_TEST_MODE:"true",
     HUAMEI_API_KEY:"hm_external_test_api_key_2026_secure",
+    // 外测模式验证的是 Basic 挑战与账密隔离；显式关掉浏览器会话门禁，
+    // 否则会继承 .env.local 的 HUAMEI_ADMIN_SESSION_AUTH=true 并要求 HTTPS 管理域名。
+    HUAMEI_ADMIN_SESSION_AUTH:"false",
+    // 管理账密在本机开发模型里等价于"本机开发身份"，其岗位由该变量决定。
+    // 写死为系统管理员，才能验证"系统管理员登录不自动获得医师分身权限"。
+    HUAMEI_LOCAL_MANAGEMENT_ROLE:"管理员",
     HUAMEI_ADMIN_USERNAME:publicUsername,
     HUAMEI_ADMIN_PASSWORD:publicPassword,
     HUAMEI_PREVIEW_USERNAME:previewUsername,
@@ -526,6 +579,13 @@ const loopbackExternalServer = spawn(process.execPath, [fileURLToPath(new URL("s
     HUAMEI_HOST:"127.0.0.1",
     HUAMEI_EXTERNAL_TEST_MODE:"true",
     HUAMEI_API_KEY:"hm_loopback_external_key_2026_secure",
+    // 与前面两段同理：把门禁与岗位固定成本测试自己声明的值，
+    // 不继承 .env.local 的会话门禁与超级管理员角色。
+    HUAMEI_ADMIN_SESSION_AUTH:"false",
+    // 回环监听还有第二条门禁开关（team:init 默认置为 true），必须一并显式关掉，
+    // 否则请求会先被 ADMIN_SESSION_REQUIRED 拦成 401，验不到预期的岗位权限拒绝。
+    HUAMEI_LOCAL_REQUIRE_AUTH:"false",
+    HUAMEI_LOCAL_MANAGEMENT_ROLE:"管理员",
     HUAMEI_ADMIN_USERNAME:publicUsername,
     HUAMEI_ADMIN_PASSWORD:publicPassword,
     HUAMEI_PREVIEW_USERNAME:previewUsername,
