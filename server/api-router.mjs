@@ -31,7 +31,8 @@ import {
   listPhysicianAvatarJobs, preparePhysicianAvatarAsset, reconcileMiniMaxCallback,
   savePhysicianAvatarAssetContent, verifyMiniMaxCallbackToken
 } from "./physician-avatar-runtime.mjs";
-import { createReadStream } from "node:fs";
+import { createReadStream, mkdirSync, writeFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 import { normalizeTenantId } from "./platform/tenant-context.mjs";
 import {
   canonicalPayloadHash,
@@ -1560,9 +1561,88 @@ export async function handleApiRequest(request, response) {
       session_expires_at:session.expiresAt,
       conversation_id:session.sessionId,
       projects:record?.projects || [],
+      capabilities:{
+        customer_upload:{
+          enabled:String(process.env.HUAMEI_CUSTOMER_UPLOAD_ENABLED || "false").toLowerCase() === "true",
+          accepted_types:["image/jpeg", "image/png", "image/webp", "application/pdf"],
+          max_image_bytes:64 * 1024 * 1024,
+          max_pdf_bytes:32 * 1024 * 1024
+        }
+      },
       messages,
       request_id:requestId
     }, { "Set-Cookie":session.setCookie, "Cache-Control":"no-store" });
+    return true;
+  }
+
+  // A-025 AC2：客户上传图片/资料（受开关控制；只落客户专属目录，绝不进公开知识库）。
+  if (request.method === "POST" && url.pathname === "/api/public/acquisition-upload") {
+    const uploadEnabled = String(process.env.HUAMEI_CUSTOMER_UPLOAD_ENABLED || "false").toLowerCase() === "true";
+    const limits = {
+      "image/jpeg": 64 * 1024 * 1024,
+      "image/png": 64 * 1024 * 1024,
+      "image/webp": 64 * 1024 * 1024,
+      "application/pdf": 32 * 1024 * 1024
+    };
+    if (!uploadEnabled) {
+      sendError(request, response, requestId, 403, "CUSTOMER_UPLOAD_DISABLED", "当前在线咨询暂不支持上传图片（图片通道未启用）");
+      return true;
+    }
+    let uploadPayload;
+    try {
+      uploadPayload = await readJsonBody(request, 96 * 1024 * 1024);
+    } catch (error) {
+      sendError(request, response, requestId, error.code === "BODY_TOO_LARGE" ? 413 : 400, error.code || "INVALID_JSON", "上传内容不是有效JSON或超出体积上限");
+      return true;
+    }
+    const mimeType = String(uploadPayload?.mime_type || "").toLowerCase().trim();
+    const maxBytes = limits[mimeType];
+    if (!maxBytes) {
+      sendError(request, response, requestId, 415, "CUSTOMER_UPLOAD_TYPE_UNSUPPORTED", "仅支持 jpg、png、webp 图片或 pdf 资料", [{ field:"mime_type" }]);
+      return true;
+    }
+    let buffer;
+    try {
+      buffer = Buffer.from(String(uploadPayload?.data_base64 || ""), "base64");
+    } catch {
+      buffer = Buffer.alloc(0);
+    }
+    if (!buffer.length) {
+      sendError(request, response, requestId, 400, "CUSTOMER_UPLOAD_EMPTY", "上传内容为空");
+      return true;
+    }
+    if (buffer.length > maxBytes) {
+      sendError(request, response, requestId, 413, "CUSTOMER_UPLOAD_TOO_LARGE", "文件超出该类型的体积上限", [{ field:"data_base64", message:`上限 ${maxBytes} 字节` }]);
+      return true;
+    }
+    let uploadTenant;
+    let uploadSession;
+    try {
+      uploadTenant = resolvePublicTenant(request, uploadPayload);
+      uploadSession = resolvePublicSession(request, uploadPayload, uploadTenant);
+    } catch (error) {
+      sendError(request, response, requestId, error.status || 400, error.code || "INVALID_SESSION", error.message || "会话凭证校验失败", error.details || []);
+      return true;
+    }
+    const extension = mimeType === "application/pdf" ? "pdf" : mimeType.split("/")[1].replace("jpeg", "jpg");
+    const uploadId = `upl_${randomUUID()}`;
+    const safeSession = String(uploadSession.sessionId).replace(/[^A-Za-z0-9_-]/g, "").slice(0, 64);
+    const directory = resolvePath(process.cwd(), ".local-data", "customer-uploads", uploadTenant, safeSession);
+    try {
+      mkdirSync(directory, { recursive:true });
+      writeFileSync(resolvePath(directory, `${uploadId}.${extension}`), buffer, { mode:0o600 });
+    } catch {
+      sendError(request, response, requestId, 503, "CUSTOMER_UPLOAD_STORAGE_UNAVAILABLE", "上传暂时无法保存，请稍后重试");
+      return true;
+    }
+    sendJson(request, response, requestId, 200, {
+      upload_id:uploadId,
+      mime_type:mimeType,
+      size_bytes:buffer.length,
+      scope:"customer_only",
+      note:"客户上传内容只保存在本机客户专属目录，不进入公开知识库与公开素材。",
+      request_id:requestId
+    }, { "Cache-Control":"no-store" });
     return true;
   }
 
