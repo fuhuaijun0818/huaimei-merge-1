@@ -1066,7 +1066,7 @@ function acquisitionAgent(input, context, intentAnalysis) {
 
   if (intentAnalysis?.clarification_required) {
     // A-025 AC1：图片通道未启用时明确说明不支持，不留下无效上传入口。
-    const imageUploadRequest = /(?:上传|发送|发|传)[^。，,！？?]{0,5}(?:照片|图片|图像)/.test(input.message);
+    const imageUploadRequest = /(?:上传|发送|发|传)[^。，,！？?]{0,8}(?:照片|图片|图像)/.test(input.message);
     if (imageUploadRequest) {
       const unsupported = "当前在线咨询暂不支持上传图片（图片通道未启用）。您可以把关注点或想了解的项目告诉我，我先介绍一般资料；也可以转人工顾问，安排到院由医生查看具体情况。";
       return {
