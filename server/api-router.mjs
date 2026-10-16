@@ -630,7 +630,7 @@ export async function handleApiRequest(request, response) {
       sendError(request, response, requestId, 404, "PUBLIC_MEDIA_NOT_FOUND", "未找到可公开发送的资料图片");
       return true;
     }
-    sendMedia(request, response, verdict.media, { cacheControl:"public, max-age=3600", contentDisposition:"inline" });
+    sendMedia(request, response, media, { cacheControl:"public, max-age=3600", contentDisposition:"inline" });
     return true;
   }
 

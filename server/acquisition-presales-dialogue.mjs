@@ -4,6 +4,11 @@ export const PRESALES_DIALOGUE_VERSION = '1.0.0';
 const unique = values => [...new Set(values)];
 const defer = /(?:先不|暂时不|不着急|不想|不要)(?:预约|约)|下个月再说|先考虑|考虑一下|别催|不要催/;
 const ready = /帮我约|想预约|想面诊|约一下|约面诊|安排面诊|去面诊|过去面诊/;
+// A-020 AC1：拒绝电话联系、联系时间偏好与暂缓预约是三类不同语义。
+// 拒绝联系必须能独立识别并在后续轮次持续生效（A-013 AC4、A-020 AC3/AC4）。
+const contactRefusal = /(?:不要|不用|不需要|无需|别)(?:再)?(?:给我)?(?:联系|打电话|来电|电话回访|回访)|不要再打(?:电话|给我电话)?|不方便接电话/;
+// 只有客户明确给出新意愿时才恢复联系邀请，且不能被“不要给我打电话”误判为同意。
+const contactConsent = /(?:可以|同意|方便|愿意|请)(?:再)?(?:给我)?(?:打电话|来电|联系我)|打电话给我|电话联系我|可以联系我/;
 const timePattern = /(?:下个月|这个月|本月|周末|(?:下周|本周)[一二三四五六日天]?|周[一二三四五六日天]|今天|明天|后天|(?:\d{1,2}|[一二三四五六七八九十]{1,3})月(?:\d{1,2}|[一二三四五六七八九十]{1,3})[日号]|(?:\d{1,2}|[一二三四五六七八九十]{1,3})[号日]|上午|下午|晚上|\d{1,2}点(?:半)?)/g;
 export function extractVisitPreference(message = '') {
   // A correction replaces, rather than merges with, the abandoned date.
@@ -23,9 +28,17 @@ export function advancePresalesState(previous = {}, message = '') {
   let willingness = ['deferred','interested'].includes(previous.willingness) ? previous.willingness : 'undecided';
   if (defer.test(text)) willingness = 'deferred';
   else if (ready.test(text) || (preference && /去吧|过来|过去|面诊|还是|改到|改成/.test(text))) willingness = 'interested';
+  // 拒绝联系是独立状态：拒绝后持续抑制电话回访与预约邀请，
+  // 直到客户给出明确的新意愿（同意联系或明确要预约）。
+  const refusedNow = contactRefusal.test(text);
+  const consentedNow = !refusedNow && (contactConsent.test(text) || ready.test(text));
+  const contactRefused = consentedNow ? false
+    : refusedNow ? true
+      : previous.contact_refused === true;
   return {
     version:PRESALES_DIALOGUE_VERSION,
     willingness,
+    contact_refused:contactRefused,
     visit_preference:preference || (/(?:去不了|不去|没空|不能来|不方便)/.test(text) ? null : previousPreference),
     arrival_reported:arrival || previous.arrival_reported === true,
     pending_verifications:unique([
@@ -44,6 +57,9 @@ const TOPICS = [
   {id:'payment', test:/付好了|付过了|付款了|支付成功|付款截图|支付截图|已经付款/, coverage:/付款|支付|到账|订单/, answer:'您提到已经付款；是否到账、对应什么订单，还需要通过院方订单核验，聊天中的说明或截图不能代替确认。'},
   {id:'pickup', test:/接机|接站|接送|专车|派车|来接我/, coverage:/接机|接站|接送|派车/, answer:'接送是否提供、覆盖哪里，需要核实当前服务安排；现在还没有确认车辆。'},
   {id:'availability', test:/排到什么时候|最早.{0,8}(?:约|排|做|时间)|什么时间能约|什么时候能约|有(?:没有)?(?:号|位置|名额)|还能约|排得上/, coverage:/排班|时段|名额|可约/, answer:'目前没有已核实的实时可约时段，需要顾问核对排班后确认。'},
+  // A-010 AC1/AC2、A-017 AC3：营业时间属于已知问题，必须给出明确的“待核实”口径，
+  // 不能静默丢掉，也不能把营业时间说成医生排班或可约号源。
+  {id:'hours', test:/(?:营业|上班|开门|接诊).{0,6}(?:时间|几点)|几点(?:上班|下班|开门|关门|接诊)|(?:周末|周六|周日|节假日).{0,6}(?:营业|上班|开门|接诊|有人)/, coverage:/营业时间|上班时间|门诊时间|开门时间/, answer:'营业时间和医生排班的实时信息需要核实；营业时间不等于有号，具体接诊时段要由顾问确认。'},
   {id:'location', test:/位置在哪里|地址在哪|怎么走|医院在哪|哪个门|哪个机场|虹桥还是浦东/, coverage:/院区|地址|入口|机场/, answer:'到院路线需要先确认接诊院区，避免走错地方；目前还没有已核实的院区地址。'},
   {id:'arrival', test:/(?:我|我们)?(?:已经|现在)?(?:到医院了|到院了|到门口了|到大门了)/, coverage:/前台|入口|接待/, answer:'您已经到院了，可以先向前台说明来意；我这里还没有接待人员到场的确认。'},
   {id:'service_complaint', test:/没人回|没有回复|不回复|终于加上|等了.{0,5}(?:半天|好久)|一直没回/, coverage:/等|回复|抱歉/, answer:'让您久等了，抱歉，我们先把您现在的问题说清楚。'}
@@ -60,7 +76,7 @@ export function buildPresalesPlan(message, context = {}) {
     topics,
     stage:state.arrival_reported ? 'arrival_preparation' : topics.some(t => ['price','refund','payment','same_day'].includes(t)) ? 'decision_support' : state.willingness === 'interested' || topics.includes('availability') ? 'appointment_coordination' : 'consultation',
     max_questions:1,
-    suppress_booking_invitation:state.willingness === 'deferred',
+    suppress_booking_invitation:state.willingness === 'deferred' || state.contact_refused === true,
     action_policy:'Only describe pending requests. No booking/payment/pickup confirmation without a server receipt.'
   };
 }
@@ -75,12 +91,13 @@ export function applyPresalesDialogue(result, message, context = {}) {
   const special = topical.some(t => !['price','location'].includes(t.id));
   const dateChange = Boolean(extractVisitPreference(message)) && (plan.willingness === 'interested' || /去吧|太赶|改期/.test(message));
   const deferredNow = defer.test(message);
+  const contactRefusedNow = contactRefusal.test(message);
   const costConcern = /(?:担心|顾虑).{0,8}(?:费用|价格)|(?:费用|价格).{0,5}(?:高|贵)|太贵|有点贵/.test(message);
   const stripsQuestions = text => String(text).replace(/还有其他想了解的吗？\s*或者帮您预约专家做进一步分析？/g,'').replace(/[^。！？!?\n]*[？?]/g,'').trim();
   const replaceGeneric = /need_clarification|conversation_followup|conversation_acknowledgement|appointment_query|appointment_request/.test(intent);
   let text = result.message;
   let serviceOnly = false;
-  if (special || dateChange || deferredNow || (plan.topics.length > 1)) {
+  if (special || dateChange || deferredNow || contactRefusedNow || (plan.topics.length > 1)) {
     const relevantBase = topical.some(t => t.coverage.test(text)) && !replaceGeneric;
     const keepKnowledge = /project_explanation|project_comparison|knowledge_grounded_explanation/.test(intent) && /原理|区别|介绍|是什么/.test(message);
     text = relevantBase || keepKnowledge ? stripsQuestions(text) : '';
@@ -91,7 +108,8 @@ export function applyPresalesDialogue(result, message, context = {}) {
       text = '费用是您在意的重点，具体总价和包含项还需要核实，了解清楚再决定。';
       serviceOnly = true;
     }
-    if (deferredNow) text = [text, /担心|顾虑|犹豫/.test(message) && !topical.length ? '不用急着预约，您目前最担心哪一方面？' : '不用赶着决定，按您方便的节奏来。'].filter(Boolean).join('\n');
+    if (contactRefusedNow) text = '好的，我不会安排电话回访，也不会再向您索要联系方式；有问题可以继续在这里在线咨询。';
+    else if (deferredNow) text = [text, /担心|顾虑|犹豫/.test(message) && !topical.length ? '不用急着预约，您目前最担心哪一方面？' : '不用赶着决定，按您方便的节奏来。'].filter(Boolean).join('\n');
     else if (dateChange) text = [text, `${/太赶|有点赶/.test(message) ? '时间赶就不用勉强，' : ''}先以${plan.visit_preference.replaceAll('、','')}作为您的期望到院时间，实际安排还需要顾问确认。`].filter(Boolean).join('\n');
     if (!text) text = result.message;
   }

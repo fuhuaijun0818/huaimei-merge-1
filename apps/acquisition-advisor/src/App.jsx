@@ -91,7 +91,11 @@ const mergeConversationMessages = (current, incoming) => {
   const displayedOptimisticCustomers = new Map();
   for (const message of current) {
     if (message?.groupId && message?.serverReplyId) displayedServerReplyIds.add(message.serverReplyId);
-    if (message?.optimistic && message?.role === "user") {
+    // 本地客户消息（含已被流式回执确认、id 仍是本地生成的那种）都要参与历史回放去重：
+    // 服务端给客户消息分配的是自己的 msg-<uuid>，与本地 messageKey 不同，
+    // 只按 optimistic 判断会漏掉已确认的那条，于是同一句话被当作新消息再追加一次，
+    // 表现为重复气泡和两次轮询之间的顺序来回跳。
+    if (message?.role === "user" && (message?.optimistic || !/^msg-/u.test(String(message?.id || "")))) {
       displayedOptimisticCustomers.set(customerMessageFingerprint(message), occurredAt(message));
     }
   }
@@ -1121,11 +1125,25 @@ export function App() {
     } catch (requestError) {
       const stopped = stoppedByUserRef.current;
       const timedOut = requestError.name === "AbortError" && !stopped;
+      // 对客文案分类：网络失败、业务失败（4xx）、服务不可用（5xx）分别提示，
+      // 不再把浏览器的内部错误（如 "Failed to fetch"）直接展示给客户。
+      const rawMessage = String(requestError?.message || "").trim();
+      const networkFailure = /Failed to fetch|NetworkError|Load failed|network error/i.test(rawMessage)
+        || requestError?.name === "TypeError";
+      const status = Number(requestError?.status ?? requestError?.statusCode ?? NaN);
+      const businessFailure = Number.isFinite(status) && status >= 400 && status < 500;
+      const serverFailure = (Number.isFinite(status) && status >= 500) || /服务暂时|不可用|503/.test(rawMessage);
       const failure = stopped
         ? "已停止等待本次回复，您可以继续提问。"
         : timedOut
           ? "本次咨询响应时间较长，请稍后重新提问。"
-          : requestError.message;
+          : networkFailure
+            ? "网络连接异常，请检查网络后重试。"
+            : businessFailure
+              ? (rawMessage || "提交未通过校验，请修改后重试。")
+              : serverFailure
+                ? "服务暂时不可用，请稍后重试。"
+                : (rawMessage || "发送失败，请重试。");
       setMessages((current) => current.map((item) => item.clientMessageId === messageKey
         ? { ...item, status:stopped ? "stopped" : "failed", error:stopped ? "" : failure }
         : item));
