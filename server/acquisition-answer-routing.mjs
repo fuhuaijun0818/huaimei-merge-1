@@ -1,4 +1,4 @@
-export const ACQUISITION_ANSWER_ROUTING_VERSION = "1.1.0";
+export const ACQUISITION_ANSWER_ROUTING_VERSION = "1.2.0";
 
 const ENTERPRISE_FACT_PATTERN = /(?:上海华美|华美(?:医院)?|本院|你们(?:医院|这里)|医生|院长|主任|专家|排班|出诊|可约|预约|价格|报价|多少钱|收费|活动|优惠|会员|地址|电话|营业时间|曼托|傲诺拉|特贝茨|璀璨|水滴形|水滴型|微绒|光面|型号|品牌)/i;
 const GENERIC_EDUCATION_PATTERN = /(?:原理|是什么|区别|对比|比较|恢复|术后|注意|流程|一般|常见|多久|怎么选)/;
@@ -9,35 +9,44 @@ const RISK_OR_RESTRICTED_INTENTS = new Set([
 ]);
 const ENTERPRISE_INTENTS = new Set([
   "product_attribute_verification", "doctor_profile", "doctor_discovery_by_project", "doctor_comparison",
-  "doctor_schedule_verification", "price_verification", "policy_verification", "directory_discovery",
+  "doctor_project_verification", "doctor_schedule_verification", "price_verification", "policy_verification", "directory_discovery",
   "product_catalog_detail", "appointment_query", "appointment_request", "service_information"
 ]);
 const STRUCTURED_FACT_INTENTS = new Set([
-  "price_verification", "policy_verification", "doctor_schedule_verification",
+  "price_verification", "doctor_schedule_verification",
   "appointment_query", "appointment_request"
 ]);
+const KNOWLEDGE_FRESHNESS_INTENTS = new Set(["policy_verification"]);
+const GRAPH_KNOWLEDGE_INTENTS = new Set([
+  "product_attribute_verification", "doctor_profile", "doctor_discovery_by_project", "doctor_comparison",
+  "doctor_project_verification", "directory_discovery", "product_catalog_detail", "policy_verification"
+]);
+const GRAPH_PROJECT_INTENTS = new Set(["project_explanation", "project_comparison", "conversation_followup"]);
 const GRAPH_RELATION_INTENTS = new Set(["doctor_comparison"]);
 
 const requiresRelationshipReasoning = ({ message = "", intent = "", analysis = {} } = {}) => {
   if (GRAPH_RELATION_INTENTS.has(intent)) return true;
   const text = String(message);
   const entities = analysis?.entities || {};
-  // 只在用户明确需要跨实体关系、交叉筛选或关系发现时调用 GraphRAG；
-  // 单一医生介绍、价格、活动、排班等均不需要图检索。
+  // 关系推理始终走 GraphRAG；稳定知识意图在 enterprisePlan 中按意图集合决定。
   return (entities.doctors?.length >= 2 && /(?:对比|区别|怎么选|关系|关联)/.test(text))
     || (entities.projects?.length >= 2 && /(?:关系|关联|交叉|同时)/.test(text))
     || /(?:哪些医生|哪几位医生).{0,16}(?:都|同时|也).{0,16}(?:做|擅长|覆盖)/.test(text);
 };
 
 const freshnessFor = (intent, text) => {
-  const dynamic = STRUCTURED_FACT_INTENTS.has(intent)
+  const structuredDynamic = STRUCTURED_FACT_INTENTS.has(intent);
+  const knowledgeDynamic = KNOWLEDGE_FRESHNESS_INTENTS.has(intent);
+  const dynamic = structuredDynamic || knowledgeDynamic
     || /(?:今天|本周|现在|当前|最新|实时|名额|剩余|有效期)/.test(text);
   return {
     required:dynamic,
-    source_of_truth:dynamic ? "structured_business_data" : "approved_knowledge_release",
+    source_of_truth:structuredDynamic ? "structured_business_data" : "approved_knowledge_release",
     verification_required:dynamic,
     verified_at:null,
-    reason:dynamic ? "time_sensitive_business_fact" : "versioned_knowledge_fact"
+    reason:structuredDynamic ? "time_sensitive_business_fact"
+      : knowledgeDynamic ? "time_sensitive_knowledge_fact"
+        : dynamic ? "time_sensitive_verification_required" : "versioned_knowledge_fact"
   };
 };
 
@@ -45,7 +54,10 @@ const enterprisePlan = ({ message, intent, analysis }) => {
   const text = String(message);
   const relationship = requiresRelationshipReasoning({ message:text, intent, analysis });
   const structured = STRUCTURED_FACT_INTENTS.has(intent);
-  const strategy = relationship ? "graph_rag" : structured ? "structured_business_data" : "rag_metadata";
+  const projectKnowledge = GRAPH_PROJECT_INTENTS.has(intent)
+    && ((analysis?.entities?.projects || []).length > 0 || GENERIC_PROJECT_PATTERN.test(text));
+  const graphKnowledge = GRAPH_KNOWLEDGE_INTENTS.has(intent) || projectKnowledge || relationship;
+  const strategy = structured ? "structured_business_data" : graphKnowledge ? "graph_rag" : "rag_metadata";
   return {
     // 保留既有对外 route 值，避免已接入客户端因字段重命名而失效；
     // retrieval_strategy 才是执行层的精确路由，不再默认走 GraphRAG。
@@ -54,8 +66,8 @@ const enterprisePlan = ({ message, intent, analysis }) => {
     tool_execution: intent === "appointment_request" ? "confirmation_required" : "not_requested",
     model_generation_mode:"grounded_copy_only",
     freshness:freshnessFor(intent, text),
-    reason:relationship ? "explicit_relationship_or_multi_hop_reasoning"
-      : structured ? "time_sensitive_structured_business_fact"
+    reason:structured ? "time_sensitive_structured_business_fact"
+      : graphKnowledge ? "stable_knowledge_requires_graph_evidence"
         : "enterprise_fact_with_versioned_rag_evidence",
     version:ACQUISITION_ANSWER_ROUTING_VERSION
   };
@@ -87,7 +99,11 @@ export function routeAcquisitionAnswer({ message = "", intent = "", analysis = {
   if (status !== "completed" || RISK_OR_RESTRICTED_INTENTS.has(intent)) {
     return { route:"deterministic_safety", retrieval_strategy:"none", tool_execution:"blocked", freshness:freshnessFor(intent, text), model_generation_mode:"disabled", reason:"risk_or_restricted", version:ACQUISITION_ANSWER_ROUTING_VERSION };
   }
-  if (ENTERPRISE_INTENTS.has(intent) || ENTERPRISE_FACT_PATTERN.test(text) || (analysis?.entities?.doctors || []).length || (analysis?.entities?.products || []).length) {
+  if (ENTERPRISE_INTENTS.has(intent)
+    || ENTERPRISE_FACT_PATTERN.test(text)
+    || (analysis?.entities?.doctors || []).length
+    || (analysis?.entities?.products || []).length
+    || (analysis?.entities?.projects || []).length) {
     return enterprisePlan({ message:text, intent, analysis });
   }
   if (["project_explanation", "project_comparison", "conversation_followup"].includes(intent) && GENERIC_EDUCATION_PATTERN.test(text) && GENERIC_PROJECT_PATTERN.test(text)) {

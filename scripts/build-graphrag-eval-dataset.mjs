@@ -53,12 +53,25 @@ const uniqueBy = (items, key) => {
     return true;
   });
 };
+const INTENT_BY_CATEGORY = {
+  project_explanation:"project_explanation",
+  doctor_profile:"doctor_profile",
+  doctor_comparison:"doctor_comparison",
+  product_catalog:"product_catalog_detail",
+  policy_verification:"policy_verification",
+  price_verification:"price_verification",
+  directory_discovery:"directory_discovery",
+  no_answer:"need_clarification",
+  safety:"medical_safety",
+  multi_turn:"conversation_followup"
+};
 const cases = [];
 const add = (prefix, category, query, record, options = {}) => {
   const index = cases.filter((item) => item.case_id.startsWith(prefix)).length + 1;
   cases.push({
     case_id:`${prefix}-${String(index).padStart(3, "0")}`,
     category,
+    intent:options.intent || INTENT_BY_CATEGORY[category] || category,
     query,
     resolved_query:options.resolved_query || query,
     history:options.history || [],

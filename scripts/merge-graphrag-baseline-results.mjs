@@ -9,8 +9,11 @@ const readLines = async (name) => (await readFile(join(outputRoot, name), "utf8"
   .filter(Boolean)
   .map((line) => JSON.parse(line));
 const cases = await readLines("retrieval-cases.jsonl");
-const local = await readLines("retrieval-raw-local.jsonl");
-const graphrag = await readLines("retrieval-raw-graphrag.jsonl");
+const intentById = new Map(cases.map((item) => [item.case_id, item.intent || item.category]));
+const local = (await readLines("retrieval-raw-local.jsonl"))
+  .map((row) => ({ ...row, intent:row.intent || intentById.get(row.case_id) || row.category }));
+const graphrag = (await readLines("retrieval-raw-graphrag.jsonl"))
+  .map((row) => ({ ...row, intent:row.intent || intentById.get(row.case_id) || row.category }));
 const datasetSummary = JSON.parse(await readFile(join(outputRoot, "retrieval-dataset-summary.json"), "utf8"));
 const dataIntegrity = JSON.parse(await readFile(join(outputRoot, "retrieval-data-integrity-report.json"), "utf8"));
 
@@ -46,9 +49,9 @@ const summarize = (rows, { evaluatedOnly = false } = {}) => {
     latency_ms_p95:p95(values)
   };
 };
-const byCategory = (rows, options) => Object.fromEntries([...new Set(rows.map((row) => row.category))].sort().map((category) => [
-  category,
-  summarize(rows.filter((row) => row.category === category), options)
+const byField = (rows, field, options) => Object.fromEntries([...new Set(rows.map((row) => row[field]))].sort().map((value) => [
+  value,
+  summarize(rows.filter((row) => row[field] === value), options)
 ]));
 
 const eligibleIds = new Set(graphrag.filter((row) => row.passed !== null).map((row) => row.case_id));
@@ -82,8 +85,12 @@ const report = {
     latency_p95_delta_ms:Number((graphComparableSummary.latency_ms_p95 - localComparableSummary.latency_ms_p95).toFixed(2))
   },
   by_category:{
-    local:byCategory(local, { evaluatedOnly:false }),
-    graphrag:byCategory(graphrag, { evaluatedOnly:true })
+    local:byField(local, "category", { evaluatedOnly:false }),
+    graphrag:byField(graphrag, "category", { evaluatedOnly:true })
+  },
+  by_intent:{
+    local:byField(local, "intent", { evaluatedOnly:false }),
+    graphrag:byField(graphrag, "intent", { evaluatedOnly:true })
   },
   failures:{
     local_no_answer_count:failures.local_no_answer.length,
@@ -116,6 +123,15 @@ const markdown = [
   `- 本地安全处理正确：${localSummary.safety_correct}/${localSummary.safety_cases}`,
   `- GraphRAG 超时/失败：${graphSummary.errors}`,
   `- GraphRAG 缓存命中：${graphSummary.cache_hits}`,
+  "",
+  `### 按意图统计（GraphRAG）`,
+  "",
+  `| 意图 | 用例数 | 命中率 | Recall@K | P95 延迟 |`,
+  `|---|---:|---:|---:|---:|`,
+  ...Object.entries(report.by_intent.graphrag)
+    .filter(([, metrics]) => metrics.evaluated > 0)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([intent, metrics]) => `| ${intent} | ${metrics.evaluated} | ${(metrics.knowledge_hit_rate * 100).toFixed(2)}% | ${metrics.recall_at_k.toFixed(4)} | ${metrics.latency_ms_p95 ?? "-"} ms |`),
   "",
   `同一 132 条可评估子集上：本地命中率 ${(localComparableSummary.knowledge_hit_rate * 100).toFixed(2)}%，GraphRAG ${(graphComparableSummary.knowledge_hit_rate * 100).toFixed(2)}%；GraphRAG P95 延迟高出 ${report.comparable_subset.latency_p95_delta_ms} ms。`,
   "",

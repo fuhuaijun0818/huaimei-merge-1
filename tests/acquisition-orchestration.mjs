@@ -12,12 +12,43 @@ assert.equal(scheduleRoute.retrieval_strategy, "structured_business_data");
 assert.equal(scheduleRoute.freshness.required, true);
 assert.equal(scheduleRoute.freshness.verification_required, true);
 
+const priceRoute = routeAcquisitionAnswer({
+  message:"热玛吉现在多少钱？",
+  intent:"price_verification",
+  analysis:{ entities:{ projects:["热玛吉"] } }
+});
+assert.equal(priceRoute.retrieval_strategy, "structured_business_data");
+assert.equal(priceRoute.freshness.required, true);
+
+const policyRoute = routeAcquisitionAnswer({
+  message:"6月份皮肤套餐政策有哪些？",
+  intent:"policy_verification",
+  analysis:{ entities:{ projects:["皮肤美容"] } }
+});
+assert.equal(policyRoute.retrieval_strategy, "graph_rag");
+assert.equal(policyRoute.freshness.required, true);
+assert.equal(policyRoute.freshness.verification_required, true);
+
+const projectRoute = routeAcquisitionAnswer({
+  message:"热玛吉是什么原理？",
+  intent:"project_explanation",
+  analysis:{ entities:{ projects:["热玛吉"] } }
+});
+assert.equal(projectRoute.retrieval_strategy, "graph_rag");
+
 const doctorRoute = routeAcquisitionAnswer({
   message:"李健院长的胸部整形方向介绍一下。",
   intent:"doctor_profile",
   analysis:{ entities:{ doctors:["李健"], projects:["胸部整形"] } }
 });
-assert.equal(doctorRoute.retrieval_strategy, "rag_metadata");
+assert.equal(doctorRoute.retrieval_strategy, "graph_rag");
+
+const doctorProjectRoute = routeAcquisitionAnswer({
+  message:"李健院长擅长哪些项目？",
+  intent:"doctor_project_verification",
+  analysis:{ entities:{ doctors:["李健"] } }
+});
+assert.equal(doctorProjectRoute.retrieval_strategy, "graph_rag");
 
 const comparisonRoute = routeAcquisitionAnswer({
   message:"李健院长和叶丽萍院长的胸部整形方向怎么选？",
@@ -25,6 +56,13 @@ const comparisonRoute = routeAcquisitionAnswer({
   analysis:{ entities:{ doctors:["李健", "叶丽萍"], projects:["胸部整形"] } }
 });
 assert.equal(comparisonRoute.retrieval_strategy, "graph_rag");
+
+const serviceRoute = routeAcquisitionAnswer({
+  message:"医院地址和停车怎么走？",
+  intent:"service_information",
+  analysis:{ entities:{} }
+});
+assert.equal(serviceRoute.retrieval_strategy, "rag_metadata");
 
 const result = {
   status:"completed",

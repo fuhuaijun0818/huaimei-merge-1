@@ -282,6 +282,7 @@ const queryCoreTerms = (message = "") => {
 const shouldGateWeakEvidence = (message = "", coreTerms = []) => {
   const text = String(message || "").normalize("NFKC").trim();
   if (text.length <= 4 || !coreTerms.length) return false;
+  if (/(?:是的?|对的?|要的?|需要|可以|帮我核验|确认|继续)/u.test(text) && text.length <= 16) return false;
   if (/(?:区别|对比|怎么选)/u.test(text)) return false;
   if (/(?:和|与|、)/u.test(text) && coreTerms.length >= 2) return false;
   return true;

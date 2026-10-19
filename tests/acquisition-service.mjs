@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 process.env.HUAMEI_LLM_ENABLED = "false";
+process.env.HUAMEI_GRAPHRAG_ENABLED = "false";
 process.env.HUAMEI_ACQUISITION_SESSION_STORE_FILE = ":memory:";
 process.env.HUAMEI_ACQUISITION_OPERATIONS_STORE_FILE = ":memory:";
 process.env.HUAMEI_CONVERSATION_FEEDBACK_STORE_FILE = ":memory:";
@@ -156,7 +157,7 @@ try {
   assert.ok(webBody.citations.some((item) => item.source_record_id === "KB-P-024"));
   assert.equal(webBody.profile_signals.turn_count, 1);
   assert.equal(webBody.orchestration.conversation_state.current_goal.intent, "project_explanation");
-  assert.equal(webBody.orchestration.routing.retrieval_strategy, "none");
+  assert.equal(webBody.orchestration.routing.retrieval_strategy, "graph_rag");
 
   const replay = await fetch(`${baseUrl}/v1/channels/web/inbound`, {
     method:"POST",
@@ -199,7 +200,7 @@ try {
   assert.equal(unifiedBody.reply.text.includes("李健"), true);
   assert.ok(unifiedBody.reply.segments.length >= 2);
   assert.equal(unifiedBody.profile_signals.turn_count, 1);
-  assert.equal(unifiedBody.orchestration.routing.retrieval_strategy, "rag_metadata");
+  assert.equal(unifiedBody.orchestration.routing.retrieval_strategy, "graph_rag");
   assert.ok(unifiedBody.orchestration.evidence_claims.length >= 1);
 
   const contextualTurn = async (conversationId, messageId, text) => {

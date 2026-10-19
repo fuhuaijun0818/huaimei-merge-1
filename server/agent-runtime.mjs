@@ -773,6 +773,7 @@ export const filterGraphRagEvidenceForResponse = (evidence = [], localResponse, 
   const strongAnchors = [...new Set(subjectEntityAnchors)];
   const facetAnchors = graphFacetAnchors(query, entities, strongAnchors);
   const weakAnchors = [...new Set(fallbackAnchors)];
+  const doctorEvidenceIntent = intent.startsWith("doctor_");
   if (!strongAnchors.length && !facetAnchors.length && !weakAnchors.length) return [];
   return evidence.filter((item) => {
     const path = String(item.source_relative_path || "");
@@ -784,7 +785,7 @@ export const filterGraphRagEvidenceForResponse = (evidence = [], localResponse, 
     // Pure introductions have no facet boundary and may use subject-only hits.
     const subjectMatched = strongAnchors.some((anchor) => searchable.includes(anchor));
     const facetMatched = facetAnchors.some((anchor) => searchable.includes(anchor));
-    if (strongAnchors.length) return subjectMatched && (!facetAnchors.length || facetMatched);
+    if (strongAnchors.length) return subjectMatched && (!facetAnchors.length || doctorEvidenceIntent || facetMatched);
     if (facetAnchors.length) return facetMatched;
     return weakAnchors.some((anchor) => searchable.includes(anchor));
   });
@@ -1392,11 +1393,18 @@ function acquisitionAgent(input, context, intentAnalysis) {
   }
 
   if (entities.doctors?.length && /(?:有哪些项目|擅长(?:哪些|什么)|能做(?:哪些|什么)项目)/.test(input.message)) return {
-    status:"handover_required",
-    message:`目前未取得足以确认${entities.doctors.join("、")}完整项目范围的已发布关系依据，不能凭资料目录或姓名推断擅长项目。已转人工顾问核实，您可以补充想了解的项目。`,
-    structured_data:{ intent:"doctor_project_verification", doctors:entities.doctors, projects:entities.projects || [], next_questions:[], evidence_gap:"published_doctor_project_relations" },
-    recommended_actions:[{ type:"request_human_source_verification" }],
-    handover:{ required:true, to_team:"在线咨询", reason:"doctor_project_relation_unverified" }, citations:[]
+    status:"completed",
+    message:`我先按已发布的医生资料核验${entities.doctors.join("、")}的公开项目方向，不能仅凭目录或姓名推断个体适用性。`,
+    structured_data:{
+      intent:"doctor_project_verification",
+      doctors:entities.doctors,
+      projects:entities.projects || [],
+      next_questions:[],
+      evidence_plan:{ path_prefixes:["医生介绍/"], require_doctor_evidence:true },
+      knowledge_package:{ version:packageStatus.version, loaded:packageStatus.loaded }
+    },
+    recommended_actions:[{ type:"verify_doctor_project_relations", fields:["doctors", "projects"] }],
+    handover:{ required:false }, citations:[]
   };
 
   if (["doctor_profile", "doctor_schedule_verification"].includes(intent)) {
@@ -2168,6 +2176,23 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
     localResponse.guardrails.graphrag_fallback_reason = answerRouting.route === "enterprise_knowledge_graph"
       ? `not_selected_${answerRouting.retrieval_strategy || "unknown"}`
       : "answer_routing_no_enterprise_evidence";
+  }
+
+  if (agent.id === "A-01" && localIntent === "doctor_project_verification") {
+    if (localResponse.guardrails.graphrag_used) {
+      const evidence = localResponse.output.structured_data?.knowledge_hits || [];
+      const titles = [...new Set(evidence.map((item) => item.title).filter(Boolean))].slice(0, 3);
+      localResponse.output.message = `已按已发布医生资料核验到${titles.length ? titles.join("、") : "相关公开方向"}。具体擅长范围和近期排班仍以院方最新信息为准。`;
+      localResponse.output.structured_data.next_questions = ["您想继续了解这位医生的项目方向，还是请人工顾问核验最新排班？"];
+    } else {
+      localResponse.status = "handover_required";
+      localResponse.output.message = "目前未取得足以确认这位医生完整项目范围的已发布关系依据，不能凭目录或姓名推断擅长项目。已转人工顾问核实。";
+      localResponse.output.handover = { required:true, to_team:"在线咨询", reason:"doctor_project_relation_unverified" };
+      localResponse.output.citations = [];
+      localResponse.guardrails.llm_used = false;
+      localResponse.guardrails.llm_skip_reason = "doctor_project_relation_unverified";
+    }
+    return finalize(localResponse);
   }
 
   // 对“某一明确产品究竟是什么形状/表面”的事实核验，答案应逐字受已准入
