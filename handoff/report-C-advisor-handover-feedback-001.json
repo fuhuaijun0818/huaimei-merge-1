@@ -1,0 +1,44 @@
+{
+  "role": "C",
+  "task_id": "advisor-handover-feedback-001",
+  "summary": "前台转人工/系统提示消息不再展示“这次回答有帮助吗？”赞踩控件，避免对非机器人回答和人工回答本身做评价。",
+  "acceptance_steps": [
+    "打开前台，触发需要转人工的问题；系统提示与人工接管卡片只保留接管说明、留资入口和预约登记，不再出现赞踩按钮。",
+    "普通AI回答仍保留每轮一组赞踩控件；拆分短句的回答仍只在最后一段展示一组。",
+    "执行 node tests/acquisition-advisor-otp-ui.mjs，UI契约测试通过。",
+    "执行 npm --prefix apps/acquisition-advisor run build，Vite生产构建通过。"
+  ],
+  "tests": [
+    {
+      "command": "node tests/acquisition-advisor-otp-ui.mjs",
+      "status": "passed",
+      "evidence": "转人工/系统提示识别与反馈控件隐藏断言通过"
+    },
+    {
+      "command": "npm --prefix apps/acquisition-advisor run build",
+      "status": "passed",
+      "evidence": "29 modules transformed，dist构建成功"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "apps/acquisition-advisor/src/App.jsx",
+      "owner": "A",
+      "change": "新增isHandoverNotice判断，source=system、status=handover_required或handover.required=true时不渲染ConversationFeedback"
+    },
+    {
+      "path": "tests/acquisition-advisor-otp-ui.mjs",
+      "owner": "A",
+      "change": "更新反馈控件契约断言，覆盖转人工不展示赞踩"
+    }
+  ],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "本次仅调整前台展示；服务端仍保留对普通回答反馈的接收接口，未改变反馈存储和Bad Case流程。",
+    "历史已存在的转人工消息在重新渲染时同样按当前规则隐藏赞踩。"
+  ],
+  "rollback": "回退apps/acquisition-advisor/src/App.jsx与tests/acquisition-advisor-otp-ui.mjs对应提交。"
+}

@@ -32,6 +32,7 @@ assert.match(source, /acquisition-feedback/, "前台每轮回答必须支持赞�
 assert.match(source, /这次回答有帮助吗？/, "前台需要明确展示回答反馈入口");
 assert.match(source, /reply_id:replyId/, "反馈必须绑定被评价的具体回答轮次");
 assert.match(source, /transcript:messages\.slice\(-24\)/, "踩反馈必须携带有限且可审计的可见上下文");
-assert.match(source, /message\.isFinalSegment && <ConversationFeedback/, "拆分短句的一轮回答只能展示一组反馈控件");
+assert.match(source, /const isHandoverNotice = source === "system"\s*\|\| message\.status === "handover_required"\s*\|\| message\.handover\?\.required === true;/, "转人工与系统提示必须被识别为非机器人回答");
+assert.match(source, /message\.isFinalSegment && !isHandoverNotice && <ConversationFeedback/, "拆分短句的一轮回答只能展示一组反馈控件，转人工提示不展示赞踩");
 
 console.log("acquisition advisor direct lead-capture UI contract tests passed");

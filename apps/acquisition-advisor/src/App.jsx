@@ -527,6 +527,10 @@ function ChatMessage({ message, showLeadCapture, leadState, appointmentState, on
   const source = message.source || "ai";
   const sourceLabel = source === "human" ? "人工顾问" : source === "system" ? "系统提示" : "小美 · AI获客顾问";
   const sourceAvatar = source === "human" ? "顾" : source === "system" ? "系" : "美";
+  // 转人工/系统提示不是机器人回答，也不评价人工回答本身，因此不展示赞踩。
+  const isHandoverNotice = source === "system"
+    || message.status === "handover_required"
+    || message.handover?.required === true;
   // 预约提案会先要求联系方式；B 的专用留资提示与提案一起渲染。
   const leadPrompt = appointmentLeadCaptureRequired(message)
     ? { ...APPOINTMENT_LEAD_CAPTURE_PROMPT, ...(message.leadCapture || {}) }
@@ -542,7 +546,7 @@ function ChatMessage({ message, showLeadCapture, leadState, appointmentState, on
       {message.isFinalSegment && message.status === "handover_required" && <div className="handover-note">{medicalHandover ? "该问题需要人工顾问或医生进一步协助，小美不会在线判断或提供医疗处置建议。" : "该问题已停止自动推进，需要由相关人工团队继续处理。"}</div>}
       <PublicKnowledgeMedia media={message.media} onPreview={onPreview} />
       <KnowledgeSources citations={message.citations} onPreview={onPreview} />
-      {message.isFinalSegment && <ConversationFeedback feedback={feedback} onFeedback={onFeedback} />}
+      {message.isFinalSegment && !isHandoverNotice && <ConversationFeedback feedback={feedback} onFeedback={onFeedback} />}
       {showLeadCapture && <LeadCaptureCard prompt={{ ...leadPrompt, consent_text:leadState.consentText || leadPrompt?.consent_text }} status={leadState.status} error={leadState.error} result={leadState.result} onSubmit={onLeadSubmit} handover={message.handover} />}
       {message.isFinalSegment && <AppointmentActionCard proposal={message.orchestration?.action_proposal} profileSignals={message.profileSignals} leadCaptured={Boolean(leadState.result)} state={appointmentState} onSubmit={onAppointmentSubmit} allowSubjectEntry={message.handover?.required === true} />}
     </article>
