@@ -162,6 +162,11 @@ assert.match(app, /The window stays fixed as new turns arrive/, "新消息到达
 assert.match(app, /data-action="load-earlier-messages"/, "历史会话必须提供加载更早消息的真实页面入口");
 assert.match(app, /function loadEarlierConversationMessages\(conversationId\)[\s\S]*?updateReceptionWindow\(\);/, "加载历史后必须仅更新接待窗口");
 assert.match(app, /const chatAnchor=captureScrollAnchor\(chat\);[\s\S]*?if\(selector==='\.chat-body'\)restoreScrollAnchor\(current,anchor\);/, "加载更早消息时必须恢复当前阅读锚点，而不是跳到底部");
+assert.match(app, /receptionScrollAnchors:\s*\{\}/, "接待工作台必须按会话保存滚动位置");
+assert.match(app, /mode:\s*"anchor"[^}]*top:\s*element\.scrollTop/, "滚动锚点必须同时保留像素位置，锚点消息消失时不能回落到顶部");
+assert.match(app, /if \(message\) element\.scrollTop = Math\.max\(0, message\.offsetTop - 8\);\s*else element\.scrollTop = element\.scrollHeight;/, "已读游标消息不在当前历史窗口时必须回落到最新消息，而不是顶部");
+assert.match(app, /case "select-conversation":\s*\{[\s\S]{0,260}ui\.receptionScrollAnchors\[ui\.conversationId\]=previousAnchor;[\s\S]{0,120}ui\.conversationId = id;[\s\S]{0,120}render\(true\);/, "切换会话前必须保存当前会话滚动锚点");
+assert.match(app, /const immediateAnchor=previousConversationId === ui\.conversationId[\s\S]{0,160}: ui\.receptionScrollAnchors\[ui\.conversationId\]/, "切换会话后必须优先恢复目标会话自己的滚动位置");
 assert.deepEqual(
   unresolvedTemplateVariables("您好，{{客户称呼}}，请了解{{ 项目名称 }}；{{客户称呼}}"),
   ["客户称呼", "项目名称"],

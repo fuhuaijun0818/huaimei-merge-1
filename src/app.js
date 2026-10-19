@@ -82,6 +82,7 @@ const ui = {
   conversationQuery: "",
   receptionTab: "phrases",
   receptionHistoryWindows: {},
+  receptionScrollAnchors: {},
   replyDrafts: {},
   replyDraftStates: {},
   journeyView: "list",
@@ -2626,11 +2627,11 @@ async function cancelAvatarJob(generationJobId, reopenDetail = false) {
 function captureScrollAnchor(element) {
   if (!element) return null;
   const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 48;
-  if (atBottom) return { mode: "bottom" };
+  if (atBottom) return { mode: "bottom", top: element.scrollTop };
   const message = [...element.querySelectorAll("[data-message-id]")]
     .find((node) => node.offsetTop + node.offsetHeight > element.scrollTop + 1);
   return message
-    ? { mode: "anchor", id: message.dataset.messageId, offset: element.scrollTop - message.offsetTop }
+    ? { mode: "anchor", id: message.dataset.messageId, offset: element.scrollTop - message.offsetTop, top: element.scrollTop }
     : { mode: "top", top: element.scrollTop };
 }
 
@@ -2661,6 +2662,7 @@ function restoreReadCursorPosition(element, conversation) {
   const message = [...element.querySelectorAll("[data-message-id]")]
     .find((node) => node.dataset.messageId === readId);
   if (message) element.scrollTop = Math.max(0, message.offsetTop - 8);
+  else element.scrollTop = element.scrollHeight;
 }
 
 const receptionGroupKey = (group) => group?.querySelector('summary')?.childNodes?.[0]?.textContent?.trim() || '';
@@ -2788,11 +2790,25 @@ function render(preserveScroll = false) {
   const previousListScroll=previousList?.scrollTop;
   const previousChatAnchor=captureScrollAnchor(previousChat);
   const previousConversationId=previousInput?.dataset.conversationId;
+  if (previousConversationId && previousChatAnchor) {
+    ui.receptionScrollAnchors[previousConversationId] = previousChatAnchor;
+  }
   if (previousInput?.dataset.conversationId) saveReplyDraft(previousInput.dataset.conversationId, previousInput.value);
 
   if (!handoverOnlyMode) syncAvatarStudioScope();
   const y = preserveScroll ? window.scrollY : 0;
   document.querySelector("#app").innerHTML = shell(currentPage());
+  // Restore synchronously after the conversation DOM is replaced, then once
+  // more after layout settles. This prevents a visible jump to scrollTop=0
+  // when switching between conversations with different history heights.
+  const immediateChat=document.querySelector(".chat-body");
+  if(immediateChat) {
+    const immediateAnchor=previousConversationId === ui.conversationId
+      ? previousChatAnchor
+      : ui.receptionScrollAnchors[ui.conversationId];
+    if(immediateAnchor)restoreScrollAnchor(immediateChat,immediateAnchor);
+    else restoreReadCursorPosition(immediateChat,store.conversation(ui.conversationId));
+  }
   hydrateListPagination();
   const replyInput=document.querySelector('#message-input');
   if (replyInput) {
@@ -2812,8 +2828,13 @@ function render(preserveScroll = false) {
     const nextList=document.querySelector('.conversation-items');
     if(nextList && previousListScroll !== undefined)nextList.scrollTop=previousListScroll;
     const nextChat=document.querySelector(".chat-body");
-    if(nextChat && previousConversationId === ui.conversationId && previousChatAnchor)restoreScrollAnchor(nextChat,previousChatAnchor);
-    else if(nextChat)restoreReadCursorPosition(nextChat,store.conversation(ui.conversationId));
+    if(nextChat) {
+      const nextAnchor=previousConversationId === ui.conversationId
+        ? previousChatAnchor
+        : ui.receptionScrollAnchors[ui.conversationId];
+      if(nextAnchor)restoreScrollAnchor(nextChat,nextAnchor);
+      else restoreReadCursorPosition(nextChat,store.conversation(ui.conversationId));
+    }
     if (!handoverOnlyMode) {
       if(hasCapability("platform:manage")) hydrateLlmRuntime();
       if (routeAvatarPhysician()) hydrateAvatarStudio();
@@ -3448,7 +3469,14 @@ async function handleAction(action, id, target) {
     case "add-journey": showJourneyModal(id); break;
     case "consent-detail": showPhotoModal(id); break;
     case "stage-history": showEvidenceModal(id); break;
-    case "select-conversation": ui.conversationId = id; markConversationRead(store.conversation(id)); render(true); break;
+    case "select-conversation": {
+      const previousAnchor=captureScrollAnchor(document.querySelector(".chat-body"));
+      if(previousAnchor)ui.receptionScrollAnchors[ui.conversationId]=previousAnchor;
+      ui.conversationId = id;
+      markConversationRead(store.conversation(id));
+      render(true);
+      break;
+    }
     case "conversation-stats": location.hash = "#/conversations/quality"; break;
     case "new-conversation": showNewConversationModal(); break;
     case "conversation-filter": ui.conversationFilter = id; render(true); break;

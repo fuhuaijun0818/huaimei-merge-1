@@ -1,0 +1,45 @@
+{
+  "role": "C",
+  "task_id": "reception-scroll-001",
+  "summary": "修复接待工作台在会话之间切换时聊天区滚动条跳到顶部的问题：按会话保存滚动锚点，切换回来时恢复原位置；无历史锚点或已读消息不在当前历史窗口时回落到最新消息。",
+  "acceptance_steps": [
+    "在会话列表中选择BAE178，将聊天区滚动到中间位置，再点击0DF98A；0DF98A显示自己的会话内容，不再出现聊天区滚动条跳到顶部。",
+    "再次切回BAE178，聊天区恢复到离开前的消息位置。",
+    "首次打开一个没有保存锚点的会话时，显示最新消息；历史窗口中没有已读游标对应消息时也显示最新消息。",
+    "执行 node tests/management-handover-ui.mjs，滚动锚点、已读游标回退和历史加载契约测试通过。",
+    "执行 npm run team:verify，13项套件全部passed。"
+  ],
+  "tests": [
+    {
+      "command": "node tests/management-handover-ui.mjs",
+      "status": "passed",
+      "evidence": "按会话保存滚动位置、锚点像素位置保留、已读游标回退到最新消息、切换会话恢复目标锚点断言通过"
+    },
+    {
+      "command": "npm run team:verify",
+      "status": "passed",
+      "evidence": "13项套件全部passed"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "src/app.js",
+      "owner": "shared",
+      "change": "新增receptionScrollAnchors；captureScrollAnchor保存top；切换会话前保存锚点；render优先恢复目标会话锚点；已读游标缺失时回落到最新消息"
+    },
+    {
+      "path": "tests/management-handover-ui.mjs",
+      "owner": "unassigned",
+      "change": "新增会话切换滚动位置恢复回归断言"
+    }
+  ],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "滚动位置保存在当前页面内存中，刷新页面或重新登录后会重置；本次未写入浏览器持久化存储。",
+    "本次只修复聊天消息区滚动，不改变左侧会话列表和页面整体滚动行为。"
+  ],
+  "rollback": "回退src/app.js与tests/management-handover-ui.mjs对应提交。"
+}
