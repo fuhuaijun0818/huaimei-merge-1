@@ -214,6 +214,7 @@ try {
     baseline_summary_sha256:await sha256File(evaluationNotesPath),
     local:results.local || null,
     graphrag:results.graphrag || null,
+    by_intent:results.by_intent || null,
     comparable_subset:results.comparable_subset || null,
     failure_counts:results.failures ? {
       local_no_answer:results.failures.local_no_answer_count,
