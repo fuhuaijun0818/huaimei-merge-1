@@ -1,0 +1,44 @@
+{
+  "role": "C",
+  "task_id": "advisor-waiting-indicator-001",
+  "summary": "客户端输入区不再展示“小美正在整理资料…”和“停止等待”按钮；发送后只保留输入区禁用与既有生成状态，不改变后端请求、超时或重试逻辑。",
+  "acceptance_steps": [
+    "在客户端发送消息后，输入区下方不再出现“小美正在整理资料…”等待行和“停止等待”按钮。",
+    "请求仍正常发出，回复仍按原有流式/最终回执逻辑展示；后端超时和重试不受影响。",
+    "执行 node tests/acquisition-advisor-otp-ui.mjs，客户端契约通过。",
+    "执行 npm --prefix apps/acquisition-advisor run build，生产构建通过。"
+  ],
+  "tests": [
+    {
+      "command": "node tests/acquisition-advisor-otp-ui.mjs",
+      "status": "passed",
+      "evidence": "客户端不再包含composer-waiting和停止等待按钮断言通过"
+    },
+    {
+      "command": "npm --prefix apps/acquisition-advisor run build",
+      "status": "passed",
+      "evidence": "Vite 29 modules transformed，dist构建成功"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "apps/acquisition-advisor/src/App.jsx",
+      "owner": "A",
+      "change": "移除Composer中的composer-waiting等待行和停止等待按钮"
+    },
+    {
+      "path": "tests/acquisition-advisor-otp-ui.mjs",
+      "owner": "A",
+      "change": "新增等待提示不展示的契约断言"
+    }
+  ],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "本次只移除客户端等待提示，不改变请求取消能力；如后续需要取消请求，应通过独立的非展示入口或产品交互重新设计。",
+    "后端超时、重试和流式生成状态保持不变。"
+  ],
+  "rollback": "回退apps/acquisition-advisor/src/App.jsx和tests/acquisition-advisor-otp-ui.mjs对应提交。"
+}

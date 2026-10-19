@@ -223,14 +223,6 @@ function Composer({ value, onChange, onSubmit, disabled, restoringSession, input
           <button type="button" className="retry-button" onClick={() => onRetryUpload?.()} aria-label="重试上传">重试上传</button>
         </div>
       )}
-      {waiting && (
-        <div className="composer-waiting" role="status">
-          <span>小美正在整理资料…</span>
-          <button type="button" className="stop-button" onClick={onStop} aria-label="停止等待">
-            停止等待
-          </button>
-        </div>
-      )}
       <p className="compliance-note">时代之美 · AI获客顾问·小美 · 项目信息仅供参考，具体适用性请咨询专业医师</p>
     </div>
   );
