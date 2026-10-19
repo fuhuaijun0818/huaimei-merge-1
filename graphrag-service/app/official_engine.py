@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 from importlib.metadata import version as package_version
 import json
+import re
 import unicodedata
 
 import pandas as pd
@@ -99,6 +100,11 @@ class OfficialGraphRagEngine:
     def _normalized_source_text(value: Any) -> str:
         return unicodedata.normalize("NFKC", str(value or "")).replace("\r\n", "\n").replace("\r", "\n").strip()
 
+    @staticmethod
+    def _normalized_content_fingerprint(value: Any) -> str:
+        normalized = unicodedata.normalize("NFKC", str(value or "")).lower()
+        return re.sub(r"[^\w\u3400-\u9fff]+", "", normalized)
+
     @classmethod
     def _build_text_unit_bindings(
         cls,
@@ -118,7 +124,9 @@ class OfficialGraphRagEngine:
             approved_text = cls._normalized_source_text(catalog.get("text"))
             if not text:
                 raise RuntimeError("OFFICIAL_TEXT_UNIT_TEXT_MISSING")
-            if not approved_text or text not in approved_text:
+            text_fingerprint = cls._normalized_content_fingerprint(text)
+            approved_fingerprint = cls._normalized_content_fingerprint(approved_text)
+            if not approved_text or not text_fingerprint or text_fingerprint not in approved_fingerprint:
                 raise RuntimeError("OFFICIAL_TEXT_UNIT_CONTENT_NOT_APPROVED")
             for candidate in (frame_index, row.get("human_readable_id"), row.get("id")):
                 if candidate is None:

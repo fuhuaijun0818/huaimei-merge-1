@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { loadHuameiKnowledge } from "../server/huamei-knowledge.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const baselineId = String(process.argv[2] || "graphrag-baseline-20261019.1").trim();
+const baselineId = String(process.argv[2] || "graphrag-baseline-20261019.2").trim();
 const outputRoot = join(root, "artifacts", "graphrag-baseline", baselineId);
 const sha256 = (value) => createHash("sha256").update(value).digest("hex");
 const sha256Text = (value) => sha256(Buffer.from(String(value), "utf8"));
@@ -81,6 +81,10 @@ const pocOutputRoot = join(root, ".team-dev", "graphrag-poc", "project", "output
 const pocManifestPath = join(pocOutputRoot, "manifest.json");
 const pocReleaseRoot = join(root, ".team-dev", "graphrag-poc", "release");
 const pocReleaseStorePath = join(root, ".team-dev", "graphrag-poc", "knowledge-releases.json");
+const fullOutputRoot = join(root, ".team-dev", "graphrag-baseline-924", "project", "output");
+const fullManifestPath = join(fullOutputRoot, "manifest.json");
+const fullReleaseRoot = join(root, ".team-dev", "graphrag-baseline-924", "release");
+const fullReleaseStorePath = join(root, ".team-dev", "graphrag-baseline-924", "knowledge-releases.json");
 
 await mkdir(outputRoot, { recursive:true });
 
@@ -108,29 +112,50 @@ const knowledgeStatus = {
   manifest_sha256:knowledge.manifestSha256
 };
 
-let pocIndex = { status:"not_found" };
-let pocManifest = null;
+let selectedIndex = { status:"not_found" };
+let selectedManifest = null;
+let selectedManifestPath = null;
+let selectedReleaseRoot = null;
+let selectedReleaseStorePath = null;
 try {
-  pocManifest = await readJson(pocManifestPath);
-  const unsigned = { ...pocManifest };
-  delete unsigned.manifest_sha256;
-  const recomputedManifestSha256 = sha256Text(canonical(unsigned));
-  pocIndex = {
-    status:"poc_only",
-    engine:pocManifest.engine || null,
-    index_version:pocManifest.index_version || null,
-    built_at:pocManifest.built_at || null,
-    build_method:pocManifest.build?.method || null,
-    input_record_count:pocManifest.input?.record_count || null,
-    input_sha256:pocManifest.input?.sha256 || null,
-    release_id:pocManifest.release_binding?.release_id || null,
-    tenant_id:pocManifest.release_binding?.tenant_id || null,
-    manifest_sha256:pocManifest.manifest_sha256 || null,
-    manifest_sha256_verified:recomputedManifestSha256 === pocManifest.manifest_sha256,
-    model_fingerprint_sha256:pocManifest.model_fingerprint?.fingerprint_sha256 || null
-  };
+  selectedManifestPath = fullManifestPath;
+  selectedManifest = await readJson(selectedManifestPath);
+  selectedReleaseRoot = fullReleaseRoot;
+  selectedReleaseStorePath = fullReleaseStorePath;
 } catch (error) {
   if (error.code !== "ENOENT") throw error;
+}
+if (!selectedManifest) {
+  try {
+    selectedManifestPath = pocManifestPath;
+    selectedManifest = await readJson(selectedManifestPath);
+    selectedReleaseRoot = pocReleaseRoot;
+    selectedReleaseStorePath = pocReleaseStorePath;
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
+if (selectedManifest) {
+  const unsigned = { ...selectedManifest };
+  delete unsigned.manifest_sha256;
+  const recomputedManifestSha256 = sha256Text(canonical(unsigned));
+  selectedIndex = {
+    status:selectedManifestPath === fullManifestPath ? "baseline_index" : "poc_only",
+    source_path:relative(root, selectedManifestPath).replaceAll("\\", "/"),
+    engine:selectedManifest.engine || null,
+    index_version:selectedManifest.index_version || null,
+    built_at:selectedManifest.built_at || null,
+    build_method:selectedManifest.build?.method || null,
+    input_record_count:selectedManifest.input?.record_count || null,
+    input_sha256:selectedManifest.input?.sha256 || null,
+    release_id:selectedManifest.release_binding?.release_id || null,
+    tenant_id:selectedManifest.release_binding?.tenant_id || null,
+    manifest_sha256:selectedManifest.manifest_sha256 || null,
+    manifest_sha256_verified:recomputedManifestSha256 === selectedManifest.manifest_sha256,
+    model_fingerprint_sha256:selectedManifest.model_fingerprint?.fingerprint_sha256 || null,
+    artifacts:Object.fromEntries(Object.entries(selectedManifest.artifacts || {}).map(([name, artifact]) => [name, artifact.sha256 || null])),
+    index_content_sha256:selectedManifest.index_content_sha256 || null
+  };
 }
 
 const runtime = {
@@ -170,7 +195,9 @@ const runtimeFlags = {
 const baseline = {
   schema_version:"huamei.graphrag.baseline.v1",
   baseline_id:baselineId,
-  baseline_status:"environment_frozen_index_pending",
+  baseline_status:selectedIndex.status === "baseline_index"
+    ? "environment_and_index_frozen"
+    : "environment_frozen_index_pending",
   evidence_class:"development",
   created_at:nowShanghai(),
   git:{
@@ -189,15 +216,17 @@ const baseline = {
     prompts_sha256:promptsSha256
   },
   index:{
-    status:"pending_step_0.2",
+    status:selectedIndex.status === "baseline_index" ? "complete" : "pending_step_0.2",
     expected_engine:"official_graphrag_3_1_1",
     expected_record_count:knowledgeStatus.record_count,
-    poc:pocIndex
+    selected:selectedIndex
   },
   release:{
     status:"dev_fixture_only",
     production_eligible:false,
-    release_store_path:".team-dev/graphrag-poc/knowledge-releases.json"
+    release_store_path:selectedReleaseStorePath
+      ? relative(root, selectedReleaseStorePath).replaceAll("\\", "/")
+      : null
   },
   runtime_flags:runtimeFlags,
   dataset:{
@@ -205,7 +234,7 @@ const baseline = {
     dataset_id:null
   },
   blockers:[
-    "Full 924-record official GraphRAG index is built in step 0.2.",
+    ...(selectedIndex.status === "baseline_index" ? [] : ["Full 924-record official GraphRAG index is built in step 0.2."]),
     "Current release store is a development fixture and is not production eligible.",
     "Retrieval evaluation dataset is built in step 0.3."
   ]
@@ -220,10 +249,12 @@ await writeFile(join(outputRoot, "prompts-files.sha256"), promptsMaterial, "utf8
 await cp(settingsPath, join(outputRoot, "settings.yaml"));
 await cp(knowledgeManifestPath, join(outputRoot, "knowledge-package-manifest.json"));
 await copyIfExists(publicCatalogPath, join(outputRoot, "huamei-public-safe.jsonl"));
-await copyIfExists(pocManifestPath, join(outputRoot, "poc-index-manifest.json"));
-await copyIfExists(join(pocReleaseRoot, "release-binding.json"), join(outputRoot, "poc-release-binding.json"));
-await copyIfExists(join(pocReleaseRoot, "approved-records.json"), join(outputRoot, "poc-approved-records.json"));
-await copyIfExists(pocReleaseStorePath, join(outputRoot, "poc-knowledge-releases.json"));
+if (selectedManifestPath) await copyIfExists(selectedManifestPath, join(outputRoot, "index-manifest.json"));
+if (selectedReleaseRoot) {
+  await copyIfExists(join(selectedReleaseRoot, "release-binding.json"), join(outputRoot, "release-binding.json"));
+  await copyIfExists(join(selectedReleaseRoot, "approved-records.json"), join(outputRoot, "approved-records.json"));
+}
+if (selectedReleaseStorePath) await copyIfExists(selectedReleaseStorePath, join(outputRoot, "knowledge-releases.json"));
 
 const files = (await walkFiles(outputRoot)).sort();
 const checksumLines = [];
@@ -248,6 +279,6 @@ console.log(JSON.stringify({
   baseline_status:baseline.baseline_status,
   git:baseline.git,
   knowledge:baseline.knowledge,
-  poc_index:baseline.index.poc,
+  index:baseline.index.selected,
   receipt
 }, null, 2));

@@ -80,6 +80,10 @@ const normalizeApprovedText = (value) => String(value || "")
   .replace(/\r/g, "\n")
   .trim();
 
+const normalizeApprovedContentFingerprint = (value) => normalizeApprovedText(value)
+  .toLowerCase()
+  .replace(/[^\p{L}\p{N}]+/gu, "");
+
 const integrityError = (code, message) => {
   const error = new Error(message);
   error.code = code;
@@ -101,6 +105,8 @@ const canonicalizeOfficialEvidence = (body, options = {}) => {
     const candidateExcerpt = String(candidate?.content || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim();
     const candidateContent = normalizeApprovedText(candidateExcerpt);
     const approvedText = normalizeApprovedText(canonical ? officialKnowledgeRecordText(canonical) : "");
+    const candidateFingerprint = normalizeApprovedContentFingerprint(candidateContent);
+    const approvedFingerprint = normalizeApprovedContentFingerprint(approvedText);
     const metadataHash = String(candidate?.metadata?.record_content_sha256 || "").trim().toLowerCase();
     const exactProvenance = canonical
       && String(candidate.record_type || "") === canonical.record_type
@@ -112,7 +118,8 @@ const canonicalizeOfficialEvidence = (body, options = {}) => {
       || candidate?.metadata?.official_context !== true
       || metadataHash !== canonical.record_content_sha256
       || !candidateContent
-      || !approvedText.includes(candidateContent)
+      || !candidateFingerprint
+      || !approvedFingerprint.includes(candidateFingerprint)
       || !exactProvenance) {
       throw integrityError("GRAPHRAG_EVIDENCE_INTEGRITY_REJECTED", "GraphRAG证据未通过本地不可变目录校验");
     }
