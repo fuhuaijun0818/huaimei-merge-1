@@ -398,7 +398,10 @@ const selectedBreastProjectSummary = (type) => type === "implant"
 
 const RISK_RULES = [
   { id: "MEDICAL_EMERGENCY", level: "L4", category: "medical_emergency", words: ["呼吸困难", "喘不过气", "胸闷气短", "气短", "大量出血", "止不住血", "血止不住", "血一直止不住", "出血不止", "纱布一直湿透", "意识不清", "昏迷", "胸痛", "休克", "喉头水肿", "全身过敏", "严重感染", "发白发紫", "视物模糊", "看东西有点模糊", "看不清", "头晕恶心", "心慌"], action: "handover", critical:true },
-  { id: "MEDICAL_SUITABILITY", level: "L4", category: "medical_boundary", words: ["适不适合", "是否适合", "能不能做", "禁忌", "诊断", "什么方案", "治疗参数", "很适合", "比较适合", "适合做", "建议做", "建议考虑", "我需要做吗", "我需不需要做"], action: "handover" },
+  { id: "MEDICAL_SUITABILITY", level: "L4", category: "medical_boundary", words: ["适不适合", "是否适合", "能不能做", "禁忌", "诊断", "什么方案", "治疗参数", "很适合", "比较适合", "适合做", "建议做", "建议考虑", "我适合什么", "我需要做吗", "我需不需要做"], action: "handover" },
+  { id: "CLINICAL_LESION", level: "L4", category: "medical_boundary", words: ["恶性", "癌变", "肿瘤", "黑色素瘤", "病变", "活检", "恶变"], action: "handover" },
+  { id: "PREGNANCY_TREATMENT", level: "L4", category: "medical_boundary", words: ["怀孕", "孕期", "备孕", "哺乳期", "哺乳", "妊娠"], action: "handover" },
+  { id: "PHOTO_DIAGNOSIS", level: "L4", category: "medical_boundary", words: ["照片判断", "根据照片", "根据我的照片", "看照片", "看图片", "图片诊断", "照片分析", "看图片判断"], action: "handover" },
   { id: "ADVERSE_REACTION", level: "L4", category: "medical_safety", words: ["异常", "红肿", "疼痛", "流血", "感染", "发热", "过敏", "用药", "吃什么药", "建议用药", "应当服用"], action: "handover" },
   { id: "MEDICAL_INSTRUCTION", level: "L4", category: "medical_safety", words: ["教我怎么打", "怎么打最安全", "自己打针", "药和剂量", "用药剂量", "告诉我剂量", "帮我判断今天能不能手术"], action: "handover" },
   { id: "COMPLAINT_OR_LEGAL", level: "L4", category: "complaint", words: ["投诉", "退款", "媒体曝光", "找记者", "律师", "起诉", "报警", "消协", "监管部门"], action: "handover" },

@@ -256,6 +256,45 @@ const queryTerms = (message = "") => {
   return unique(terms.map(normalize)).filter((term) => term.length >= 2 && !STOP_TERMS.has(term)).slice(0, 80);
 };
 
+const QUERY_CORE_PREFIX = /^(?:我想了解一下|我想了解|想了解|了解一下|介绍一下|介绍|明星产品|项目介绍|医生介绍|帮我|请问|想问一下|想问|想咨询)/u;
+const QUERY_CORE_SUFFIX = /(?:多少钱|价格|费用|报价|收费|预算|政策|优惠|活动|套餐|权益|是什么原理|的一般流程是什么|擅长什么|专业方向是什么|专业方向|是什么|一般流程|恢复期一般多久|恢复期|多久|怎么选|有哪些内容|有哪些|有什么区别|这个项目|院长)$/u;
+const queryCoreText = (message = "") => {
+  let core = String(message || "").normalize("NFKC").trim();
+  for (let index = 0; index < 2; index += 1) {
+    core = core
+      .replace(QUERY_CORE_PREFIX, "")
+      .replace(QUERY_CORE_SUFFIX, "")
+      .replace(/^(?:一下|这个|那个)/u, "")
+      .trim();
+  }
+  return core;
+};
+const queryCoreTerms = (message = "") => {
+  const core = queryCoreText(message);
+  if (!core) return [];
+  const segmenter = new Intl.Segmenter("zh-CN", { granularity:"word" });
+  const segmented = [...segmenter.segment(core)]
+    .filter((segment) => segment.isWordLike)
+    .map((segment) => normalize(segment.segment))
+    .filter((term) => term.length >= 2 && !STOP_TERMS.has(term));
+  return unique(segmented.length ? segmented : queryTerms(core)).slice(0, 20);
+};
+const shouldGateWeakEvidence = (message = "", coreTerms = []) => {
+  const text = String(message || "").normalize("NFKC").trim();
+  if (text.length <= 4 || !coreTerms.length) return false;
+  if (/(?:区别|对比|怎么选)/u.test(text)) return false;
+  if (/(?:和|与|、)/u.test(text) && coreTerms.length >= 2) return false;
+  return true;
+};
+const hasMeaningfulCoreEvidence = (record, coreTerms = [], coreText = "") => {
+  if (!coreTerms.length) return true;
+  const searchable = normalize(`${record.title || ""} ${record.source_relative_path || ""} ${(record.tags || []).join(" ")} ${record.content || ""}`);
+  const leadingAnchor = normalize(coreText).slice(0, 3);
+  if (leadingAnchor.length >= 3 && !searchable.includes(leadingAnchor)) return false;
+  const matched = coreTerms.filter((term) => searchable.includes(term)).length;
+  return matched / coreTerms.length >= 0.75;
+};
+
 const publicEligible = (record) => PUBLIC_RECORD_TYPES.has(record.record_type)
   && record.sensitivity !== "restricted"
   && !PUBLIC_BLOCKED_PATH.test(record.source_relative_path || "");
@@ -598,6 +637,9 @@ export function retrieveHuameiKnowledge(message, options = {}) {
     ? sourceRecords.filter((record) => pathPrefixes.some((prefix) => String(record.source_relative_path || "").startsWith(prefix)))
     : sourceRecords;
   const terms = queryTerms(message);
+  const coreTerms = queryCoreTerms(message);
+  const coreText = queryCoreText(message);
+  const gateWeakEvidence = shouldGateWeakEvidence(message, coreTerms);
   const runtimeRecords = (audience === "public" && publicationRequestContext.getStore()?.revision>0 ? [] : searchRuntimeKnowledge(message, {
     tenant_id:tenant,
     audience,
@@ -622,7 +664,8 @@ export function retrieveHuameiKnowledge(message, options = {}) {
       // remains ordinary RAG evidence and never impersonates GraphRAG output.
       score:recordScore(message, terms, record) + (runtimeRelevance * 1_100)
     }))
-    .filter((entry) => entry.score >= minimumScore)
+    .filter((entry) => entry.score >= minimumScore
+      && (!gateWeakEvidence || hasMeaningfulCoreEvidence(entry.record, coreTerms, coreText)))
     .sort((left, right) => right.score - left.score || left.record.sourceIndex - right.record.sourceIndex)
     .slice(0, limit)
     .map(({ record, score }) => ({

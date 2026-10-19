@@ -209,7 +209,7 @@ const noAnswerQueries = [
   "自体细胞隆胸",
   "基因美白针",
   "磁力双眼皮",
-  "纳米脂肪胶全面部"
+  "量子胶原骨雕"
 ];
 for (const query of noAnswerQueries) {
   add("G-NO", "no_answer", `${query}多少钱`, null, {
