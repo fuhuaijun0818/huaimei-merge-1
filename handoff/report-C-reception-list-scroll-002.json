@@ -1,0 +1,50 @@
+{
+  "role": "C",
+  "task_id": "reception-list-scroll-002",
+  "summary": "补齐接待工作台滚动修复：上一版抓取的是.conversation-items，实际滚动容器是.conversation-list，导致切换会话时左侧会话列表仍回到顶部；同时为.chat-body建立定位上下文，保证消息锚点offsetTop相对聊天区计算。",
+  "acceptance_steps": [
+    "在左侧会话列表滚动到BAE178附近，点击0DF98A；左侧列表保持原来滚动位置，不再跳到顶部。",
+    "在消息较长的会话中滚动到中间，切换到另一会话再切回；聊天区恢复到离开前的位置。",
+    "页面实时刷新会话列表时，左侧列表滚动位置保持不变。",
+    "执行 node tests/management-handover-ui.mjs，列表容器和聊天锚点契约通过。",
+    "执行 npm run team:verify，13项套件全部passed。"
+  ],
+  "tests": [
+    {
+      "command": "node tests/management-handover-ui.mjs",
+      "status": "passed",
+      "evidence": "conversation-list滚动容器捕获/恢复、chat-body锚点和实时刷新保留位置断言通过"
+    },
+    {
+      "command": "npm run team:verify",
+      "status": "passed",
+      "evidence": "13项套件全部passed"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "src/app.js",
+      "owner": "shared",
+      "change": "render和updateReceptionWindow改为捕获/恢复.conversation-list的scrollTop"
+    },
+    {
+      "path": "styles.css",
+      "owner": "shared",
+      "change": ".chat-body增加position:relative，使消息offsetTop相对聊天滚动区计算"
+    },
+    {
+      "path": "tests/management-handover-ui.mjs",
+      "owner": "unassigned",
+      "change": "新增左侧列表滚动容器与chat-body定位回归断言"
+    }
+  ],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "左侧列表和聊天区滚动位置保存在当前页面内存中，刷新页面后按默认位置打开。",
+    "本次只修复会话切换和实时刷新时的滚动位置，不改变消息窗口的加载条数。"
+  ],
+  "rollback": "回退src/app.js、styles.css和tests/management-handover-ui.mjs对应提交。"
+}

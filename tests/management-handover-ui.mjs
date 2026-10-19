@@ -171,6 +171,10 @@ assert.match(app, /mode:\s*"anchor"[^}]*top:\s*element\.scrollTop/, "滚动锚�
 assert.match(app, /if \(message\) element\.scrollTop = Math\.max\(0, message\.offsetTop - 8\);\s*else element\.scrollTop = element\.scrollHeight;/, "已读游标消息不在当前历史窗口时必须回落到最新消息，而不是顶部");
 assert.match(app, /case "select-conversation":\s*\{[\s\S]{0,260}ui\.receptionScrollAnchors\[ui\.conversationId\]=previousAnchor;[\s\S]{0,120}ui\.conversationId = id;[\s\S]{0,120}render\(true\);/, "切换会话前必须保存当前会话滚动锚点");
 assert.match(app, /const immediateAnchor=previousConversationId === ui\.conversationId[\s\S]{0,160}: ui\.receptionScrollAnchors\[ui\.conversationId\]/, "切换会话后必须优先恢复目标会话自己的滚动位置");
+assert.match(app, /const previousList=document\.querySelector\('\.conversation-list'\)/, "会话切换必须捕获左侧会话列表真实滚动容器");
+assert.match(app, /const nextList=document\.querySelector\('\.conversation-list'\)/, "会话切换后必须恢复到左侧会话列表原滚动位置");
+assert.match(app, /const list=layout\.querySelector\('\.conversation-list'\);/, "实时刷新会话列表时必须捕获左侧滚动容器");
+assert.match(app, /if\(list && listScroll !== undefined\) list\.scrollTop=listScroll;/, "实时刷新会话列表时必须保留左侧滚动位置");
 assert.deepEqual(
   unresolvedTemplateVariables("您好，{{客户称呼}}，请了解{{ 项目名称 }}；{{客户称呼}}"),
   ["客户称呼", "项目名称"],

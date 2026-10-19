@@ -2759,6 +2759,8 @@ function updateReceptionWindow() {
   const layout=document.querySelector('.reception-page .conversation-layout');
   if(!layout)return;
   const chat=layout.querySelector('.chat-body');
+  const list=layout.querySelector('.conversation-list');
+  const listScroll=list?.scrollTop;
   const nearBottom=!chat || chat.scrollHeight-chat.scrollTop-chat.clientHeight<48;
   const chatAnchor=captureScrollAnchor(chat);
   if(document.visibilityState==='visible' && nearBottom)markConversationRead(store.conversation(ui.conversationId));
@@ -2780,13 +2782,14 @@ function updateReceptionWindow() {
     else current.scrollTop=scroll;
   }
   filterReceptionList();
+  if(list && listScroll !== undefined) list.scrollTop=listScroll;
 }
 
 function render(preserveScroll = false) {
   const focused = preserveScroll ? document.activeElement : null;
   const focusState = focused?.id && focused.closest("#app") ? {id:focused.id, start:focused.selectionStart, end:focused.selectionEnd} : null;
   const previousInput=document.querySelector('#message-input');
-  const previousList=document.querySelector('.conversation-items');
+  const previousList=document.querySelector('.conversation-list');
   const previousChat=document.querySelector('.chat-body');
   const previousListScroll=previousList?.scrollTop;
   const previousChatAnchor=captureScrollAnchor(previousChat);
@@ -2826,7 +2829,7 @@ function render(preserveScroll = false) {
   if (preserveScroll) window.scrollTo(0, y);
   else window.scrollTo(0, 0);
   requestAnimationFrame(() => {
-    const nextList=document.querySelector('.conversation-items');
+    const nextList=document.querySelector('.conversation-list');
     if(nextList && previousListScroll !== undefined)nextList.scrollTop=previousListScroll;
     const nextChat=document.querySelector(".chat-body");
     if(nextChat) {
