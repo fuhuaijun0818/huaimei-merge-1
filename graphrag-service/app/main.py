@@ -14,7 +14,8 @@ import orjson
 from fastapi import FastAPI, Header, HTTPException, Request, Response, status
 
 from . import __version__
-from .cache import AsyncTtlCache, canonical_cache_query
+from .cache import canonical_cache_query
+from .redis_cache import create_cache
 from .config import Settings
 from .engine import create_engine, run_engine_search
 from .index_manifest import RequestBindingError
@@ -146,7 +147,7 @@ def create_app(overrides: Settings | None = None) -> FastAPI:
         app.state.settings = settings
         app.state.engine = create_engine(settings)
         app.state.approved_retrieval_terms = approved_retrieval_terms(app.state.engine)
-        app.state.cache = AsyncTtlCache[RetrievalResult](settings.cache_ttl_seconds, settings.cache_max_entries)
+        app.state.cache = create_cache(settings)
         app.state.gate = asyncio.Semaphore(settings.max_concurrency)
         app.state.metrics = Metrics()
         logger.info("retrieval service ready engine=%s index=%s", app.state.engine.name, app.state.engine.version)

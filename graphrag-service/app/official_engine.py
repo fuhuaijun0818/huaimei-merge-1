@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 from importlib.metadata import version as package_version
+import asyncio
 import json
 import re
 import unicodedata
@@ -194,16 +195,17 @@ class OfficialGraphRagEngine:
                     return evidence
         return evidence
 
-    def _build_local_search(self, request: RetrievalRequest):
-        """Run the pinned official engine while retaining its real usage result.
+    def _local_search_inputs(self):
+        """Cache immutable indexer inputs once per worker process.
 
-        ``graphrag.api.local_search`` deliberately returns only answer/context
-        and discards ``SearchResult`` usage. This is the same GraphRAG 3.1.1
-        construction path, kept in the version-pinned adapter so Prometheus can
-        report the query engine's actual llm_calls/prompt/output token counts.
+        Building these DataFrames and the LanceDB embedding store on every
+        request was the dominant CPU cost under concurrent evidence retrieval.
+        The inputs are read-only; per-request parameters stay on a fresh engine.
         """
+        cached = getattr(self, "_local_search_inputs_cache", None)
+        if cached is not None:
+            return cached
         from graphrag.config.embeddings import entity_description_embedding
-        from graphrag.query.factory import get_local_search_engine
         from graphrag.query.indexer_adapters import (
             read_indexer_communities,
             read_indexer_covariates,
@@ -213,26 +215,44 @@ class OfficialGraphRagEngine:
             read_indexer_text_units,
         )
         from graphrag.utils.api import get_embedding_store, load_search_prompt
-
         community_level = 2
-        communities = read_indexer_communities(self.tables["communities"], self.tables["community_reports"])
-        reports = read_indexer_reports(self.tables["community_reports"], self.tables["communities"], community_level)
-        entities = read_indexer_entities(self.tables["entities"], self.tables["communities"], community_level)
         covariates_table = self.tables.get("covariates")
-        covariates = read_indexer_covariates(covariates_table) if covariates_table is not None else []
-        return get_local_search_engine(
-            config=self.config,
-            reports=reports,
-            text_units=read_indexer_text_units(self.tables["text_units"]),
-            entities=entities,
-            relationships=read_indexer_relationships(self.tables["relationships"]),
-            covariates={"claims": covariates},
-            response_type="简洁的客观资料摘要",
-            description_embedding_store=get_embedding_store(
+        cached = {
+            "communities": read_indexer_communities(self.tables["communities"], self.tables["community_reports"]),
+            "reports": read_indexer_reports(self.tables["community_reports"], self.tables["communities"], community_level),
+            "entities": read_indexer_entities(self.tables["entities"], self.tables["communities"], community_level),
+            "text_units": read_indexer_text_units(self.tables["text_units"]),
+            "relationships": read_indexer_relationships(self.tables["relationships"]),
+            "covariates": {"claims": read_indexer_covariates(covariates_table) if covariates_table is not None else []},
+            "embedding_store": get_embedding_store(
                 config=self.config.vector_store,
                 embedding_name=entity_description_embedding,
             ),
-            system_prompt=load_search_prompt(self.config.local_search.prompt),
+            "system_prompt": load_search_prompt(self.config.local_search.prompt),
+        }
+        self._local_search_inputs_cache = cached
+        return cached
+
+    def _build_local_search(self, request: RetrievalRequest):
+        """Run the pinned official engine while retaining its real usage result.
+
+        ``graphrag.api.local_search`` deliberately returns only answer/context
+        and discards ``SearchResult`` usage. This is the same GraphRAG 3.1.1
+        construction path, kept in the version-pinned adapter so Prometheus can
+        report the query engine's actual llm_calls/prompt/output token counts.
+        """
+        from graphrag.query.factory import get_local_search_engine
+        inputs = self._local_search_inputs()
+        return get_local_search_engine(
+            config=self.config,
+            reports=inputs["reports"],
+            text_units=inputs["text_units"],
+            entities=inputs["entities"],
+            relationships=inputs["relationships"],
+            covariates=inputs["covariates"],
+            response_type="简洁的客观资料摘要",
+            description_embedding_store=inputs["embedding_store"],
+            system_prompt=inputs["system_prompt"],
         )
 
     def _context_params(self, engine, request: RetrievalRequest) -> dict[str, Any]:
@@ -248,7 +268,8 @@ class OfficialGraphRagEngine:
     async def _run_context_search(self, request: RetrievalRequest) -> RetrievalResult:
         """Build the official local context without invoking the answer model."""
         engine = self._build_local_search(request)
-        context_result = engine.context_builder.build_context(
+        context_result = await asyncio.to_thread(
+            engine.context_builder.build_context,
             query=request.query,
             conversation_history=None,
             **self._context_params(engine, request),
@@ -276,7 +297,7 @@ class OfficialGraphRagEngine:
     async def _run_local_search(self, request: RetrievalRequest):
         engine = self._build_local_search(request)
         engine.context_builder_params.update(self._context_params(engine, request))
-        return await engine.search(query=request.query)
+        return await asyncio.to_thread(engine.search, query=request.query)
 
     async def search(self, request: RetrievalRequest) -> RetrievalResult:
         if request.evidence_only:

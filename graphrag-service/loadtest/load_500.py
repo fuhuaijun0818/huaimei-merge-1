@@ -92,6 +92,12 @@ async def run(args) -> dict:
                     payload = {"tenant_id": args.tenant_id, "query": query, "top_k": 6}
                     if args.index_version:
                         payload["index_version"] = args.index_version
+                    if args.release_id:
+                        payload["release_id"] = args.release_id
+                    if args.evidence_only:
+                        payload["evidence_only"] = True
+                    if args.cache_bypass:
+                        payload["readiness_probe"] = True
                 else:
                     url = f"{args.base_url.rstrip('/')}/v1/conversations/reply"
                     payload = {
@@ -175,6 +181,9 @@ def main() -> int:
     parser.add_argument("--caller-id", default="huamei_load_test", help="兼容参数；优先读取HUAMEI_LOAD_CALLER_ID")
     parser.add_argument("--tenant-id", default=os.getenv("HUAMEI_LOAD_TENANT_ID", "huamei-shanghai"))
     parser.add_argument("--index-version", default=os.getenv("HUAMEI_LOAD_INDEX_VERSION", ""))
+    parser.add_argument("--release-id", default=os.getenv("HUAMEI_LOAD_RELEASE_ID", ""))
+    parser.add_argument("--evidence-only", action="store_true", help="只构建检索证据，不调用GraphRAG回答模型")
+    parser.add_argument("--cache-bypass", action="store_true", help="压测时绕过证据缓存，测量真实检索路径")
     parser.add_argument("--max-error-rate", type=float, default=0.005)
     parser.add_argument("--max-p95-ms", type=float, default=2000)
     parser.add_argument("--output", default="")
