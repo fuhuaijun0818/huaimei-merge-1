@@ -17,6 +17,7 @@ import { normalizeTenantId } from "./platform/tenant-context.mjs";
 import { publicationRequestContext } from "./knowledge-publication.mjs";
 import { isValidatedFormalLoadTaxonomyEntry } from "./platform/formal-load-taxonomy.mjs";
 import { getDomainVocabulary, rewriteDomainQuery } from "./domain-vocabulary.mjs";
+import { getMultimodalGuardrail } from "./multimodal-policy.mjs";
 import { postgresPersistenceEnabled } from "./persistence/postgres-helpers.mjs";
 import { getPostgresAgentRunStore } from "./persistence/postgres-agent-run-store.mjs";
 
@@ -940,6 +941,8 @@ const attachGraphRagEvidence = (localResponse, graphResult, context, query = "")
   }
   const graphHits = admitted.map((item) => ({
     knowledge_id:String(item.record_id),
+    record_type:String(item.record_type || ""),
+    modality:item.record_type === "image_ocr" ? "ocr_text" : "text",
     title:String(item.title || "").slice(0, 160),
     source_relative_path:String(item.source_relative_path || "").slice(0, 500),
     general_information:compactGraphEvidence(item.content),
@@ -951,6 +954,7 @@ const attachGraphRagEvidence = (localResponse, graphResult, context, query = "")
   const graphCitations = graphHits.map((item) => ({
     knowledge_id:item.knowledge_id,
     source_record_id:item.knowledge_id,
+    modality:item.modality,
     title:item.title,
     version:graphResult.indexVersion,
     source_relative_path:item.source_relative_path,
@@ -2225,6 +2229,7 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
     }
     response.guardrails.turn_planning={used:plan.used,reason:plan.reason||'completed',version:plan.version||null,latency_ms:plan.latency_ms||0,discarded_task:plan.discarded_task||false,discarded_slot_updates:plan.discarded_slot_updates||0,discarded_next_step:plan.discarded_next_step||false};
     response.guardrails.semantic_understanding={used:plan.used,applied:plan.used,reason:plan.reason||'unified_turn_plan'};
+    response.guardrails.multimodal_policy = getMultimodalGuardrail();
     latencyBreakdown.total_ms = elapsedMs(latencyStartedAt);
     response.guardrails.latency_breakdown = { ...latencyBreakdown };
     if(plan.used) {

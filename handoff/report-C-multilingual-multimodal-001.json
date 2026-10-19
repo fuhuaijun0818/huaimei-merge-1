@@ -1,0 +1,89 @@
+{
+  "role": "C",
+  "task_id": "multilingual-multimodal-001",
+  "summary": "第5步多语言与跨模态评估：统计924条知识为中文675、中英混合249、纯英文0，200条评测查询为中文192、混合8、纯英文0；654条OCR记录均有核验说明。直接英文GraphRAG请求5/5被隐私边界拒绝，受控中文翻译4/5可检索、1/5因非精确词表token被拒。基于无明确英文/图片需求，保持多语言和图片检索关闭，不更换embedding、不重建索引；新增模态防护和modality引用字段。",
+  "acceptance_steps": [
+    "执行node scripts/analyze-knowledge-modality.mjs，生成语言与记录类型分布。",
+    "确认924条记录中纯英文0、纯英文查询0；图片OCR 654条且0条缺少核验说明。",
+    "英文直接检索探针5/5返回QUERY_PRIVACY_REJECTED；中文受控翻译探针4/5返回200，1/5因‘线雕’非精确白名单token被拒。",
+    "多语言检索和图片检索默认关闭；启用未批准的embedding会抛出明确门禁错误。",
+    "GraphRAG引用增加modality，OCR证据标记ocr_text；响应guardrails返回multimodal_policy。",
+    "执行npm run team:verify，17项套件全部passed。"
+  ],
+  "tests": [
+    {
+      "command": "node scripts/analyze-knowledge-modality.mjs",
+      "status": "passed",
+      "evidence": "输出language-modality-distribution.json：zh 675、mixed 249、OCR 654、OCR缺核验0"
+    },
+    {
+      "command": "node tests/multimodal-readiness.mjs",
+      "status": "passed",
+      "evidence": "语言分类、OCR核验覆盖、多语言/图片检索默认关闭及未批准embedding门禁通过"
+    },
+    {
+      "command": "node --env-file=.env.local 真实链路热玛吉问题",
+      "status": "passed",
+      "evidence": "返回multimodal_policy；OCR引用modality=ocr_text"
+    },
+    {
+      "command": "npm run team:verify",
+      "status": "passed",
+      "evidence": "17项套件全部passed"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "server/multimodal-policy.mjs",
+      "owner": "C",
+      "change": "新增语言分类、多语言/图片检索就绪状态和启用门禁"
+    },
+    {
+      "path": "server/agent-runtime.mjs",
+      "owner": "A",
+      "change": "响应增加multimodal_policy；GraphRAG引用增加modality，OCR标记ocr_text"
+    },
+    {
+      "path": "scripts/analyze-knowledge-modality.mjs",
+      "owner": "C",
+      "change": "新增语言与记录类型分布分析脚本"
+    },
+    {
+      "path": "tests/multimodal-readiness.mjs",
+      "owner": "C",
+      "change": "新增多语言/跨模态门禁回归"
+    },
+    {
+      "path": ".env.example",
+      "owner": "shared",
+      "change": "新增多语言/图片检索开关，默认false"
+    },
+    {
+      "path": "scripts/team-verify.mjs",
+      "owner": "shared",
+      "change": "将multimodal-readiness纳入团队回归"
+    }
+  ],
+  "api_changes": [
+    {
+      "interface": "Agent response guardrails/citations",
+      "change": "新增multimodal_policy和citation.modality；为附加字段",
+      "breaking": false
+    }
+  ],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [
+    "HUAMEI_MULTILINGUAL_RETRIEVAL_ENABLED",
+    "HUAMEI_MULTILINGUAL_EMBEDDING_APPROVED",
+    "HUAMEI_IMAGE_RETRIEVAL_ENABLED",
+    "HUAMEI_IMAGE_EMBEDDING_APPROVED"
+  ],
+  "known_limitations": [
+    "没有构建完整中英文平行评测集；当前只有5组readiness probe，不能作为生产多语言验收。",
+    "直接英文请求会被现有查询隐私白名单拒绝；仅更换embedding不足以启用多语言。",
+    "没有实现图片检索；OCR文本仍是基础检索来源，图片生成描述不能作为客户事实。",
+    "本次未更换embedding、未重建索引、未修改知识release绑定。"
+  ],
+  "rollback": "保持HUAMEI_MULTILINGUAL_RETRIEVAL_ENABLED=false和HUAMEI_IMAGE_RETRIEVAL_ENABLED=false即为关闭状态；回退multimodal-policy、modality字段和分析脚本对应提交。"
+}
