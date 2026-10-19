@@ -16,6 +16,7 @@ import { approvedKnowledgeRecordIds, getKnowledgeAdmissionStatus, isKnowledgeRec
 import { normalizeTenantId } from "./platform/tenant-context.mjs";
 import { publicationRequestContext } from "./knowledge-publication.mjs";
 import { isValidatedFormalLoadTaxonomyEntry } from "./platform/formal-load-taxonomy.mjs";
+import { getDomainVocabulary, rewriteDomainQuery } from "./domain-vocabulary.mjs";
 import { postgresPersistenceEnabled } from "./persistence/postgres-helpers.mjs";
 import { getPostgresAgentRunStore } from "./persistence/postgres-agent-run-store.mjs";
 
@@ -737,7 +738,10 @@ const graphPolicyAnchors = (query, localResponse) => {
   const month = String(query || "").normalize("NFKC").match(/(\d{1,2})月份/);
   if (month) anchors.push(`${month[1]}月份政策`);
   for (const citation of (localResponse?.output?.citations || []).slice(0, 4)) {
-    const segments = String(citation?.source_relative_path || "").split("/").slice(0, -1);
+    const allSegments = String(citation?.source_relative_path || "").split("/").filter(Boolean);
+    const segments = /\.(?:jpe?g|png|webp|gif|pdf|docx?|xlsx?|pptx?)$/i.test(allSegments.at(-1) || "")
+      ? allSegments.slice(0, -1)
+      : allSegments;
     for (const segment of segments) {
       const normalized = String(segment || "").normalize("NFKC").trim();
       if (normalized.length >= 2
@@ -751,10 +755,16 @@ const graphPolicyAnchors = (query, localResponse) => {
   return [...new Set(anchors)].slice(0, 4);
 };
 
-export const buildGraphRagQuery = (query, localResponse, _context = {}) => {
+export const buildGraphRagQueryPlan = (query, localResponse, context = {}) => {
   const intent = String(localResponse?.output?.structured_data?.intent || "");
   const structured = localResponse?.output?.structured_data || {};
   const entities = structured.intent_analysis?.entities || {};
+  const tenantId = normalizeTenantId(context.tenant_id || "huamei-shanghai");
+  const admission = getKnowledgeAdmissionStatus(tenantId);
+  const releaseId = admission.active_release?.id || null;
+  const indexVersion = admission.active_release?.manifest?.index_version || null;
+  const vocabulary = getDomainVocabulary(loadHuameiKnowledge(), { releaseId, indexVersion });
+  const rewrite = rewriteDomainQuery(query, { context, vocabulary });
   const doctorAnchors = intent.startsWith("doctor_") ? (entities.doctors || []) : [];
   const projectAnchors = [
     ...(entities.projects || []),
@@ -768,13 +778,18 @@ export const buildGraphRagQuery = (query, localResponse, _context = {}) => {
     ...doctorAnchors,
     ...bodyPartAnchors,
     ...policyAnchors,
+    ...rewrite.tokens,
     ...graphOutboundFacetAnchors(query, entities),
     ...graphQueryAliases(query)
   ];
-  return [...new Set(currentAnchors
+  const graphQuery = [...new Set(currentAnchors
     .map((item) => String(item || "").normalize("NFKC").trim())
     .filter((item) => item.length >= 2))].join(" ");
+  return { query:graphQuery, vocabulary, rewrite };
 };
+
+export const buildGraphRagQuery = (query, localResponse, context = {}) =>
+  buildGraphRagQueryPlan(query, localResponse, context).query;
 
 export const graphRagParamsForIntent = (intent = "", env = process.env) => {
   let tuning = {};
@@ -870,6 +885,43 @@ export const filterGraphRagEvidenceForResponse = (evidence = [], localResponse, 
   });
 };
 
+const hybridHitId = (item = {}) => String(
+  item.knowledge_id || item.record_id || item.item?.record_id || item.source_record_id || ""
+);
+
+// Reciprocal-rank fusion keeps lexical and graph recall without trusting one
+// retriever's raw score scale. Citation admission and path/medical filtering
+// happen before this function; the fused list only reorders already-admitted
+// evidence.
+export const fuseHybridEvidence = (localHits = [], graphHits = [], { k = 60 } = {}) => {
+  const fused = new Map();
+  localHits.forEach((hit, index) => {
+    const id = hybridHitId(hit);
+    if (!id) return;
+    fused.set(id, {
+      hit:{ ...hit, retrieval_sources:["local"] },
+      score:1 / (k + index + 1)
+    });
+  });
+  graphHits.forEach((hit, index) => {
+    const id = hybridHitId(hit);
+    if (!id) return;
+    const existing = fused.get(id);
+    fused.set(id, {
+      hit:{
+        ...(existing?.hit || {}),
+        ...hit,
+        retrieval_sources:[...new Set([...(existing?.hit?.retrieval_sources || []), "graph"])]
+      },
+      score:(existing?.score || 0) + 1 / (k + index + 1)
+    });
+  });
+  return [...fused.entries()]
+    .sort((left, right) => right[1].score - left[1].score)
+    .slice(0, 10)
+    .map(([, item]) => ({ ...item.hit, hybrid_rrf_score:Number(item.score.toFixed(6)) }));
+};
+
 const attachGraphRagEvidence = (localResponse, graphResult, context, query = "") => {
   if (!graphResult.used || !graphResult.evidence.length) return localResponse;
   const knowledgeVersion = getHuameiKnowledgeStatus(context.tenant_id).version || "";
@@ -908,19 +960,25 @@ const attachGraphRagEvidence = (localResponse, graphResult, context, query = "")
     requires_verification:item.requires_verification,
     verification_note:item.verification_note
   }));
+  const localHits = Array.isArray(localResponse.output.structured_data?.knowledge_hits)
+    ? localResponse.output.structured_data.knowledge_hits
+    : [];
+  const hybridEnabled = String(process.env.HUAMEI_HYBRID_RETRIEVAL_ENABLED || "true").toLowerCase() !== "false";
+  const fusedHits = hybridEnabled ? fuseHybridEvidence(localHits, graphHits) : [...localHits, ...graphHits].slice(0, 10);
   localResponse.output.structured_data = {
     ...localResponse.output.structured_data,
-    knowledge_hits:[
-      ...(localResponse.output.structured_data?.knowledge_hits || []),
-      ...graphHits
-    ].slice(0, 10),
+    knowledge_hits:fusedHits,
     graphrag:{
       engine:graphResult.engine,
       index_version:graphResult.indexVersion,
       retrieval_mode:"local",
       evidence_count:graphHits.length,
       graph_entities:graphResult.graphEntities,
-      cache_hit:graphResult.cacheHit === true
+      cache_hit:graphResult.cacheHit === true,
+      hybrid_retrieval:hybridEnabled,
+      local_evidence_count:localHits.length,
+      graph_evidence_count:graphHits.length,
+      fused_evidence_count:fusedHits.length
     }
   };
   localResponse.output.citations = dedupeCitations([...(localResponse.output.citations || []), ...graphCitations]);
@@ -928,6 +986,10 @@ const attachGraphRagEvidence = (localResponse, graphResult, context, query = "")
   localResponse.guardrails.graphrag_engine = graphResult.engine;
   localResponse.guardrails.graphrag_index_version = graphResult.indexVersion;
   localResponse.guardrails.graphrag_evidence_admitted = graphHits.length;
+  localResponse.guardrails.hybrid_retrieval = hybridEnabled;
+  localResponse.guardrails.hybrid_local_evidence = localHits.length;
+  localResponse.guardrails.hybrid_graph_evidence = graphHits.length;
+  localResponse.guardrails.hybrid_fused_evidence = fusedHits.length;
   return localResponse;
 };
 
@@ -2233,7 +2295,29 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
         error.code = "FORMAL_LOAD_TAXONOMY_ACTIVE_RELEASE_MISMATCH";
         throw error;
       }
-      const graphQuery = formalLoadEntry?.query || buildGraphRagQuery(input.message, localResponse, context);
+      const graphPlan = formalLoadEntry
+        ? { query:formalLoadEntry.query, vocabulary:null, rewrite:null }
+        : buildGraphRagQueryPlan(input.message, localResponse, context);
+      const graphQuery = graphPlan.query;
+      if (graphPlan.vocabulary) {
+        localResponse.guardrails.domain_vocabulary = {
+          version:graphPlan.vocabulary.version,
+          hash:graphPlan.vocabulary.hash,
+          term_count:graphPlan.vocabulary.term_count,
+          knowledge_version:graphPlan.vocabulary.knowledge_version,
+          release_id:graphPlan.vocabulary.release_id,
+          index_version:graphPlan.vocabulary.index_version,
+          counts:graphPlan.vocabulary.counts
+        };
+      }
+      if (graphPlan.rewrite) {
+        localResponse.guardrails.domain_query_rewrite = {
+          version:graphPlan.rewrite.version,
+          query:graphPlan.rewrite.query,
+          additions:graphPlan.rewrite.additions,
+          resolved:graphPlan.rewrite.resolved
+        };
+      }
       if (formalLoadEntry) {
         localResponse.guardrails.formal_load_taxonomy = {
           entry_id:formalLoadEntry.entryId,

@@ -20,6 +20,7 @@ const args = Object.fromEntries(process.argv.slice(2).map((value) => {
 const reportRoot = args["output-dir"] ? join(root, String(args["output-dir"])) : outputRoot;
 const mode = ["local", "graphrag", "all"].includes(args.mode) ? args.mode : "all";
 const evidenceOnly = args["evidence-only"] === true;
+const hybrid = args.hybrid === true;
 const concurrency = Math.min(8, Math.max(1, Number(args.concurrency) || 1));
 const limit = Math.max(0, Number(args.limit) || 0);
 const selectedCases = limit ? cases.slice(0, limit) : cases;
@@ -73,6 +74,32 @@ const p95 = (values) => {
   if (!values.length) return null;
   const sorted = [...values].sort((left, right) => left - right);
   return sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)];
+};
+const fuseEvidence = (localHits = [], graphHits = [], { k = 60 } = {}) => {
+  const hitId = (item) => String(item.record_id || item.knowledge_id || item.item?.record_id || "");
+  const fused = new Map();
+  localHits.forEach((hit, index) => {
+    const id = hitId(hit);
+    if (!id) return;
+    fused.set(id, { hit:{ ...hit, retrieval_sources:["local"] }, score:1 / (k + index + 1) });
+  });
+  graphHits.forEach((hit, index) => {
+    const id = hitId(hit);
+    if (!id) return;
+    const existing = fused.get(id);
+    fused.set(id, {
+      hit:{
+        ...(existing?.hit || {}),
+        ...hit,
+        retrieval_sources:[...new Set([...(existing?.hit?.retrieval_sources || []), "graph"])]
+      },
+      score:(existing?.score || 0) + 1 / (k + index + 1)
+    });
+  });
+  return [...fused.values()]
+    .sort((left, right) => right.score - left.score)
+    .slice(0, 10)
+    .map((item) => ({ ...item.hit, hybrid_rrf_score:Number(item.score.toFixed(6)) }));
 };
 
 async function evaluateLocal(testCase) {
@@ -141,24 +168,39 @@ async function evaluateGraphRag(testCase) {
     topK:6,
     requestId:`baseline-graphrag-${testCase.case_id}`
   });
-  const matched = matches(testCase, result.evidence || []);
+  const localHits = hybrid
+    ? retrieveHuameiKnowledge(testCase.resolved_query || testCase.query, {
+      audience:"public",
+      limit:6,
+      tenantId:"huamei-shanghai"
+    }).map((hit) => ({
+      record_id:hit.item?.record_id || "",
+      title:hit.item?.title || "",
+      source_relative_path:hit.item?.source_relative_path || "",
+      score:hit.score
+    }))
+    : [];
+  const fused = hybrid ? fuseEvidence(localHits, result.evidence || []) : (result.evidence || []);
+  const matched = matches(testCase, fused);
   return {
-    mode:"graphrag",
+    mode:hybrid ? "hybrid" : "graphrag",
     ...testCase,
     actual:{
       status:null,
-      evidence:hitRecords(result.evidence || []),
+      evidence:hitRecords(fused),
       safety_passed:null,
       safety_action:null,
       used:result.used,
       reason:result.reason,
       engine:result.engine,
       index_version:result.indexVersion,
-      evidence_count:(result.evidence || []).length,
+      evidence_count:fused.length,
+      local_evidence_count:localHits.length,
+      graph_evidence_count:(result.evidence || []).length,
       fallback_reason:result.used ? null : result.reason
     },
     matched,
-    passed:Boolean(result.used && matched.hit),
+    passed:Boolean(matched.hit && (hybrid || result.used)),
     latency_ms:latency(startedAt),
     service_timing_ms:result.timingMs || null,
     cache_hit:result.cacheHit === true,
@@ -215,6 +257,7 @@ const summarize = (rows) => {
     knowledge_hit_rate:knowledge.length ? Number((knowledge.filter((row) => row.passed).length / knowledge.length).toFixed(4)) : 0,
     recall_at_k:knowledge.length ? Number((knowledge.reduce((sum, row) => sum + (row.matched?.recall || 0), 0) / knowledge.length).toFixed(4)) : 0,
     precision_at_k:knowledge.length ? Number((knowledge.reduce((sum, row) => sum + (row.matched?.precision || 0), 0) / knowledge.length).toFixed(4)) : 0,
+    citation_correct_rate:knowledge.length ? Number((knowledge.reduce((sum, row) => sum + (row.matched?.precision || 0), 0) / knowledge.length).toFixed(4)) : 0,
     mrr:knowledge.length ? Number((knowledge.reduce((sum, row) => sum + (row.matched?.mrr || 0), 0) / knowledge.length).toFixed(4)) : 0,
     no_answer_cases:noAnswer.length,
     no_answer_correct:noAnswer.filter((row) => row.passed).length,
@@ -233,8 +276,9 @@ const byCategory = (rows) => Object.fromEntries([...new Set(rows.map((row) => ro
 const report = {
   schema_version:"huamei.graphrag.retrieval-baseline-report.v1",
   generated_at:new Date().toISOString(),
-  mode,
+  mode:hybrid ? "hybrid" : mode,
   evidence_only:evidenceOnly,
+  hybrid,
   concurrency,
   release_id:releaseId,
   index_version:indexVersion,
