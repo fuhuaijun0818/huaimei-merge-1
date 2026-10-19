@@ -28,7 +28,7 @@ const REVIEWED_FACET_REWRITES = Object.freeze([
 ]);
 
 const PRODUCT_OR_INSTRUMENT = /(?:假体|玻尿酸|肉毒|超声|射频|激光|水光|皮秒|光子|线材|仪器|品牌)/;
-const SAFE_TERM = /^[\u3400-\u9fffA-Za-z0-9][\u3400-\u9fffA-Za-z0-9_.+·®™()/ -]{1,39}$/;
+const SAFE_TERM = /^[\u3400-\u9fffA-Za-z0-9][\u3400-\u9fffA-Za-z0-9_.+·®™()/-]{1,39}$/;
 const clean = (value) => String(value || "").normalize("NFKC").trim();
 const hashJson = (value) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
@@ -36,7 +36,7 @@ const addTerm = (terms, term, type, source = "") => {
   const value = clean(term);
   if (!value || value.length < 2 || value.length > 40 || !SAFE_TERM.test(value)
     || /\.(?:jpe?g|png|webp|gif|pdf|docx?|xlsx?|pptx?)$/i.test(value)) return;
-  const existing = terms.get(value) || { term:value, type, sources:new Set(), aliases:new Set() };
+  const existing = terms.get(value) || { term:value, type, sources:new Set(), aliases:new Set(), aliasAllowed:true };
   existing.sources.add(source || type);
   terms.set(value, existing);
 };
@@ -58,7 +58,30 @@ export function buildDomainVocabulary(knowledgeState = {}, { releaseId = null, i
   for (const entry of catalog.projects || []) {
     addAlias(terms, entry.canonical, entry.alias, "project", entry.source);
   }
-  for (const doctor of catalog.doctors || []) addTerm(terms, doctor, "doctor", "doctor_directory");
+  const doctorNames = catalog.doctors || [];
+  const titledDoctors = doctorNames.filter((name) => /(?:技术院长|院长|主任|医生|专家)/.test(name));
+  for (const full of titledDoctors) {
+    addTerm(terms, full, "doctor", "doctor_directory");
+    const bare = String(full).replace(/\s*(?:技术院长|院长|主任|医生|专家)$/u, "").trim();
+    const item = terms.get(clean(full));
+    if (item && bare.length >= 2 && bare !== full) {
+      item.aliases.add(bare);
+      item.aliasAllowed = false;
+    }
+  }
+  for (const name of doctorNames) {
+    if (titledDoctors.includes(name)) continue;
+    const containingFull = titledDoctors.find((full) => full.includes(name));
+    if (containingFull) {
+      // A whitespace title (for example "李帅华 技术院长") is split by the
+      // retrieval-service allowlist into safe catalog tokens. A no-space
+      // honorific ("张群院长") remains a single approved token and the bare
+      // name stays an alias only.
+      if (/\s/u.test(containingFull)) addTerm(terms, name, "doctor", "doctor_directory");
+      continue;
+    }
+    addTerm(terms, name, "doctor", "doctor_directory");
+  }
   for (const department of catalog.departments || []) addTerm(terms, department, "department", "knowledge_path");
   for (const concern of catalog.concerns || []) addTerm(terms, concern, "body_part", "intent_engine");
 
@@ -88,7 +111,13 @@ export function buildDomainVocabulary(knowledgeState = {}, { releaseId = null, i
   }
 
   const sortedTerms = [...terms.values()]
-    .map((item) => ({ term:item.term, type:item.type, sources:[...item.sources].sort(), aliases:[...item.aliases].sort() }))
+    .map((item) => ({
+      term:item.term,
+      type:item.type,
+      sources:[...item.sources].sort(),
+      aliases:[...item.aliases].sort(),
+      alias_allowed:item.aliasAllowed !== false
+    }))
     .sort((left, right) => left.term.localeCompare(right.term, "zh-CN"));
   const counts = sortedTerms.reduce((result, item) => {
     result[item.type] = (result[item.type] || 0) + 1;
@@ -115,7 +144,7 @@ export function buildDomainVocabulary(knowledgeState = {}, { releaseId = null, i
     terms:sortedTerms,
     allowed:new Set(sortedTerms
       .filter((item) => item.type !== "knowledge_tag")
-      .flatMap((item) => [item.term, ...item.aliases]))
+      .flatMap((item) => [item.term, ...(item.alias_allowed === false ? [] : item.aliases)]))
   };
 }
 
@@ -161,8 +190,10 @@ export function rewriteDomainQuery(query = "", { context = {}, vocabulary = null
   const resolveAllowed = (value, type) => {
     const textValue = clean(value);
     if (vocab.allowed?.has(textValue)) return textValue;
-    const candidate = vocab.terms.find((item) => item.type === type
-      && (item.term.includes(textValue) || item.aliases.some((alias) => alias.includes(textValue))));
+    const candidate = vocab.terms
+      .filter((item) => item.type === type
+        && (item.term.includes(textValue) || item.aliases.some((alias) => alias.includes(textValue))))
+      .sort((left, right) => right.term.length - left.term.length)[0];
     return candidate?.term || "";
   };
   if (/(?:那个|这位|这位|该)(?:医生|院长|专家)|(?:他|她)(?:擅长|怎么)/.test(text) && knownDoctors.length === 1) {

@@ -164,9 +164,19 @@ export function buildAcquisitionEntityCatalog(knowledgeRecords = []) {
   }
   const doctors = new Set();
   const departments = new Set();
+  const addDoctor = (name) => {
+    const full = String(name || "").trim();
+    if (!full) return;
+    doctors.add(full);
+    // Doctor records commonly include an honorific ("张群院长") or a title
+    // ("李帅华 技术院长"). Add the bare name so customer mentions such as
+    // "张群" or "李帅华" resolve to the same verified directory entry.
+    const bare = full.replace(/\s*(?:技术院长|院长|主任|医生|专家)$/u, "").trim();
+    if (bare.length >= 2 && bare !== full && !/^(?:大光电|美肤中心)$/u.test(bare)) doctors.add(bare);
+  };
   for (const record of knowledgeRecords) {
     const parts = String(record.source_relative_path || "").split("/");
-    if (parts[0] === "医生介绍" && parts.length >= 4 && parts[2] && !/\.[a-z0-9]+$/i.test(parts[2])) doctors.add(parts[2]);
+    if (parts[0] === "医生介绍" && parts.length >= 3 && parts[2] && !/\.[a-z0-9]+$/i.test(parts[2])) addDoctor(parts[2]);
     if (["医生介绍", "项目介绍", "项目价格"].includes(parts[0]) && parts[1] && !/\.[a-z0-9]+$/i.test(parts[1])) departments.add(parts[1]);
   }
   const catalog = {

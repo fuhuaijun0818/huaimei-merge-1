@@ -1,12 +1,12 @@
 {
   "role": "C",
   "task_id": "domain-vocabulary-001",
-  "summary": "第4步领域专有词优化：生成绑定知识release和索引版本的345项领域词表，加入受控Query改写和多轮医生/项目解析，复用本地词法检索与GraphRAG做RRF混合检索。全量132条可检索样本由128/132提升到132/132，Recall@K由0.9659提升到1.0，MRR由0.8288提升到0.9722；同条件30条对照引用正确率和P95也改善。基于结果决定暂不微调embedding。",
+  "summary": "第4步领域专有词优化：生成绑定知识release和索引版本的341项领域词表，加入受控Query改写和多轮医生/项目解析，复用本地词法检索与GraphRAG做RRF混合检索。全量132条可检索样本由128/132提升到132/132，Recall@K由0.9659提升到1.0，MRR由0.8288提升到0.9722；同条件30条对照引用正确率和P95也改善。基于结果决定暂不微调embedding。",
   "acceptance_steps": [
-    "生成 domain-vocab-v1-55155737393c，绑定knowledge version、release_id、index_version；345个词项覆盖项目、医生、科室、部位、仪器、产品、政策、口语别名和facet。",
+    "生成 domain-vocab-v1-b22a319255e9，绑定knowledge version、release_id、index_version；341个词项覆盖项目、医生、科室、部位、仪器、产品、政策、口语别名和facet。",
     "Query改写：‘做胸’输出胸部整形/隆胸；‘热玛吉多少钱’输出热玛吉/价格/费用；‘那个医生’结合上一轮医生解析为张群院长；不把原始客户话术直接发给GraphRAG。",
     "同一Query复用本地词法检索与GraphRAG，按record_id去重后用RRF融合，再走发布准入、路径和医疗边界过滤。",
-    "全量混合评测132/132通过，Recall@K 1.0，MRR 0.9722；同条件30条对照引用正确率0.6680，P95 829.03ms。",
+    "全量混合评测132/132通过，Recall@K 1.0，MRR 0.9722；同条件30条对照引用正确率0.6680，P95 627.28ms。",
     "基于基础embedding Recall 0.9659且混合检索无召回缺口，本次不微调embedding，并记录重新评估条件。",
     "执行npm run team:verify，16项套件全部passed。"
   ],
@@ -39,7 +39,7 @@
     {
       "command": "纯GraphRAG/混合检索同条件30条对照（清空Redis证据缓存）",
       "status": "passed",
-      "evidence": "Recall 0.9808→1.0，引用正确率0.6244→0.6680，MRR 0.8365→0.9487，P95 854.52→829.03ms"
+      "evidence": "Recall 0.9808→1.0，引用正确率0.6244→0.6680，MRR 0.8365→0.9487，P95 854.52→627.28ms"
     }
   ],
   "shared_changes": [

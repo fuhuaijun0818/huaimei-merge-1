@@ -81,8 +81,13 @@ def approved_retrieval_terms(engine: Any) -> frozenset[str]:
             segments = segments[:-1]
         for raw_segment in segments:
             segment = raw_segment.strip()
-            if _SAFE_CATALOG_SEGMENT.fullmatch(segment):
-                terms.add(segment)
+            # Doctor directory segments may include a title separated by
+            # whitespace ("李帅华 技术院长"). The retrieval query is tokenized
+            # on whitespace, so add each safe token instead of rejecting the
+            # whole segment. The same reviewed grammar still applies.
+            for part in re.split(r"\s+", segment):
+                if _SAFE_CATALOG_SEGMENT.fullmatch(part):
+                    terms.add(part)
     return frozenset(terms)
 
 
