@@ -65,6 +65,10 @@ class RetrievalResponse(BaseModel):
     answer_draft: str | None = None
     graph_entities: list[str] = Field(default_factory=list)
     context_tokens: int | None = None
+    query_model_attempts: int = 0
+    query_model_accounting: str | None = None
     cache_hit: bool
+    queue_ms: float = 0
+    search_ms: float = 0
     timing_ms: float
     query_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")

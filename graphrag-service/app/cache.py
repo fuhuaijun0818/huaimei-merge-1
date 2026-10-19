@@ -2,12 +2,33 @@ from __future__ import annotations
 
 import asyncio
 import time
+import unicodedata
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
 from typing import Generic, TypeVar
 
 
 T = TypeVar("T")
+
+# Cache-key-only synonym normalization. The retrieval query itself is left
+# untouched so evidence quality does not depend on this table. Keep this list
+# aligned with server/graphrag-client.mjs::CACHE_QUERY_SYNONYMS.
+_CACHE_QUERY_SYNONYMS = {
+    "报价": "价格",
+    "费用": "价格",
+    "收费": "价格",
+    "预算": "价格",
+    "价钱": "价格",
+    "价位": "价格",
+    "多少钱": "价格",
+}
+
+
+def canonical_cache_query(query: str) -> str:
+    """Return an order-insensitive cache key form for equivalent phrasings."""
+
+    tokens = unicodedata.normalize("NFKC", str(query or "")).lower().split()
+    return " ".join(sorted({_CACHE_QUERY_SYNONYMS.get(token, token) for token in tokens}))
 
 
 class AsyncTtlCache(Generic[T]):

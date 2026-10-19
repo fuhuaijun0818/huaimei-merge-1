@@ -14,7 +14,7 @@ import orjson
 from fastapi import FastAPI, Header, HTTPException, Request, Response, status
 
 from . import __version__
-from .cache import AsyncTtlCache
+from .cache import AsyncTtlCache, canonical_cache_query
 from .config import Settings
 from .engine import create_engine, run_engine_search
 from .index_manifest import RequestBindingError
@@ -123,7 +123,7 @@ def cache_key(request: RetrievalRequest, index_version: str) -> str:
     canonical = orjson.dumps({
         "index": index_version,
         "tenant": request.tenant_id,
-        "query": request.query.lower(),
+        "query": canonical_cache_query(request.query),
         "mode": request.mode,
         "top_k": request.top_k,
         "top_k_entities": request.top_k_entities,
@@ -229,8 +229,10 @@ def create_app(overrides: Settings | None = None) -> FastAPI:
         except TimeoutError as error:
             metrics.overloaded += 1
             raise HTTPException(status_code=429, detail={"code": "RETRIEVAL_OVERLOADED", "retry_after_ms": 250}) from error
+        queue_ms = (time.perf_counter() - started) * 1000
         metrics.active += 1
         metrics.peak_active = max(metrics.peak_active, metrics.active)
+        search_ms = 0.0
         try:
             # Fail before cache lookup or any official GraphRAG/model call. Raw
             # customer utterances are not a valid retrieval-service contract.
@@ -244,7 +246,12 @@ def create_app(overrides: Settings | None = None) -> FastAPI:
             engine.validate_request(payload)
 
             async def execute() -> RetrievalResult:
-                return await asyncio.wait_for(run_engine_search(engine, payload), timeout=settings.request_timeout_seconds)
+                nonlocal search_ms
+                search_started = time.perf_counter()
+                try:
+                    return await asyncio.wait_for(run_engine_search(engine, payload), timeout=settings.request_timeout_seconds)
+                finally:
+                    search_ms = (time.perf_counter() - search_started) * 1000
 
             # A readiness probe must execute the real query path. Its cache
             # bypass is carried as structured metadata and never contaminates
@@ -274,7 +281,15 @@ def create_app(overrides: Settings | None = None) -> FastAPI:
                 answer_draft=result.answer_draft,
                 graph_entities=result.graph_entities,
                 context_tokens=result.query_model_usage.get("context_tokens"),
+                query_model_attempts=int(result.query_model_usage.get("attempts") or 0),
+                query_model_accounting=(
+                    str(result.query_model_usage.get("accounting"))
+                    if result.query_model_usage.get("accounting")
+                    else None
+                ),
                 cache_hit=hit,
+                queue_ms=round(queue_ms, 3),
+                search_ms=round(search_ms, 3),
                 timing_ms=round(elapsed, 3),
                 query_sha256=query_sha256,
             )

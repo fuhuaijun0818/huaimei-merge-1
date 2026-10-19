@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { getGraphRagStatus, resetGraphRagClientForTest, retrieveGraphRagKnowledge } from "../server/graphrag-client.mjs";
+import {
+  canonicalGraphRagCacheQuery,
+  getGraphRagStatus,
+  resetGraphRagClientForTest,
+  retrieveGraphRagKnowledge
+} from "../server/graphrag-client.mjs";
 import { loadHuameiKnowledge } from "../server/huamei-knowledge.mjs";
 
 resetGraphRagClientForTest();
@@ -53,6 +58,46 @@ assert.equal(second.evidence[0].content, canonicalFragment, "citation必须保�
 assert.deepEqual(second.evidence[0].graph_paths, [], "Graph生成路径不得作为事实透传");
 assert.deepEqual(second.graphEntities, [], "Graph生成实体不得作为事实透传");
 assert.equal(getGraphRagStatus(env).successes, 1);
+
+assert.equal(
+  canonicalGraphRagCacheQuery("热玛吉 多少钱"),
+  canonicalGraphRagCacheQuery("热玛吉 价格"),
+  "价格同义表达必须归一到同一缓存键"
+);
+assert.equal(
+  canonicalGraphRagCacheQuery("价格 热玛吉"),
+  canonicalGraphRagCacheQuery("热玛吉 价格"),
+  "缓存键必须与词序无关"
+);
+const [price, quote] = await Promise.all([
+  retrieveGraphRagKnowledge("热玛吉 价格", {
+    env, fetchImpl, tenantId:"huamei-shanghai", releaseId:"krel_test_v1", indexVersion:"test-index-v1"
+  }),
+  retrieveGraphRagKnowledge("热玛吉 报价", {
+    env, fetchImpl, tenantId:"huamei-shanghai", releaseId:"krel_test_v1", indexVersion:"test-index-v1"
+  })
+]);
+assert.equal(calls, 2, "同义价格表达并发时只应发出一次GraphRAG请求");
+assert.equal(quote.canonicalCacheShared, true, "第二个调用应标记为规范化缓存复用");
+assert.equal(
+  quote.querySha256,
+  createHash("sha256").update("热玛吉 报价").digest("hex"),
+  "缓存复用不得冒用首次查询的摘要"
+);
+assert.ok(price.latencyMs >= 0);
+assert.equal(price.queryModelAttempts, 0);
+
+await Promise.all([
+  retrieveGraphRagKnowledge("热玛吉 恢复", {
+    env, fetchImpl, tenantId:"huamei-shanghai", releaseId:"krel_test_v1", indexVersion:"test-index-v1",
+    filters:{ record_types:["project_record"] }
+  }),
+  retrieveGraphRagKnowledge("热玛吉 恢复", {
+    env, fetchImpl, tenantId:"huamei-shanghai", releaseId:"krel_test_v1", indexVersion:"test-index-v1",
+    filters:{ record_types:["policy_record"] }
+  })
+]);
+assert.equal(calls, 4, "不同过滤条件必须使用不同缓存键");
 
 const rejected = async (mutation, expectedReason) => {
   resetGraphRagClientForTest();

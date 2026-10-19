@@ -17,7 +17,9 @@ const args = Object.fromEntries(process.argv.slice(2).map((value) => {
   const match = value.match(/^--([^=]+)(?:=(.*))?$/);
   return match ? [match[1], match[2] ?? true] : [value, true];
 }));
+const reportRoot = args["output-dir"] ? join(root, String(args["output-dir"])) : outputRoot;
 const mode = ["local", "graphrag", "all"].includes(args.mode) ? args.mode : "all";
+const evidenceOnly = args["evidence-only"] === true;
 const concurrency = Math.min(8, Math.max(1, Number(args.concurrency) || 1));
 const limit = Math.max(0, Number(args.limit) || 0);
 const selectedCases = limit ? cases.slice(0, limit) : cases;
@@ -135,6 +137,7 @@ async function evaluateGraphRag(testCase) {
     tenantId:"huamei-shanghai",
     releaseId,
     indexVersion,
+    evidenceOnly,
     topK:6,
     requestId:`baseline-graphrag-${testCase.case_id}`
   });
@@ -231,6 +234,7 @@ const report = {
   schema_version:"huamei.graphrag.retrieval-baseline-report.v1",
   generated_at:new Date().toISOString(),
   mode,
+  evidence_only:evidenceOnly,
   concurrency,
   release_id:releaseId,
   index_version:indexVersion,
@@ -247,13 +251,13 @@ const report = {
     graphrag:graphragResults.length ? byCategory(graphragResults) : null
   }
 };
-await mkdir(outputRoot, { recursive:true });
+await mkdir(reportRoot, { recursive:true });
 if (localResults.length) {
-  await writeFile(join(outputRoot, "retrieval-raw-local.jsonl"), `${localResults.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
+  await writeFile(join(reportRoot, "retrieval-raw-local.jsonl"), `${localResults.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
 }
 if (graphragResults.length) {
-  await writeFile(join(outputRoot, "retrieval-raw-graphrag.jsonl"), `${graphragResults.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
+  await writeFile(join(reportRoot, "retrieval-raw-graphrag.jsonl"), `${graphragResults.map((row) => JSON.stringify(row)).join("\n")}\n`, "utf8");
 }
-await writeFile(join(outputRoot, "retrieval-report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+await writeFile(join(reportRoot, "retrieval-report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
 console.log(JSON.stringify(report, null, 2));
 if (report.local?.errors || report.graphrag?.errors) process.exitCode = 1;

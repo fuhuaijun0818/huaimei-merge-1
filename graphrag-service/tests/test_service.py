@@ -14,6 +14,7 @@ import pandas as pd
 from fastapi.testclient import TestClient
 
 from app.config import Settings
+from app.cache import canonical_cache_query
 from app.engine import create_engine
 from app.main import create_app
 from app.models import RetrievalRequest
@@ -254,6 +255,35 @@ class RetrievalServiceTest(unittest.TestCase):
             self.assertTrue(any(item["verification_note"] for item in response.json()["evidence"]))
             global_response = client.post("/v1/retrieve", json={"query": "项目介绍", "mode": "global"})
             self.assertEqual(global_response.status_code, 422)
+
+    def test_cache_key_normalizes_synonyms_and_filters_without_changing_query_hash(self):
+        self.assertEqual(canonical_cache_query("热玛吉 多少钱"), canonical_cache_query("热玛吉 价格"))
+        self.assertEqual(canonical_cache_query("价格 热玛吉"), canonical_cache_query("热玛吉 价格"))
+        with TestClient(create_app(settings())) as client:
+            first = client.post("/v1/retrieve", json={
+                "query": "双眼皮 价格",
+                "evidence_only": True,
+                "filters": {"record_types": ["project_record"]},
+            })
+            second = client.post("/v1/retrieve", json={
+                "query": "双眼皮 报价",
+                "evidence_only": True,
+                "filters": {"record_types": ["project_record"]},
+            })
+            different_filters = client.post("/v1/retrieve", json={
+                "query": "双眼皮 报价",
+                "evidence_only": True,
+                "filters": {"record_types": ["policy_record"]},
+            })
+            self.assertEqual(first.status_code, 200, first.text)
+            self.assertEqual(second.status_code, 200, second.text)
+            self.assertFalse(first.json()["cache_hit"])
+            self.assertTrue(second.json()["cache_hit"], "同义价格表达应复用证据缓存")
+            self.assertNotEqual(first.json()["query_sha256"], second.json()["query_sha256"])
+            self.assertFalse(different_filters.json()["cache_hit"], "过滤条件必须参与缓存键")
+            self.assertEqual(first.json()["query_model_attempts"], 0)
+            self.assertEqual(first.json()["query_model_accounting"], "evidence_only")
+            self.assertGreaterEqual(first.json()["search_ms"], 0)
 
     def test_service_key(self):
         with TestClient(create_app(settings("a-strong-internal-key"))) as client:

@@ -6,6 +6,19 @@ const DEFAULT_TIMEOUT_MS = 1_500;
 const FAILURE_THRESHOLD = 3;
 const CIRCUIT_OPEN_MS = 15_000;
 const OFFICIAL_GRAPHRAG_ENGINE = "official_graphrag_3_1_1";
+// Cache-key-only normalization. The outbound retrieval query is unchanged, so
+// this cannot alter recall; it only lets equivalent price phrasings share one
+// cache entry. Keep this list aligned with
+// graphrag-service/app/cache.py::canonical_cache_query.
+const CACHE_QUERY_SYNONYMS = new Map([
+  ["报价", "价格"],
+  ["费用", "价格"],
+  ["收费", "价格"],
+  ["预算", "价格"],
+  ["价钱", "价格"],
+  ["价位", "价格"],
+  ["多少钱", "价格"]
+]);
 const graphRagObservability = getObservability({
   service:process.env.HUAMEI_SERVICE_NAME || "huamei-acquisition",
   environment:process.env.HUAMEI_RUNTIME_ENV || process.env.NODE_ENV || "development"
@@ -30,6 +43,23 @@ const clamp = (value, fallback, min, max) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.min(Math.max(parsed, min), max) : fallback;
 };
+
+export const canonicalGraphRagCacheQuery = (value = "") => {
+  const tokens = String(value || "")
+    .normalize("NFKC")
+    .toLowerCase()
+    .split(/\s+/u)
+    .filter(Boolean)
+    .map((token) => CACHE_QUERY_SYNONYMS.get(token) || token);
+  return [...new Set(tokens)].sort().join(" ");
+};
+
+const normalizeRetrievalFilters = (filters = {}) => ({
+  record_types:[...new Set((Array.isArray(filters?.record_types) ? filters.record_types : [])
+    .map((item) => String(item || "").trim()).filter(Boolean))].slice(0, 8),
+  path_prefixes:[...new Set((Array.isArray(filters?.path_prefixes) ? filters.path_prefixes : [])
+    .map((item) => String(item || "").trim()).filter(Boolean))].slice(0, 8)
+});
 
 export function readGraphRagConfig(env = process.env) {
   const baseUrl = String(env.HUAMEI_GRAPHRAG_URL || "").trim().replace(/\/+$/, "");
@@ -177,9 +207,29 @@ export async function retrieveGraphRagKnowledge(query, options = {}) {
   const topKRelationships = options.topKRelationships ? Math.min(Math.max(Number(options.topKRelationships), 1), 30) : config.topKRelationships;
   const maxContextTokens = options.maxContextTokens ? Math.min(Math.max(Number(options.maxContextTokens), 1000), 32000) : config.maxContextTokens;
   const evidenceOnly = options.evidenceOnly === true;
-  const key = JSON.stringify([tenantId, normalizedQuery.toLowerCase(), releaseId, indexVersion, topK, topKEntities, topKRelationships, maxContextTokens, evidenceOnly]);
+  const filters = normalizeRetrievalFilters(options.filters);
+  const key = JSON.stringify([
+    tenantId,
+    canonicalGraphRagCacheQuery(normalizedQuery),
+    releaseId,
+    indexVersion,
+    topK,
+    topKEntities,
+    topKRelationships,
+    maxContextTokens,
+    evidenceOnly,
+    filters
+  ]);
   const existing = state.inflight.get(key);
-  if (existing) return existing;
+  if (existing) {
+    const shared = await existing;
+    // Equivalent phrasings share one outbound request. Each caller still
+    // reports the digest of the query it logically issued so formal-load
+    // binding checks cannot be satisfied by another entry's digest.
+    return shared.used
+      ? { ...shared, querySha256:expectedQuerySha256, canonicalCacheShared:true }
+      : shared;
+  }
   const operation = (async () => {
     state.calls += 1;
     const startedAt = performance.now();
@@ -201,6 +251,7 @@ export async function retrieveGraphRagKnowledge(query, options = {}) {
           ...(topKRelationships ? { top_k_relationships:topKRelationships } : {}),
           ...(maxContextTokens ? { max_context_tokens:maxContextTokens } : {}),
           evidence_only:evidenceOnly,
+          filters,
           release_id:releaseId,
           index_version:indexVersion,
           readiness_probe:options.readinessProbe === true
@@ -252,8 +303,13 @@ export async function retrieveGraphRagKnowledge(query, options = {}) {
         engine:String(body.engine || "unknown").slice(0, 80),
         indexVersion:String(body.index_version || "unknown").slice(0, 128),
         cacheHit:body.cache_hit === true,
+        latencyMs:Number(durationMs.toFixed(2)),
         timingMs:Number(body.timing_ms) || null,
+        searchMs:Number(body.search_ms) || null,
+        queueMs:Number(body.queue_ms) || null,
         contextTokens:Number(body.context_tokens) || null,
+        queryModelAttempts:Number(body.query_model_attempts) || 0,
+        queryModelAccounting:body.query_model_accounting || null,
         querySha256:expectedQuerySha256,
         graphEntities:[],
         evidence:evidence.slice(0, topK)

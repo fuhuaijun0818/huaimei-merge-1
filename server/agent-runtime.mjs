@@ -726,6 +726,31 @@ const graphIntentPathPrefixes = (intent = "", explicitPrefixes = []) => {
   return [];
 };
 
+// Policy questions often name a month plus a business topic ("6月份皮肤套餐
+// 政策") without a project/doctor entity. The deterministic local retrieval
+// has already located the exact policy paths, so reuse only their fixed
+// catalog segments as outbound anchors. This keeps the query boundary on
+// reviewed taxonomy terms and prevents the GraphRAG query from degrading to a
+// generic price/benefit phrase.
+const graphPolicyAnchors = (query, localResponse) => {
+  const anchors = [];
+  const month = String(query || "").normalize("NFKC").match(/(\d{1,2})月份/);
+  if (month) anchors.push(`${month[1]}月份政策`);
+  for (const citation of (localResponse?.output?.citations || []).slice(0, 4)) {
+    const segments = String(citation?.source_relative_path || "").split("/").slice(0, -1);
+    for (const segment of segments) {
+      const normalized = String(segment || "").normalize("NFKC").trim();
+      if (normalized.length >= 2
+        && normalized.length <= 20
+        && /政策|套餐|权益/.test(normalized)
+        && /^[\u3400-\u9fffA-Za-z0-9][\u3400-\u9fffA-Za-z0-9_.+·®™()-]{1,39}$/.test(normalized)) {
+        anchors.push(normalized);
+      }
+    }
+  }
+  return [...new Set(anchors)].slice(0, 4);
+};
+
 export const buildGraphRagQuery = (query, localResponse, _context = {}) => {
   const intent = String(localResponse?.output?.structured_data?.intent || "");
   const structured = localResponse?.output?.structured_data || {};
@@ -737,10 +762,12 @@ export const buildGraphRagQuery = (query, localResponse, _context = {}) => {
     structured.project
   ];
   const bodyPartAnchors = projectAnchors.some(Boolean) ? [] : (entities.body_parts || []);
+  const policyAnchors = intent === "policy_verification" ? graphPolicyAnchors(query, localResponse) : [];
   const currentAnchors = [
     ...projectAnchors,
     ...doctorAnchors,
     ...bodyPartAnchors,
+    ...policyAnchors,
     ...graphOutboundFacetAnchors(query, entities),
     ...graphQueryAliases(query)
   ];
@@ -749,10 +776,10 @@ export const buildGraphRagQuery = (query, localResponse, _context = {}) => {
     .filter((item) => item.length >= 2))].join(" ");
 };
 
-const graphRagParamsForIntent = (intent = "") => {
+export const graphRagParamsForIntent = (intent = "", env = process.env) => {
   let tuning = {};
   try {
-    tuning = JSON.parse(process.env.HUAMEI_GRAPHRAG_TUNING_JSON || "{}");
+    tuning = JSON.parse(env.HUAMEI_GRAPHRAG_TUNING_JSON || "{}");
   } catch {
     tuning = {};
   }
@@ -769,6 +796,9 @@ const graphRagParamsForIntent = (intent = "") => {
     maxContextTokens:selected.max_context_tokens ?? selected.maxContextTokens
   };
 };
+
+export const graphRagEvidenceOnlyEnabled = (env = process.env) =>
+  String(env.HUAMEI_GRAPHRAG_EVIDENCE_ONLY || "true").toLowerCase() !== "false";
 
 export const filterGraphRagEvidenceForResponse = (evidence = [], localResponse, query = "") => {
   const structured = localResponse?.output?.structured_data || {};
@@ -2039,6 +2069,21 @@ const mergeModelResult = (agent, input, context, localResponse, modelResult, nat
 };
 
 export async function invokeAgentAsync(agentId, payload, metadata = {}) {
+  const latencyStartedAt = performance.now();
+  const latencyBreakdown = {
+    planning_ms:0,
+    deterministic_planning_ms:0,
+    graphrag_request_ms:0,
+    graphrag_service_ms:null,
+    graphrag_queue_ms:null,
+    graphrag_search_ms:null,
+    graphrag_query_model_calls:0,
+    evidence_filter_ms:0,
+    generation_ms:0,
+    review_ms:0,
+    total_ms:null
+  };
+  const elapsedMs = (startedAt) => Number((performance.now() - startedAt).toFixed(2));
   const definition=AGENT_DEFINITIONS.find(item=>item.id===agentId||item.slug===agentId);
   const originalContext=normalizeContext(payload.context);
   const semanticRisk=inspectRisk(payload.message);
@@ -2046,6 +2091,7 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
   if(definition?.id==='A-01' && semanticRisk.decision==='allow' && !originalContext.active_critical_risk) {
     plan=await planDialogueTurnWithLlm({input:payload,context:originalContext});
   }
+  latencyBreakdown.planning_ms = Number(plan.latency_ms) || 0;
   const trusted={};
   if(plan.used) {
     const context=applyTurnPlanContext(originalContext,plan);
@@ -2073,7 +2119,9 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
   // interpreted as an executable tool call, and safety/handover wins first.
   const contact=definition?.id==='A-01' && semanticRisk.decision==='allow' && !originalContext.active_critical_risk && typeof metadata.captureContact==='function'
     ? await metadata.captureContact(plan) : null;
+  const deterministicStartedAt = performance.now();
   const localResponse = invokeAgent(agentId, payload, metadata);
+  latencyBreakdown.deterministic_planning_ms = elapsedMs(deterministicStartedAt);
   const finalize=response=>{
     if(contact) {
       response.lead_receipt=contact.receipt;
@@ -2085,6 +2133,8 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
     }
     response.guardrails.turn_planning={used:plan.used,reason:plan.reason||'completed',version:plan.version||null,latency_ms:plan.latency_ms||0,discarded_task:plan.discarded_task||false,discarded_slot_updates:plan.discarded_slot_updates||0,discarded_next_step:plan.discarded_next_step||false};
     response.guardrails.semantic_understanding={used:plan.used,applied:plan.used,reason:plan.reason||'unified_turn_plan'};
+    latencyBreakdown.total_ms = elapsedMs(latencyStartedAt);
+    response.guardrails.latency_breakdown = { ...latencyBreakdown };
     if(plan.used) {
       response.output.structured_data.turn_plan=plan;
       response.usage={...response.usage,planning_total_tokens:plan.usage?.total_tokens||0,total_tokens:(response.usage?.total_tokens||0)+(plan.usage?.total_tokens||0)};
@@ -2171,27 +2221,46 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
       } else {
         const graphParams = graphRagParamsForIntent(localIntent);
         localResponse.guardrails.graphrag_params = graphParams;
+        const evidenceOnly = graphRagEvidenceOnlyEnabled();
+        localResponse.guardrails.graphrag_evidence_only = evidenceOnly;
+        const graphStartedAt = performance.now();
         const graphResult = await retrieveGraphRagKnowledge(graphQuery, {
           tenantId:context.tenant_id,
           releaseId:admission.active_release?.id || null,
           indexVersion:admission.active_release?.manifest?.index_version || null,
           requestId:metadata.requestId,
+          evidenceOnly,
           topK:graphParams.topK,
           ...(graphParams.topKEntities ? { topKEntities:graphParams.topKEntities } : {}),
           ...(graphParams.topKRelationships ? { topKRelationships:graphParams.topKRelationships } : {}),
           ...(graphParams.maxContextTokens ? { maxContextTokens:graphParams.maxContextTokens } : {})
         });
+        latencyBreakdown.graphrag_request_ms = elapsedMs(graphStartedAt);
+        latencyBreakdown.graphrag_service_ms = graphResult.timingMs ?? null;
+        latencyBreakdown.graphrag_queue_ms = graphResult.queueMs ?? null;
+        latencyBreakdown.graphrag_search_ms = graphResult.searchMs ?? null;
+        latencyBreakdown.graphrag_query_model_calls = Number(graphResult.queryModelAttempts) || 0;
+        localResponse.guardrails.graphrag_timing_ms = graphResult.timingMs ?? null;
+        localResponse.guardrails.graphrag_search_ms = graphResult.searchMs ?? null;
+        localResponse.guardrails.graphrag_queue_ms = graphResult.queueMs ?? null;
+        localResponse.guardrails.graphrag_context_tokens = graphResult.contextTokens ?? null;
+        localResponse.guardrails.graphrag_query_model_calls = Number(graphResult.queryModelAttempts) || 0;
+        localResponse.guardrails.graphrag_query_model_accounting = graphResult.queryModelAccounting || null;
+        localResponse.guardrails.graphrag_cache_hit = graphResult.cacheHit === true;
         localResponse.guardrails.graphrag_query_sha256 = graphResult.querySha256 || null;
         if (formalLoadEntry && graphResult.querySha256 !== formalLoadEntry.querySha256) {
           const error = new Error("正式压测taxonomy query摘要与批准entry不一致");
           error.code = "FORMAL_LOAD_TAXONOMY_QUERY_HASH_MISMATCH";
           throw error;
         }
-        if (graphResult.used) attachGraphRagEvidence(localResponse, graphResult, context, input.message);
-        else {
+        const evidenceFilterStartedAt = performance.now();
+        if (graphResult.used) {
+          attachGraphRagEvidence(localResponse, graphResult, context, input.message);
+        } else {
           localResponse.guardrails.graphrag_used = false;
           localResponse.guardrails.graphrag_fallback_reason = graphResult.reason;
         }
+        latencyBreakdown.evidence_filter_ms = elapsedMs(evidenceFilterStartedAt);
       }
     } else {
       localResponse.guardrails.graphrag_used = false;
@@ -2237,6 +2306,8 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
       localResponse.guardrails.llm_skip_reason = completion.reason;
       return finalize(localResponse);
     }
+    latencyBreakdown.generation_ms = Number(completion.usage?.generation_latency_ms) || 0;
+    latencyBreakdown.review_ms = Number(completion.usage?.review_latency_ms) || 0;
     const { result, postRisk, copyStyleIssues, grounding, modelOutputRejected } = mergeModelResult(agent, input, context, localResponse, completion.result, completion.naturalValidation);
     localResponse.status = result.status;
     localResponse.output = {
