@@ -11,6 +11,8 @@ completion_models:
     api_base: ${GRAPHRAG_API_BASE}
     auth_method: api_key # or azure_managed_identity
     api_key: ${GRAPHRAG_API_KEY} # set this in the generated .env file, or remove if managed identity
+    call_args:
+      enable_thinking: false
     retry:
       type: exponential_backoff
 
@@ -28,7 +30,9 @@ embedding_models:
 
 input:
   type: jsonl # [csv, text, json, jsonl]
-  file_pattern: ".*\\.jsonl$"
+  # GraphRAG expands environment placeholders over the entire YAML file, so a
+  # literal regex end anchor must be escaped as a doubled dollar sign.
+  file_pattern: ".*\\.jsonl$$"
   id_column: record_id
   title_column: title
   text_column: text

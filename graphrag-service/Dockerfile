@@ -25,9 +25,9 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && useradd --create-home --uid 10001 graphrag
 
 COPY --chown=graphrag:graphrag graphrag-service/app ./app
-COPY --chown=graphrag:graphrag graphrag-service/data ./data
 COPY --chown=graphrag:graphrag graphrag-service/graphrag_project/settings.yaml ./graphrag_project/settings.yaml
 COPY --chown=graphrag:graphrag graphrag-service/graphrag_project/prompts ./graphrag_project/prompts
+RUN mkdir -p ./data
 
 USER graphrag
 
@@ -36,4 +36,4 @@ EXPOSE 4191
 HEALTHCHECK --interval=20s --timeout=3s --start-period=20s --retries=3 \
   CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4191/ready', timeout=2)"]
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "4191", "--workers", "4", "--no-access-log", "--limit-concurrency", "600"]
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "4191", "--workers", "4", "--loop", "asyncio", "--no-access-log", "--limit-concurrency", "600"]

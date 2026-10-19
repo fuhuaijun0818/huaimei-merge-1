@@ -38,7 +38,7 @@ export function readGraphRagConfig(env = process.env) {
     configured:Boolean(baseUrl),
     baseUrl,
     serviceKey:String(env.HUAMEI_GRAPHRAG_SERVICE_KEY || "").trim(),
-    timeoutMs:clamp(env.HUAMEI_GRAPHRAG_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, 200, 10_000),
+    timeoutMs:clamp(env.HUAMEI_GRAPHRAG_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, 200, 25_000),
     topK:clamp(env.HUAMEI_GRAPHRAG_TOP_K, 6, 1, 12)
   };
 }

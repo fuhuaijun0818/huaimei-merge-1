@@ -136,6 +136,7 @@ if (graphRequested) {
       "--host", graphHost,
       "--port", String(graphPort),
       "--workers", workers,
+      "--loop", "asyncio",
       "--no-access-log"
     ], "GraphRAG检索服务");
   }
