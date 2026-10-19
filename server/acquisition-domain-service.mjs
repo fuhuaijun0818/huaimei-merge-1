@@ -272,6 +272,7 @@ async function processAcquisitionEnvelopeWithPublication(envelope, metadata = {}
       graphrag_used:result.guardrails.graphrag_used === true,
       graphrag_engine:result.guardrails.graphrag_engine || null,
       graphrag_index_version:result.guardrails.graphrag_index_version || null,
+      graphrag_params:result.guardrails.graphrag_params || null,
       // Digest of the privacy-approved taxonomy query actually accepted by
       // GraphRAG. It contains no raw customer text and lets formal capacity
       // evidence bind cache misses to the exact retrieval-service workload.

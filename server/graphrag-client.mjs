@@ -39,7 +39,10 @@ export function readGraphRagConfig(env = process.env) {
     baseUrl,
     serviceKey:String(env.HUAMEI_GRAPHRAG_SERVICE_KEY || "").trim(),
     timeoutMs:clamp(env.HUAMEI_GRAPHRAG_TIMEOUT_MS, DEFAULT_TIMEOUT_MS, 200, 45_000),
-    topK:clamp(env.HUAMEI_GRAPHRAG_TOP_K, 6, 1, 12)
+    topK:clamp(env.HUAMEI_GRAPHRAG_TOP_K, 6, 1, 12),
+    topKEntities:env.HUAMEI_GRAPHRAG_TOP_K_ENTITIES ? clamp(env.HUAMEI_GRAPHRAG_TOP_K_ENTITIES, 10, 1, 30) : null,
+    topKRelationships:env.HUAMEI_GRAPHRAG_TOP_K_RELATIONSHIPS ? clamp(env.HUAMEI_GRAPHRAG_TOP_K_RELATIONSHIPS, 10, 1, 30) : null,
+    maxContextTokens:env.HUAMEI_GRAPHRAG_MAX_CONTEXT_TOKENS ? clamp(env.HUAMEI_GRAPHRAG_MAX_CONTEXT_TOKENS, 12000, 1000, 32000) : null
   };
 }
 
@@ -170,7 +173,11 @@ export async function retrieveGraphRagKnowledge(query, options = {}) {
   const releaseId = options.releaseId ? String(options.releaseId) : null;
   const indexVersion = options.indexVersion ? String(options.indexVersion) : null;
   const topK = Math.min(Math.max(Number(options.topK) || config.topK, 1), 12);
-  const key = JSON.stringify([tenantId, normalizedQuery.toLowerCase(), releaseId, indexVersion, topK]);
+  const topKEntities = options.topKEntities ? Math.min(Math.max(Number(options.topKEntities), 1), 30) : config.topKEntities;
+  const topKRelationships = options.topKRelationships ? Math.min(Math.max(Number(options.topKRelationships), 1), 30) : config.topKRelationships;
+  const maxContextTokens = options.maxContextTokens ? Math.min(Math.max(Number(options.maxContextTokens), 1000), 32000) : config.maxContextTokens;
+  const evidenceOnly = options.evidenceOnly === true;
+  const key = JSON.stringify([tenantId, normalizedQuery.toLowerCase(), releaseId, indexVersion, topK, topKEntities, topKRelationships, maxContextTokens, evidenceOnly]);
   const existing = state.inflight.get(key);
   if (existing) return existing;
   const operation = (async () => {
@@ -190,6 +197,10 @@ export async function retrieveGraphRagKnowledge(query, options = {}) {
           query:normalizedQuery,
           mode:"local",
           top_k:topK,
+          ...(topKEntities ? { top_k_entities:topKEntities } : {}),
+          ...(topKRelationships ? { top_k_relationships:topKRelationships } : {}),
+          ...(maxContextTokens ? { max_context_tokens:maxContextTokens } : {}),
+          evidence_only:evidenceOnly,
           release_id:releaseId,
           index_version:indexVersion,
           readiness_probe:options.readinessProbe === true
@@ -242,6 +253,7 @@ export async function retrieveGraphRagKnowledge(query, options = {}) {
         indexVersion:String(body.index_version || "unknown").slice(0, 128),
         cacheHit:body.cache_hit === true,
         timingMs:Number(body.timing_ms) || null,
+        contextTokens:Number(body.context_tokens) || null,
         querySha256:expectedQuerySha256,
         graphEntities:[],
         evidence:evidence.slice(0, topK)

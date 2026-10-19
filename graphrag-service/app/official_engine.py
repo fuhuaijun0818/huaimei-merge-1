@@ -194,7 +194,7 @@ class OfficialGraphRagEngine:
                     return evidence
         return evidence
 
-    async def _run_local_search(self, query: str):
+    def _build_local_search(self, request: RetrievalRequest):
         """Run the pinned official engine while retaining its real usage result.
 
         ``graphrag.api.local_search`` deliberately returns only answer/context
@@ -220,7 +220,7 @@ class OfficialGraphRagEngine:
         entities = read_indexer_entities(self.tables["entities"], self.tables["communities"], community_level)
         covariates_table = self.tables.get("covariates")
         covariates = read_indexer_covariates(covariates_table) if covariates_table is not None else []
-        engine = get_local_search_engine(
+        return get_local_search_engine(
             config=self.config,
             reports=reports,
             text_units=read_indexer_text_units(self.tables["text_units"]),
@@ -234,10 +234,54 @@ class OfficialGraphRagEngine:
             ),
             system_prompt=load_search_prompt(self.config.local_search.prompt),
         )
-        return await engine.search(query=query)
+
+    def _context_params(self, engine, request: RetrievalRequest) -> dict[str, Any]:
+        params = dict(engine.context_builder_params or {})
+        if request.top_k_entities is not None:
+            params["top_k_mapped_entities"] = request.top_k_entities
+        if request.top_k_relationships is not None:
+            params["top_k_relationships"] = request.top_k_relationships
+        if request.max_context_tokens is not None:
+            params["max_context_tokens"] = request.max_context_tokens
+        return params
+
+    async def _run_context_search(self, request: RetrievalRequest) -> RetrievalResult:
+        """Build the official local context without invoking the answer model."""
+        engine = self._build_local_search(request)
+        context_result = engine.context_builder.build_context(
+            query=request.query,
+            conversation_history=None,
+            **self._context_params(engine, request),
+        )
+        return RetrievalResult(
+            engine=self.name,
+            index_version=self.version,
+            mode=request.mode,
+            evidence=self._context_evidence(context_result.context_records, request.top_k),
+            answer_draft=None,
+            graph_entities=[],
+            query_model_usage={
+                "provider":"none",
+                "model":"none",
+                "attempts":0,
+                "successes":0,
+                "prompt_tokens":0,
+                "output_tokens":0,
+                "accounting":"evidence_only",
+                "context_characters":len(context_result.context_chunks or ""),
+                "context_tokens":len(engine.tokenizer.encode(context_result.context_chunks or "")),
+            },
+        )
+
+    async def _run_local_search(self, request: RetrievalRequest):
+        engine = self._build_local_search(request)
+        engine.context_builder_params.update(self._context_params(engine, request))
+        return await engine.search(query=request.query)
 
     async def search(self, request: RetrievalRequest) -> RetrievalResult:
-        search_result = await self._run_local_search(request.query)
+        if request.evidence_only:
+            return await self._run_context_search(request)
+        search_result = await self._run_local_search(request)
         response = search_result.response
         context = search_result.context_data
         answer = response if isinstance(response, str) else str(response)

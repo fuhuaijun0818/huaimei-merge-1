@@ -89,6 +89,8 @@ const evaluationSummaryPath = join(outputRoot, "retrieval-dataset-summary.json")
 const evaluationIntegrityPath = join(outputRoot, "retrieval-data-integrity-report.json");
 const evaluationReportPath = join(outputRoot, "retrieval-baseline-report.json");
 const evaluationNotesPath = join(outputRoot, "retrieval-baseline-summary.md");
+const tuningReportPath = join(outputRoot, "topk-tuning-report.json");
+const tuningValidationPath = join(outputRoot, "topk-tuning-validation.json");
 
 await mkdir(outputRoot, { recursive:true });
 
@@ -191,6 +193,7 @@ const runtimeFlags = {
   graphrag_index_version:envLocal.HUAMEI_GRAPHRAG_INDEX_VERSION || null,
   graphrag_timeout_ms:Number(envLocal.HUAMEI_GRAPHRAG_TIMEOUT_MS || 0) || null,
   graphrag_top_k:Number(envLocal.HUAMEI_GRAPHRAG_TOP_K || 0) || null,
+  graphrag_tuning_json:envLocal.HUAMEI_GRAPHRAG_TUNING_JSON || null,
   graphrag_managed_externally:String(envLocal.HUAMEI_GRAPHRAG_MANAGED_EXTERNALLY || "").toLowerCase() === "true",
   knowledge_approval_mode:envLocal.HUAMEI_KNOWLEDGE_APPROVAL_MODE || null,
   persistence_backend:envLocal.HUAMEI_PERSISTENCE_BACKEND || null
@@ -222,6 +225,21 @@ try {
       graphrag_timeout:results.failures.graphrag_timeout_count,
       graphrag_miss:results.failures.graphrag_miss_count
     } : null
+  };
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}
+let tuning = null;
+try {
+  const tuningReport = await readJson(tuningReportPath);
+  const tuningValidation = await readJson(tuningValidationPath);
+  tuning = {
+    report_sha256:await sha256File(tuningReportPath),
+    validation_sha256:await sha256File(tuningValidationPath),
+    sample_cases:tuningReport.sample_cases,
+    evidence_only:tuningReport.evidence_only === true,
+    selected:tuningReport.selected_json || null,
+    validation:tuningValidation.selected || null
   };
 } catch (error) {
   if (error.code !== "ENOENT") throw error;
@@ -275,6 +293,7 @@ const baseline = {
     dataset_sha256:evaluation?.dataset_sha256 || null
   },
   evaluation,
+  tuning,
   acceptance:{
     development_step0_complete:indexComplete && evaluationComplete && evaluation?.data_integrity_passed === true,
     production_eligible:false,

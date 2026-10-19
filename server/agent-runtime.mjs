@@ -749,6 +749,27 @@ export const buildGraphRagQuery = (query, localResponse, _context = {}) => {
     .filter((item) => item.length >= 2))].join(" ");
 };
 
+const graphRagParamsForIntent = (intent = "") => {
+  let tuning = {};
+  try {
+    tuning = JSON.parse(process.env.HUAMEI_GRAPHRAG_TUNING_JSON || "{}");
+  } catch {
+    tuning = {};
+  }
+  const key = intent === "doctor_project_verification" ? "doctor_profile" : intent;
+  const selected = { ...(tuning.default || {}), ...(tuning[key] || {}) };
+  const number = (value, fallback, min, max) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.min(Math.max(parsed, min), max) : fallback;
+  };
+  return {
+    topK:number(selected.top_k ?? selected.topK, 6, 1, 12),
+    topKEntities:selected.top_k_entities ?? selected.topKEntities,
+    topKRelationships:selected.top_k_relationships ?? selected.topKRelationships,
+    maxContextTokens:selected.max_context_tokens ?? selected.maxContextTokens
+  };
+};
+
 export const filterGraphRagEvidenceForResponse = (evidence = [], localResponse, query = "") => {
   const structured = localResponse?.output?.structured_data || {};
   const intent = String(structured.intent || "");
@@ -2148,12 +2169,17 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
         localResponse.guardrails.graphrag_used = false;
         localResponse.guardrails.graphrag_fallback_reason = "no_safe_retrieval_terms";
       } else {
+        const graphParams = graphRagParamsForIntent(localIntent);
+        localResponse.guardrails.graphrag_params = graphParams;
         const graphResult = await retrieveGraphRagKnowledge(graphQuery, {
           tenantId:context.tenant_id,
           releaseId:admission.active_release?.id || null,
           indexVersion:admission.active_release?.manifest?.index_version || null,
           requestId:metadata.requestId,
-          topK:6
+          topK:graphParams.topK,
+          ...(graphParams.topKEntities ? { topKEntities:graphParams.topKEntities } : {}),
+          ...(graphParams.topKRelationships ? { topKRelationships:graphParams.topKRelationships } : {}),
+          ...(graphParams.maxContextTokens ? { maxContextTokens:graphParams.maxContextTokens } : {})
         });
         localResponse.guardrails.graphrag_query_sha256 = graphResult.querySha256 || null;
         if (formalLoadEntry && graphResult.querySha256 !== formalLoadEntry.querySha256) {

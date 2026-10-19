@@ -17,6 +17,10 @@ class RetrievalRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1200)
     mode: Literal["local", "global"] = "local"
     top_k: int = Field(default=6, ge=1, le=20)
+    top_k_entities: int | None = Field(default=None, ge=1, le=30)
+    top_k_relationships: int | None = Field(default=None, ge=1, le=30)
+    max_context_tokens: int | None = Field(default=None, ge=1000, le=32000)
+    evidence_only: bool = False
     release_id: str | None = Field(default=None, max_length=128)
     index_version: str | None = Field(default=None, max_length=160)
     readiness_probe: bool = False
@@ -60,6 +64,7 @@ class RetrievalResponse(BaseModel):
     evidence: list[Evidence]
     answer_draft: str | None = None
     graph_entities: list[str] = Field(default_factory=list)
+    context_tokens: int | None = None
     cache_hit: bool
     timing_ms: float
     query_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
