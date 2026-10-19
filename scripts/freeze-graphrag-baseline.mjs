@@ -85,6 +85,10 @@ const fullOutputRoot = join(root, ".team-dev", "graphrag-baseline-924", "project
 const fullManifestPath = join(fullOutputRoot, "manifest.json");
 const fullReleaseRoot = join(root, ".team-dev", "graphrag-baseline-924", "release");
 const fullReleaseStorePath = join(root, ".team-dev", "graphrag-baseline-924", "knowledge-releases.json");
+const evaluationSummaryPath = join(outputRoot, "retrieval-dataset-summary.json");
+const evaluationIntegrityPath = join(outputRoot, "retrieval-data-integrity-report.json");
+const evaluationReportPath = join(outputRoot, "retrieval-baseline-report.json");
+const evaluationNotesPath = join(outputRoot, "retrieval-baseline-summary.md");
 
 await mkdir(outputRoot, { recursive:true });
 
@@ -192,12 +196,45 @@ const runtimeFlags = {
   persistence_backend:envLocal.HUAMEI_PERSISTENCE_BACKEND || null
 };
 
+let evaluation = null;
+try {
+  const datasetSummary = await readJson(evaluationSummaryPath);
+  const dataIntegrity = await readJson(evaluationIntegrityPath);
+  const results = await readJson(evaluationReportPath);
+  evaluation = {
+    status:dataIntegrity.passed ? "complete" : "invalid",
+    dataset_id:datasetSummary.dataset_id,
+    case_count:datasetSummary.case_count,
+    graphrag_eligible:datasetSummary.graphrag_eligible,
+    dataset_sha256:datasetSummary.dataset_sha256,
+    data_integrity_passed:dataIntegrity.passed,
+    dataset_summary_sha256:await sha256File(evaluationSummaryPath),
+    data_integrity_report_sha256:await sha256File(evaluationIntegrityPath),
+    baseline_report_sha256:await sha256File(evaluationReportPath),
+    baseline_summary_sha256:await sha256File(evaluationNotesPath),
+    local:results.local || null,
+    graphrag:results.graphrag || null,
+    comparable_subset:results.comparable_subset || null,
+    failure_counts:results.failures ? {
+      local_no_answer:results.failures.local_no_answer_count,
+      local_safety:results.failures.local_safety_count,
+      graphrag_timeout:results.failures.graphrag_timeout_count,
+      graphrag_miss:results.failures.graphrag_miss_count
+    } : null
+  };
+} catch (error) {
+  if (error.code !== "ENOENT") throw error;
+}
+const indexComplete = selectedIndex.status === "baseline_index";
+const evaluationComplete = evaluation?.status === "complete";
+const baselineStatus = indexComplete && evaluationComplete
+  ? "step0_complete"
+  : indexComplete ? "environment_and_index_frozen" : "environment_frozen_index_pending";
+
 const baseline = {
   schema_version:"huamei.graphrag.baseline.v1",
   baseline_id:baselineId,
-  baseline_status:selectedIndex.status === "baseline_index"
-    ? "environment_and_index_frozen"
-    : "environment_frozen_index_pending",
+  baseline_status:baselineStatus,
   evidence_class:"development",
   created_at:nowShanghai(),
   git:{
@@ -230,13 +267,22 @@ const baseline = {
   },
   runtime_flags:runtimeFlags,
   dataset:{
-    status:"pending_step_0.3",
-    dataset_id:null
+    status:evaluationComplete ? "complete" : "pending_step_0.3",
+    dataset_id:evaluation?.dataset_id || null,
+    case_count:evaluation?.case_count || 0,
+    graphrag_eligible:evaluation?.graphrag_eligible || 0,
+    dataset_sha256:evaluation?.dataset_sha256 || null
+  },
+  evaluation,
+  acceptance:{
+    development_step0_complete:indexComplete && evaluationComplete && evaluation?.data_integrity_passed === true,
+    production_eligible:false,
+    production_blocker:"Formal three-review release and production approval are external and are not fabricated by this development baseline."
   },
   blockers:[
     ...(selectedIndex.status === "baseline_index" ? [] : ["Full 924-record official GraphRAG index is built in step 0.2."]),
     "Current release store is a development fixture and is not production eligible.",
-    "Retrieval evaluation dataset is built in step 0.3."
+    ...(evaluationComplete ? [] : ["Retrieval evaluation dataset is built in step 0.3."])
   ]
 };
 
