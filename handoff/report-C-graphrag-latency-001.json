@@ -1,0 +1,131 @@
+{
+  "role": "C",
+  "task_id": "graphrag-latency-001",
+  "summary": "第3步检索延迟优化：生产GraphRAG默认切换为evidence-only，避免GraphRAG查询模型与Node回答模型重复生成；增加分阶段耗时、缓存键规范化、Top-N预热脚本和六条真实探针。132条证据模式评测保持128/132通过，P50由15877ms降至2039ms，P95由24798ms降至2501ms。",
+  "acceptance_steps": [
+    "执行 node --env-file=.env.local scripts/measure-agent-latency.mjs --rounds=1，六条探针实际6/6通过；项目/医生/政策走graph_rag，价格/预约走structured_business_data，怀孕医疗风险转人工。",
+    "执行 node --env-file=.env.local scripts/evaluate-graphrag-retrieval.mjs --mode=graphrag --evidence-only --concurrency=2 --output-dir=artifacts/graphrag-baseline/graphrag-baseline-20261019.2/latency-eval，实际128/132通过，0错误。",
+    "执行 node --env-file=.env.local scripts/prewarm-graphrag-cache.mjs --limit=200 --rounds=2 --concurrency=4，130条唯一查询第1轮0命中、第2轮130/130命中；客户端P50由4256ms降至11ms。",
+    "单条真实请求“热玛吉是什么原理”：GraphRAG由18170ms降至1048ms，端到端由25511ms降至5818ms，GraphRAG查询模型调用由1次降为0次。",
+    "执行 npm run team:verify，实际13项套件全部passed。"
+  ],
+  "tests": [
+    {
+      "command": "node tests/graphrag-client.mjs",
+      "status": "passed",
+      "evidence": "在途去重、官方引擎、证据完整性、规范化缓存键与过滤条件隔离通过"
+    },
+    {
+      "command": "node tests/graphrag-latency-optimization.mjs",
+      "status": "passed",
+      "evidence": "证据模式默认值、按意图参数、缓存规范化与政策查询锚点通过"
+    },
+    {
+      "command": "node tests/acquisition-orchestration.mjs",
+      "status": "passed",
+      "evidence": "动态检索路由、会话任务状态、证据声明与待确认业务动作通过"
+    },
+    {
+      "command": "node tests/acquisition-service.mjs",
+      "status": "passed",
+      "evidence": "独立服务健康检查、统一协议、会话隔离与渠道幂等通过"
+    },
+    {
+      "command": "node tests/security-redteam.mjs",
+      "status": "passed",
+      "evidence": "安全红队63/63通过"
+    },
+    {
+      "command": "node tests/huamei-knowledge-no-answer.mjs",
+      "status": "passed",
+      "evidence": "无答案6/6拒绝、5/5已知问题保留"
+    },
+    {
+      "command": "node --env-file=.env.local tests/llm-live.mjs",
+      "status": "passed",
+      "evidence": "aliyun_model_studio/qwen3.8-flash真实调用通过，医疗适用性输入转人工"
+    },
+    {
+      "command": "node tests/external-dependency-readiness.mjs && node tests/formal-evidence-executors.mjs && node tests/formal-load-taxonomy.mjs",
+      "status": "passed",
+      "evidence": "生产就绪门禁、正式证据执行器和正式容量taxonomy通过"
+    },
+    {
+      "command": "node --env-file=.env.local scripts/validate-graphrag-tuning.mjs",
+      "status": "passed",
+      "evidence": "132条证据模式调参校验128/132通过，4条已知失败与改造前一致"
+    },
+    {
+      "command": "npm run team:verify",
+      "status": "passed",
+      "evidence": "13项套件全部passed"
+    },
+    {
+      "command": "python -m pytest graphrag-service/tests/test_service.py",
+      "status": "not_run",
+      "evidence": "本机Python缺少pandas/pytest；服务端改动已通过容器内canonical_cache_query检查、真实HTTP缓存测试和调参评测验证"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "server/agent-runtime.mjs",
+      "owner": "A",
+      "change": "GraphRAG调用默认evidence-only、分阶段耗时、政策查询目录锚点和证据缓存指标"
+    },
+    {
+      "path": "server/llm-client.mjs",
+      "owner": "A",
+      "change": "拆分生成与审核模型耗时"
+    },
+    {
+      "path": "scripts/evaluate-graphrag-retrieval.mjs",
+      "owner": "unassigned",
+      "change": "新增--evidence-only和--output-dir"
+    },
+    {
+      "path": "scripts/freeze-graphrag-baseline.mjs",
+      "owner": "unassigned",
+      "change": "冻结记录中新增graphrag_evidence_only"
+    },
+    {
+      "path": "scripts/measure-agent-latency.mjs",
+      "owner": "unassigned",
+      "change": "新增六条真实探针与分阶段耗时报告脚本"
+    },
+    {
+      "path": "scripts/prewarm-graphrag-cache.mjs",
+      "owner": "unassigned",
+      "change": "新增Top-N查询缓存预热与命中率统计"
+    },
+    {
+      "path": "tests/graphrag-client.mjs",
+      "owner": "unassigned",
+      "change": "补充规范化缓存键、过滤条件与摘要隔离测试"
+    },
+    {
+      "path": "tests/graphrag-latency-optimization.mjs",
+      "owner": "unassigned",
+      "change": "新增证据模式、参数、缓存与政策锚点测试"
+    }
+  ],
+  "api_changes": [
+    {
+      "interface": "POST /v1/retrieve",
+      "change": "响应新增queue_ms、search_ms、query_model_attempts、query_model_accounting；均为附加字段，旧调用方兼容",
+      "breaking": false
+    }
+  ],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [
+    "HUAMEI_GRAPHRAG_EVIDENCE_ONLY"
+  ],
+  "known_limitations": [
+    "GraphRAG缓存是每个uvicorn worker的进程内TTL缓存，4 worker下不是全局共享；预热命中率依赖连接复用，重启或扩容后会下降。",
+    "GraphRAG上下文构建为同步CPU工作，高并发时可能阻塞worker事件循环；本次未改为线程池。",
+    "政策查询新增目录锚点依赖本地已准入目录，目录结构变化时需重新验证查询构造。",
+    "132条证据模式评测仍为128/132，G-POL-007、G-PROD-016、G-PROJ-025、G-PROJ-048与改造前一致。",
+    "未执行正式三审、容量压测和生产发布资格验证，不构成生产发布结论。"
+  ],
+  "rollback": "将HUAMEI_GRAPHRAG_EVIDENCE_ONLY设为false可恢复GraphRAG完整local search；代码层面回退commit 17b9bfb与44bf6f2。"
+}
