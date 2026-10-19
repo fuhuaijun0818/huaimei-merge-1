@@ -193,6 +193,7 @@ const runtimeFlags = {
   graphrag_index_version:envLocal.HUAMEI_GRAPHRAG_INDEX_VERSION || null,
   graphrag_timeout_ms:Number(envLocal.HUAMEI_GRAPHRAG_TIMEOUT_MS || 0) || null,
   graphrag_top_k:Number(envLocal.HUAMEI_GRAPHRAG_TOP_K || 0) || null,
+  graphrag_evidence_only:String(envLocal.HUAMEI_GRAPHRAG_EVIDENCE_ONLY || "true").toLowerCase() !== "false",
   graphrag_tuning_json:envLocal.HUAMEI_GRAPHRAG_TUNING_JSON || null,
   graphrag_managed_externally:String(envLocal.HUAMEI_GRAPHRAG_MANAGED_EXTERNALLY || "").toLowerCase() === "true",
   knowledge_approval_mode:envLocal.HUAMEI_KNOWLEDGE_APPROVAL_MODE || null,
