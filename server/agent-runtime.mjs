@@ -800,6 +800,34 @@ export const graphRagParamsForIntent = (intent = "", env = process.env) => {
 export const graphRagEvidenceOnlyEnabled = (env = process.env) =>
   String(env.HUAMEI_GRAPHRAG_EVIDENCE_ONLY || "true").toLowerCase() !== "false";
 
+const FAST_PLANNING_INTENTS = new Set([
+  "project_explanation", "project_comparison", "project_discovery_by_concern",
+  "price_verification", "doctor_profile", "doctor_comparison", "policy_verification",
+  "product_catalog_detail", "directory_discovery", "appointment_query",
+  "doctor_schedule_verification", "conversation_greeting", "conversation_acknowledgement"
+]);
+
+// Suggested first-turn questions and short, unambiguous service questions do
+// not need a separate planning-model round trip. Multi-turn/ambiguous turns
+// still use the planner so pronouns, corrections and deferred intent remain
+// grounded in the conversation.
+export const shouldUseFastPlanning = ({ message = "", context = {}, risk = null, env = process.env } = {}) => {
+  if (String(env.HUAMEI_FAST_PATH_PLANNING || "false").toLowerCase() !== "true") return false;
+  if (risk?.decision && risk.decision !== "allow") return false;
+  const text = String(message || "").trim();
+  if (!text || text.length > 32) return false;
+  if ((context.recent_turns || []).length > 0) return false;
+  if (/(?:这个|那个|它|上面|刚才|继续|还有|然后|呢|吗|能不能|可不可以|怎么办)/.test(text)) return false;
+  const analysis = recognizeAcquisitionIntent(text, {
+    context,
+    risk:risk || inspectRisk(text),
+    knowledgeRecords:loadHuameiKnowledge().records
+  });
+  return analysis.confidence >= 0.85
+    && analysis.clarification_required !== true
+    && FAST_PLANNING_INTENTS.has(analysis.primary_intent);
+};
+
 export const filterGraphRagEvidenceForResponse = (evidence = [], localResponse, query = "") => {
   const structured = localResponse?.output?.structured_data || {};
   const intent = String(structured.intent || "");
@@ -2089,7 +2117,9 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
   const semanticRisk=inspectRisk(payload.message);
   let plan={used:false,reason:'safety_or_other_agent'};
   if(definition?.id==='A-01' && semanticRisk.decision==='allow' && !originalContext.active_critical_risk) {
-    plan=await planDialogueTurnWithLlm({input:payload,context:originalContext});
+    plan=shouldUseFastPlanning({message:payload.message,context:originalContext,risk:semanticRisk})
+      ? {used:false,reason:'deterministic_fast_path',latency_ms:0}
+      : await planDialogueTurnWithLlm({input:payload,context:originalContext});
   }
   latencyBreakdown.planning_ms = Number(plan.latency_ms) || 0;
   const trusted={};

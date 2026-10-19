@@ -2,13 +2,39 @@ import assert from "node:assert/strict";
 import {
   buildGraphRagQuery,
   graphRagEvidenceOnlyEnabled,
-  graphRagParamsForIntent
+  graphRagParamsForIntent,
+  inspectRisk,
+  shouldUseFastPlanning
 } from "../server/agent-runtime.mjs";
 import { canonicalGraphRagCacheQuery } from "../server/graphrag-client.mjs";
 
 assert.equal(graphRagEvidenceOnlyEnabled({}), true, "生产默认必须使用证据模式");
 assert.equal(graphRagEvidenceOnlyEnabled({ HUAMEI_GRAPHRAG_EVIDENCE_ONLY:"false" }), false);
 assert.equal(graphRagEvidenceOnlyEnabled({ HUAMEI_GRAPHRAG_EVIDENCE_ONLY:"TRUE" }), true);
+
+const fastEnv = { HUAMEI_FAST_PATH_PLANNING:"true" };
+for (const question of ["热玛吉是什么原理", "热玛吉和线雕有什么区别？", "脸部松弛，想了解抗初老项目"]) {
+  assert.equal(
+    shouldUseFastPlanning({ message:question, context:{}, risk:inspectRisk(question), env:fastEnv }),
+    true,
+    `高频首轮问题应跳过LLM规划：${question}`
+  );
+}
+assert.equal(
+  shouldUseFastPlanning({ message:"周末可以吗", context:{}, risk:inspectRisk("周末可以吗"), env:fastEnv }),
+  false,
+  "含指代/省略的追问必须保留LLM规划"
+);
+assert.equal(
+  shouldUseFastPlanning({
+    message:"热玛吉是什么原理",
+    context:{ recent_turns:[{ role:"user", content:"我想了解热玛吉" }] },
+    risk:inspectRisk("热玛吉是什么原理"),
+    env:fastEnv
+  }),
+  false,
+  "多轮上下文必须保留LLM规划"
+);
 
 assert.deepEqual(
   graphRagParamsForIntent("conversation_followup", {

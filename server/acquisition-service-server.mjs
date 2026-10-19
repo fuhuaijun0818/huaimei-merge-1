@@ -18,7 +18,9 @@ const { getHuameiKnowledgeStatus } = await import("./huamei-knowledge.mjs");
 const { flushAcquisitionSessions } = await import("./acquisition-session.mjs");
 const { revealContactForClaimedHandover } = await import("./contact-vault.mjs");
 const { createAcquisitionServiceOpenApi } = await import("./acquisition-service-openapi.mjs");
-const { getRunAsync, listRunsAsync } = await import("./agent-runtime.mjs");
+const { getRunAsync, listRunsAsync, inspectRisk } = await import("./agent-runtime.mjs");
+const { getLlmConcurrencyStatus } = await import("./llm-client.mjs");
+const { createConcurrencyGate, readGateConfig } = await import("./platform/concurrency-gate.mjs");
 const { completeAcquisitionTask } = await import("./lead-store.mjs");
 const {
   claimHandover, completeHandoverWithWork, getHandover, getOperationsMetrics,
@@ -77,6 +79,14 @@ const {
 const MAX_BODY_BYTES = 64 * 1024;
 const nonRevealPayload = (value) => redactContactPiiDeep(value);
 const RATE_LIMIT = Math.max(10, Number(process.env.HUAMEI_ACQUISITION_SERVICE_RATE_LIMIT || 1200));
+const turnGate = createConcurrencyGate({
+  name:"acquisition_turn",
+  ...readGateConfig(process.env, "HUAMEI_TURN")
+});
+const STRUCTURED_LANE_PATTERN = /(?:多少钱|价格|费用|报价|收费|预算|优惠|套餐|权益|预约|排班|出诊|坐诊|周末|挂号|退费)/;
+const turnLaneFor = (message = "") => inspectRisk(String(message || "")).decision !== "allow"
+  ? "medical"
+  : STRUCTURED_LANE_PATTERN.test(String(message || "")) ? "structured" : "knowledge";
 const SERVICE_KEY = String(process.env.HUAMEI_ACQUISITION_SERVICE_KEY || "");
 const acquisitionClientConfig = parseAcquisitionClientsConfig(process.env.HUAMEI_ACQUISITION_CLIENTS_JSON);
 const acquisitionClients = new Map(acquisitionClientConfig.clients.map((client) => [client.caller_id, client]));
@@ -570,7 +580,16 @@ export function createAcquisitionServiceServer(options = {}) {
       if (!permit("operations:read")) return;
       const tenantId = resolveTenant();
       if (!tenantId) return;
-      sendJson(response, requestId, 200, { data:await getOperationsMetrics(tenantId), request_id:requestId });
+      sendJson(response, requestId, 200, {
+        data:{
+          ...await getOperationsMetrics(tenantId),
+          capacity:{
+            turn:turnGate.stats(),
+            model:getLlmConcurrencyStatus()
+          }
+        },
+        request_id:requestId
+      });
       return;
     }
     if (request.method === "POST" && url.pathname === "/v1/conversations/feedback") {
@@ -1222,6 +1241,7 @@ export function createAcquisitionServiceServer(options = {}) {
     const idempotencyKey = String(request.headers["idempotency-key"] || "").trim().slice(0, 160);
     let cacheKey = "";
     let claim = null;
+    let turnRelease = null;
     try {
       const channel = channelMatch?.[1] || payload.channel || "api";
       const envelope = normalizeChannelInbound(channel, { ...payload, tenant_id:tenantId });
@@ -1259,6 +1279,7 @@ export function createAcquisitionServiceServer(options = {}) {
           return;
         }
       }
+      turnRelease = await turnGate.acquire({ lane:turnLaneFor(envelope.message.text) });
       const result = await processAcquisitionEnvelope(envelope, {
         requestId,
         caller,
@@ -1300,6 +1321,13 @@ export function createAcquisitionServiceServer(options = {}) {
         CONVERSATION_PREDECESSOR_FAILED:"同一会话中更早的消息处理超时，请先重发上一条消息",
         CONVERSATION_RECEIPT_FAILED_REPLAY_REQUIRED:"该消息此前处理超时，请使用相同message.id重新发送"
       };
+      if (["QUEUE_FULL", "QUEUE_TIMEOUT"].includes(error.code)) {
+        sendJson(response, requestId, 429, {
+          error:{ code:"TURN_QUEUE_BUSY", message:"当前咨询较多，请稍后再试" },
+          request_id:requestId
+        }, { ...rateHeaders, "Retry-After":String(error.retry_after_seconds || 2) });
+        return;
+      }
       if (conversationConflictMessages[error.code]) {
         sendJson(response, requestId, 409, {
           error:{ code:error.code, message:conversationConflictMessages[error.code] },
@@ -1320,6 +1348,8 @@ export function createAcquisitionServiceServer(options = {}) {
         validation ? error.message : dependencyFailure ? "售前智能体依赖暂时不可用" : "售前智能体暂时不可用",
         validation ? error.details || [] : []
       );
+    } finally {
+      turnRelease?.();
     }
     })().catch((error) => {
       if (response.headersSent) {
