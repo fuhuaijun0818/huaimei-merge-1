@@ -172,6 +172,39 @@ export function createOpenApiDocument(origin = "http://127.0.0.1:4173") {
           }
         }
       },
+      "/api/admin/acquisition/tasks/{taskId}/complete": {
+        post:{
+          tags:["Admin Operations"],
+          summary:"完成lead跟进任务并持久化状态",
+          security:[{ OidcBearerAuth:[] }],
+          parameters:[
+            { name:"taskId", in:"path", required:true, schema:{ type:"string", minLength:1, maxLength:160 } },
+            { name:"Idempotency-Key", in:"header", required:true, schema:{ type:"string", minLength:8, maxLength:128 } }
+          ],
+          description:"要求conversations:complete或platform:manage；客户编号用于在租户内定位lead，操作人取已验证身份，不接受浏览器覆盖。",
+          requestBody:{
+            required:true,
+            content:{
+              "application/json":{
+                schema:{
+                  type:"object",
+                  additionalProperties:false,
+                  required:["customer_id"],
+                  properties:{
+                    customer_id:{ type:"string", minLength:1, maxLength:120 }
+                  }
+                }
+              }
+            }
+          },
+          responses:{
+            "200":{ description:"任务已完成或已处于完成状态" },
+            "400":{ description:"参数或幂等键无效" },
+            "403":{ description:"缺少任务完成权限" },
+            "404":{ description:"任务不存在或不属于当前租户" }
+          }
+        }
+      },
       "/api/admin/acquisition/handovers/{handoverId}/contact-reveal": {
         post:{
           tags:["Admin Operations"],
