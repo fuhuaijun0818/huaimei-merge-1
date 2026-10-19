@@ -13,6 +13,7 @@ process.env.HUAMEI_MEMBER_CHECK_ENABLED = "false";
 
 const {
   acquisitionCustomerSnapshot,
+  completeAcquisitionTask,
   isValidMainlandMobile,
   leadDataClassification,
   normalizeMobile,
@@ -324,5 +325,28 @@ await assert.rejects(
 const afterStale = await acquisitionCustomerSnapshot("huamei-shanghai");
 assert.equal(afterStale.customers[0].memberCheck.is_repeat, true, "旧号码结果不得覆盖新号码状态");
 assert.equal(afterStale.customers[0].memberCheck.queried_mobile_suffix, "0000", "保留新号码的查询结果");
+
+const completedTask = await completeAcquisitionTask({
+  tenant_id:"huamei-shanghai",
+  task_id:first.lead.task.id,
+  customer_id:first.lead.customer.id,
+  actor:"lead-store-test"
+});
+assert.equal(completedTask.task.status, "已完成");
+assert.equal(completedTask.replayed, false);
+const replayedTask = await completeAcquisitionTask({
+  tenant_id:"huamei-shanghai",
+  task_id:first.lead.task.id,
+  customer_id:first.lead.customer.id,
+  actor:"lead-store-test"
+});
+assert.equal(replayedTask.replayed, true, "重复完成必须幂等");
+const afterTaskCompletion = await acquisitionCustomerSnapshot("huamei-shanghai");
+assert.equal(
+  afterTaskCompletion.tasks.find((item) => item.id === first.lead.task.id)?.status,
+  "已完成",
+  "任务完成状态必须写入服务端快照，刷新后不能回到待处理"
+);
+assert.ok(completedTask.lead.customer.timeline.some((item) => item.type === "task" && String(item.title).startsWith("任务完成：")));
 
 console.log("✓ 手机号格式校验后直接留资、待人工核号、租户隔离、同号归并与姓名冲突人工复核、禁止联系与人工重查通过");

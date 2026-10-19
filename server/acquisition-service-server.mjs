@@ -19,6 +19,7 @@ const { flushAcquisitionSessions } = await import("./acquisition-session.mjs");
 const { revealContactForClaimedHandover } = await import("./contact-vault.mjs");
 const { createAcquisitionServiceOpenApi } = await import("./acquisition-service-openapi.mjs");
 const { getRunAsync, listRunsAsync } = await import("./agent-runtime.mjs");
+const { completeAcquisitionTask } = await import("./lead-store.mjs");
 const {
   claimHandover, completeHandoverWithWork, getHandover, getOperationsMetrics,
   listHandovers, listOperationTasks, recordHumanWork
@@ -532,6 +533,37 @@ export function createAcquisitionServiceServer(options = {}) {
       const tenantId = resolveTenant();
       if (!tenantId) return;
       sendJson(response, requestId, 200, { data:nonRevealPayload(await listOperationTasks({ tenant_id:tenantId, status:url.searchParams.get("status") || "", limit:url.searchParams.get("limit") })), request_id:requestId });
+      return;
+    }
+    const taskCompleteMatch = url.pathname.match(/^\/v1\/operations\/tasks\/([A-Za-z0-9_.:-]{1,160})\/complete$/i);
+    if (request.method === "POST" && taskCompleteMatch) {
+      if (!permit("operations:write")) return;
+      let taskPayload;
+      try {
+        taskPayload = await readJsonBody(request);
+      } catch (error) {
+        sendError(response, requestId, error.code === "BODY_TOO_LARGE" ? 413 : 400, error.code || "INVALID_JSON", error.message);
+        return;
+      }
+      const tenantId = resolveTenant(taskPayload);
+      if (!tenantId) return;
+      const identity = await resolveHumanIdentity(tenantId, ["operations.agent"]);
+      if (!identity) return;
+      try {
+        const completed = await completeAcquisitionTask({
+          tenant_id:tenantId,
+          task_id:taskCompleteMatch[1],
+          customer_id:taskPayload.customer_id,
+          actor:identity.subject
+        });
+        sendJson(response, requestId, 200, {
+          data:{ task:completed.task, replayed:completed.replayed === true },
+          request_id:requestId
+        });
+      } catch (error) {
+        const status = Number(error.status) || 400;
+        sendError(response, requestId, status, error.code || "TASK_COMPLETION_FAILED", error.message || "任务完成失败", error.details || []);
+      }
       return;
     }
     if (request.method === "GET" && url.pathname === "/v1/operations/metrics") {

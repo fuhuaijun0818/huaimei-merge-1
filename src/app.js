@@ -13,6 +13,7 @@ import { sanitizeDisplayData, store } from "./store.js";
 import {
   claimManagementAppointmentIntake,
   claimManagementHandover,
+  completeManagementTask,
   completeManagementHandoverWithWork,
   getManagementKnowledgeGovernance,
   getManagementConversationReadReceipts,
@@ -3438,7 +3439,7 @@ async function handleAction(action, id, target) {
     case "agenda": showAgendaModal(); break;
     case "new-task": showTaskModal(); break;
     case "task-tab": ui.taskTab = id; render(true); break;
-    case "complete-task": store.completeTask(id); toast("任务已完成，结果已回写客户360", "success"); break;
+    case "complete-task": await completeTaskFromUi(id, target); break;
     case "customer-view": ui.customerView = id; render(true); break;
     case "new-customer": openModal({ title: "新增客户", desc: "填写已经获得授权的客户基本信息、来源渠道与负责人；创建后可在客户360继续补充真实沟通记录。", body: `<form id="customer-form"><div class="form-grid">${formField("客户姓名","name","",{required:true})}${formField("手机号","mobile","",{required:true})}${formField("来源渠道","source","官网",{type:"select",items:["官网","企业微信","电话","到院","转介绍","其他"]})}${formField("负责人","owner","",{type:"select",items:["", ...store.state.managementUsers.filter((item) => item.status === "启用").map((item) => item.name)]})}</div></form>`, footer: `<button class="btn" data-action="modal-close">取消</button><button class="btn primary" type="submit" form="customer-form">创建档案</button>` }); break;
     case "segment": location.hash = "#/customers/segments"; toast("已打开动态分群，规则会随客户事件实时重算", "success"); break;
@@ -3829,6 +3830,34 @@ async function claimHandoverFromUi(handoverId, trigger) {
           : "人工接管失败，请稍后重试";
     toast(message, "danger");
     await syncAcquisitionHandovers(true);
+  } finally {
+    if (trigger?.isConnected) { trigger.disabled = false; trigger.innerHTML = original; }
+  }
+}
+
+async function completeTaskFromUi(taskId, trigger) {
+  const task = store.task(taskId);
+  if (!task) {
+    toast("任务不存在或已被移除，请刷新后重试", "warning");
+    return;
+  }
+  const original = trigger?.innerHTML;
+  if (trigger) { trigger.disabled = true; trigger.textContent = "正在保存…"; }
+  try {
+    const result = await completeManagementTask(taskId, { customerId:task.customerId });
+    if (result.task) store.applyTaskCompletion(result.task);
+    toast("任务已完成并保存到服务端", "success");
+    void syncAcquisitionCustomers();
+  } catch (error) {
+    const message = error.status === 401
+      ? "请先完成企业实名登录"
+      : error.status === 403
+        ? "当前账号没有完成该任务的权限"
+        : error.code === "TASK_NOT_FOUND"
+          ? "任务不存在或已被移除，请刷新后重试"
+          : "任务完成未保存，请稍后重试";
+    toast(message, "danger");
+    await syncAcquisitionCustomers();
   } finally {
     if (trigger?.isConnected) { trigger.disabled = false; trigger.innerHTML = original; }
   }
@@ -4852,7 +4881,8 @@ window.addEventListener("hashchange", () => {
 const MANAGEMENT_SERVER_ONLY_SOURCES = new Set([
   "management-hydrate",
   "acquisition-sync",
-  "acquisition-operations-sync"
+  "acquisition-operations-sync",
+  "task-completion"
 ]);
 let managementPersistTimer = null;
 let managementPersistInFlight = false;

@@ -512,6 +512,55 @@ export function createPostgresLeadStore(options = {}) {
     return { lead:{ ...document, phone_hash:identity }, phoneChanged, mobile, identity, sessionId, verification };
   });
 
+  const completeTask = async ({ tenantId, customerId, taskId, actor = "当前用户" } = {}) => database.tenantTransaction(tenantId, async (client) => {
+    const result = await client.query(
+      "SELECT * FROM leads WHERE tenant_id=$1 AND customer_id=$2 FOR UPDATE",
+      [tenantId, customerId]
+    );
+    if (!result.rowCount) return null;
+    const row = result.rows[0];
+    const current = leadFromRow(row, fieldEncryption);
+    if (current.task?.id !== taskId) return null;
+    if (current.task.status === "已完成") {
+      return { lead:current, task:current.task, replayed:true };
+    }
+    const now = new Date().toISOString();
+    const task = { ...current.task, status:"已完成", completedAt:now, completedBy:actor };
+    const event = {
+      id:`E-${createHash("sha256").update(`${taskId}:completed:${now}`).digest("hex").slice(0, 14).toUpperCase()}`,
+      type:"task", title:`任务完成：${task.title}`,
+      detail:`执行人：${actor}；来源：${task.source || "任务"}`,
+      occurredAt:now, actor, channel:"系统", tone:"positive"
+    };
+    const document = {
+      ...current,
+      phone_hash:undefined,
+      updated_at:now,
+      task,
+      customer:{
+        ...current.customer,
+        timeline:[event, ...(current.customer?.timeline || [])].slice(0, 80)
+      }
+    };
+    await client.query(
+      "UPDATE leads SET profile=$3::jsonb,last_seen_at=$4 WHERE tenant_id=$1 AND id=$2",
+      [tenantId, row.id, JSON.stringify(fieldEncryption.encryptJson(
+        { _document:document },
+        leadProfileContext(tenantId, row.normalized_mobile_hmac)
+      )), now]
+    );
+    await appendAuditEvent(client, {
+      tenantId,
+      action:"lead.task_completed",
+      resourceType:"lead_task",
+      resourceId:taskId,
+      actorType:"human",
+      actorId:actor || "current-user",
+      details:{ customer_id:customerId, status:"已完成" }
+    });
+    return { lead:{ ...document, phone_hash:row.normalized_mobile_hmac }, task, replayed:false };
+  });
+
   const appendConversationReply = ({ tenantId, conversationId, message, updateLead }) => database.tenantTransaction(tenantId, async (client) => {
     const result = await client.query("SELECT * FROM leads WHERE tenant_id=$1 FOR UPDATE", [tenantId]);
     for (const row of result.rows) {
@@ -562,6 +611,7 @@ export function createPostgresLeadStore(options = {}) {
     upsertCandidate,
     snapshot,
     updateCustomer,
+    completeTask,
     appendConversationReply,
     recordConversationDelivery,
     status:() => ({

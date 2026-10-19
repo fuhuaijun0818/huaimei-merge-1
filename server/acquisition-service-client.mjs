@@ -88,6 +88,7 @@ const adminOperationPath = (operation, handoverId = "") => {
   if (operation === "handovers.complete") return `/v1/handovers/${encodedId}/complete`;
   if (operation === "handovers.contact-reveal") return `/v1/handovers/${encodedId}/contact-reveal`;
   if (operation === "human-work.create") return "/v1/operations/human-work";
+  if (operation === "tasks.complete") return `/v1/operations/tasks/${encodedId}/complete`;
   if (operation === "feedback.bad-cases.list") return "/v1/feedback/bad-cases";
   if (operation === "feedback.bad-cases.review") return `/v1/feedback/bad-cases/${encodedId}/review`;
   const error = new Error("不支持的人工接管代理操作");
@@ -121,7 +122,7 @@ export async function callAcquisitionAdminOperation({
       serviceUrl:targetUrl,
       subject:developmentSubject || process.env.HUAMEI_LOCAL_ADMIN_SUBJECT,
       tenantId:authorizedTenantId,
-      method:["handovers.claim", "handovers.complete", "handovers.contact-reveal", "human-work.create", "feedback.bad-cases.review"].includes(operation) ? "POST" : "GET",
+      method:["handovers.claim", "handovers.complete", "handovers.contact-reveal", "human-work.create", "tasks.complete", "feedback.bad-cases.review"].includes(operation) ? "POST" : "GET",
       pathname:adminOperationPath(operation, handoverId)
     }).headers;
   } else if (!/^Bearer\s+\S+/i.test(bearer)) {
@@ -137,7 +138,7 @@ export async function callAcquisitionAdminOperation({
     if (!["status", "limit"].includes(key) || value === undefined || value === null || String(value).trim() === "") continue;
     target.searchParams.set(key, String(value).slice(0, 80));
   }
-  const write = ["handovers.claim", "handovers.complete", "handovers.contact-reveal", "human-work.create", "feedback.bad-cases.review"].includes(operation);
+  const write = ["handovers.claim", "handovers.complete", "handovers.contact-reveal", "human-work.create", "tasks.complete", "feedback.bad-cases.review"].includes(operation);
   const response = await remoteFetch(`${target.pathname}${target.search}`, {
     method:write ? "POST" : "GET",
     // Basic auth belongs to the browser-to-gateway boundary. Only a Bearer

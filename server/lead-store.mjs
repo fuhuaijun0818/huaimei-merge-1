@@ -686,6 +686,57 @@ export async function updateAcquisitionCustomer({
   return { status:"accepted", member_check_status:memberCheck.status, lead:publicLead(lead || result.lead) };
 }
 
+// A lead task is part of the durable acquisition document. Completing it in
+// browser memory alone would be undone by the next authorized snapshot, so the
+// status transition must be written through the same tenant-scoped lead store.
+export async function completeAcquisitionTask({ tenant_id, task_id, customer_id = "", actor = "当前用户" } = {}) {
+  const tenantId = normalizeTenantId(tenant_id);
+  const taskId = cleanText(task_id, 160);
+  const customerId = cleanText(customer_id, 120);
+  const actorId = cleanText(actor, 160) || "当前用户";
+  if (!taskId) throw profileUpdateError("TASK_ID_REQUIRED", "任务编号不能为空", 400);
+  if (postgresPersistenceEnabled()) {
+    const result = await getPostgresLeadStore().completeTask({
+      tenantId, customerId, taskId, actor:actorId
+    });
+    if (!result?.lead) throw profileUpdateError("TASK_NOT_FOUND", "未找到待完成任务", 404);
+    return { task:result.task, lead:publicLead(result.lead), replayed:result.replayed === true };
+  }
+  const operation = async () => {
+    const state = await readState();
+    const index = state.leads.findIndex((item) => item.tenant_id === tenantId
+      && (customerId ? item.customer?.id === customerId : item.task?.id === taskId));
+    if (index < 0) throw profileUpdateError("TASK_NOT_FOUND", "未找到待完成任务", 404);
+    const current = state.leads[index];
+    if (current.task?.id !== taskId) throw profileUpdateError("TASK_NOT_FOUND", "未找到待完成任务", 404);
+    if (current.task.status === "已完成") {
+      return { task:clone(current.task), lead:publicLead(current), replayed:true };
+    }
+    const now = new Date().toISOString();
+    const task = { ...current.task, status:"已完成", completedAt:now, completedBy:actorId };
+    const event = {
+      id:stableId("E", `${taskId}:completed:${now}`, 14), type:"task", title:`任务完成：${task.title}`,
+      detail:`执行人：${actorId}；来源：${task.source || "任务"}`, occurredAt:now, actor:actorId,
+      channel:"系统", tone:"positive"
+    };
+    const next = {
+      ...current,
+      updated_at:now,
+      task,
+      customer:{
+        ...current.customer,
+        timeline:[event, ...(current.customer?.timeline || [])].slice(0, 80)
+      }
+    };
+    state.leads[index] = next;
+    await writeState(state);
+    return { task:clone(task), lead:publicLead(next), replayed:false };
+  };
+  const pending = mutationQueue.then(operation, operation);
+  mutationQueue = pending.then(() => undefined, () => undefined);
+  return await pending;
+}
+
 const memberCheckStatusText = (check) => {
   if (!check) return "尚无查询结果";
   if (check.status === "checked") return check.result_semantics === "membership"

@@ -1,0 +1,119 @@
+{
+  "role": "C",
+  "task_id": "task-completion-001",
+  "summary": "修复接待工作台任务“完成”只改浏览器内存、刷新后被服务端快照覆盖回“待处理/已超时”的问题。任务完成状态现在写回服务端lead文档，并同步客户时间线；BFF与售前服务均提供幂等完成接口。",
+  "acceptance_steps": [
+    "在今日优先任务中点击“完成”，接口返回200，列表显示“已完成”。",
+    "刷新网页后重新拉取服务端快照，同一任务仍为“已完成”，不再回到“已超时”。",
+    "重复提交同一任务完成请求返回幂等成功，不重复写时间线。",
+    "执行 node tests/lead-store.mjs，任务完成写入、快照读取和幂等回放通过。",
+    "执行 node tests/acquisition-service.mjs，独立服务任务完成接口返回200且快照保留完成状态。",
+    "执行 npm run team:verify，13项套件全部passed。"
+  ],
+  "tests": [
+    {
+      "command": "node tests/lead-store.mjs",
+      "status": "passed",
+      "evidence": "完成任务写入lead文档、刷新快照保留“已完成”、重复完成幂等通过"
+    },
+    {
+      "command": "node tests/acquisition-service.mjs",
+      "status": "passed",
+      "evidence": "POST /v1/operations/tasks/:id/complete 返回200，重复请求replayed=true，快照状态为已完成"
+    },
+    {
+      "command": "node tests/management-handover-ui.mjs",
+      "status": "passed",
+      "evidence": "前端必须调用服务端完成接口、服务端确认后更新本地状态、BFF透传契约通过"
+    },
+    {
+      "command": "npm run team:verify",
+      "status": "passed",
+      "evidence": "13项套件全部passed"
+    },
+    {
+      "command": "node tests/admin-bff-local-e2e.mjs",
+      "status": "passed",
+      "evidence": "在HUAMEI_LOCAL_REQUIRE_AUTH=false、HUAMEI_ADMIN_SESSION_AUTH=false的本地测试环境通过；默认.env.local开启登录鉴权时该旧测试会先返回401，属于测试环境前置条件，不是本次任务完成接口失败"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "src/app.js",
+      "owner": "shared",
+      "change": "complete-task动作改为调用服务端完成接口，成功后applyTaskCompletion并刷新客户快照；task-completion不再触发通用overlay保存"
+    },
+    {
+      "path": "src/store.js",
+      "owner": "shared",
+      "change": "新增applyTaskCompletion，用服务端确认结果更新本地任务状态"
+    },
+    {
+      "path": "src/operations-client.js",
+      "owner": "shared",
+      "change": "新增completeManagementTask，调用BFF任务完成接口并携带幂等键"
+    },
+    {
+      "path": "server/api-router.mjs",
+      "owner": "shared",
+      "change": "新增POST /api/admin/acquisition/tasks/:taskId/complete，校验完成权限与幂等键后透传到售前服务"
+    },
+    {
+      "path": "server/acquisition-service-server.mjs",
+      "owner": "shared",
+      "change": "新增POST /v1/operations/tasks/:taskId/complete，绑定实名操作人和租户"
+    },
+    {
+      "path": "server/acquisition-service-client.mjs",
+      "owner": "shared",
+      "change": "新增tasks.complete代理路径和写操作方法"
+    },
+    {
+      "path": "server/lead-store.mjs",
+      "owner": "B",
+      "change": "新增completeAcquisitionTask，持久化lead任务状态与客户时间线"
+    },
+    {
+      "path": "server/persistence/postgres-lead-store.mjs",
+      "owner": "B",
+      "change": "新增Postgres completeTask，事务内更新加密lead文档并写审计"
+    },
+    {
+      "path": "tests/lead-store.mjs",
+      "owner": "B",
+      "change": "新增任务完成持久化与幂等回归"
+    },
+    {
+      "path": "tests/acquisition-service.mjs",
+      "owner": "unassigned",
+      "change": "新增售前服务任务完成HTTP接口回归"
+    },
+    {
+      "path": "tests/management-handover-ui.mjs",
+      "owner": "unassigned",
+      "change": "新增前端服务端完成接口与BFF透传契约断言"
+    }
+  ],
+  "api_changes": [
+    {
+      "interface": "POST /api/admin/acquisition/tasks/{taskId}/complete",
+      "change": "新增管理端任务完成接口，要求Idempotency-Key，返回完成后的task与replayed标记",
+      "breaking": false
+    },
+    {
+      "interface": "POST /v1/operations/tasks/{taskId}/complete",
+      "change": "新增售前服务内部任务完成接口，绑定租户与实名操作人",
+      "breaking": false
+    }
+  ],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "完成任务后仍保留在“今日优先任务”列表中并以绿色“已完成”展示，便于确认结果；本次未改变列表展示口径。",
+    "任务必须属于已留资lead；不存在或不属于当前租户的任务返回404。",
+    "未提供批量完成任务接口。",
+    "admin-bff-local-e2e旧测试默认依赖关闭本地登录鉴权；开启HUAMEI_LOCAL_REQUIRE_AUTH时需先注入管理会话，否则测试第一步即401。"
+  ],
+  "rollback": "回退本次src/app.js、src/store.js、src/operations-client.js、server/api-router.mjs、server/acquisition-service-*、server/lead-store.mjs及对应测试提交。"
+}

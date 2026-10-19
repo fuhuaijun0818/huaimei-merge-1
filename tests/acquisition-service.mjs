@@ -6,12 +6,16 @@ process.env.HUAMEI_ACQUISITION_SESSION_STORE_FILE = ":memory:";
 process.env.HUAMEI_ACQUISITION_OPERATIONS_STORE_FILE = ":memory:";
 process.env.HUAMEI_CONVERSATION_FEEDBACK_STORE_FILE = ":memory:";
 process.env.HUAMEI_KNOWLEDGE_RELEASE_STORE_FILE = ":memory:";
+process.env.HUAMEI_LEAD_STORE_FILE = ":memory:";
+process.env.HUAMEI_DEFAULT_TENANT_ID = "huamei-shanghai";
+process.env.HUAMEI_IDENTITY_PEPPER = "acquisition_service_task_test_pepper";
 process.env.HUAMEI_CONVERSATION_SEQUENCE_WAIT_MS = "250";
 const { ACQUISITION_CHANNELS, formatChannelOutbound, normalizeChannelInbound } = await import("../server/acquisition-channel-adapters.mjs");
 const { getOperationsStoreStatus } = await import("../server/acquisition-operations-store.mjs");
 const { prepareAcquisitionSessionContext } = await import("../server/acquisition-session.mjs");
 const { tenantScopedKey } = await import("../server/platform/tenant-context.mjs");
 const { createAcquisitionServiceServer } = await import("../server/acquisition-service-server.mjs");
+const { acquisitionCustomerSnapshot, resetLeadStoreForTest, upsertAcquisitionLead } = await import("../server/lead-store.mjs");
 
 const webEnvelope = normalizeChannelInbound("web", { message:"请介绍光子嫩肤", session_id:"web-test-1", interests:["光子嫩肤"] });
 assert.equal(webEnvelope.channel, "web");
@@ -390,6 +394,37 @@ try {
   });
   assert.equal(work.status, 201);
   assert.equal((await work.clone().json()).data.staff_id, "advisor-test");
+  resetLeadStoreForTest();
+  const taskLead = await upsertAcquisitionLead({
+    tenant_id:"huamei-shanghai",
+    mobile:"13900002222",
+    name:"任务完成测试客户",
+    service_consent:true,
+    session_id:"task-complete-session-1",
+    interests:["热玛吉"]
+  });
+  assert.ok(taskLead.lead.task?.id, "留资后必须生成可持久化的跟进任务");
+  const taskComplete = await fetch(`${baseUrl}/v1/operations/tasks/${encodeURIComponent(taskLead.lead.task.id)}/complete`, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json", Authorization:"Bearer advisor-test", "Idempotency-Key":"task-complete-once" },
+    body:JSON.stringify({ tenant_id:"huamei-shanghai", customer_id:taskLead.lead.customer.id })
+  });
+  assert.equal(taskComplete.status, 200, await taskComplete.clone().text());
+  const taskCompleteBody = await taskComplete.json();
+  assert.equal(taskCompleteBody.data.task.status, "已完成");
+  const taskReplay = await fetch(`${baseUrl}/v1/operations/tasks/${encodeURIComponent(taskLead.lead.task.id)}/complete`, {
+    method:"POST",
+    headers:{ "Content-Type":"application/json", Authorization:"Bearer advisor-test", "Idempotency-Key":"task-complete-once" },
+    body:JSON.stringify({ tenant_id:"huamei-shanghai", customer_id:taskLead.lead.customer.id })
+  });
+  assert.equal(taskReplay.status, 200);
+  assert.equal((await taskReplay.json()).data.replayed, true, "重复完成任务必须幂等");
+  const taskSnapshot = await acquisitionCustomerSnapshot("huamei-shanghai");
+  assert.equal(
+    taskSnapshot.tasks.find((item) => item.id === taskLead.lead.task.id)?.status,
+    "已完成",
+    "刷新读取快照时必须保留已完成状态"
+  );
   const metrics = await fetch(`${baseUrl}/v1/operations/metrics?tenant_id=tenant-test`);
   const metricsBody = await metrics.json();
   assert.equal(metricsBody.data.human_work_minutes, 10.5, "原子完结工时和后续补充工时均应计量且不得因重试重复");

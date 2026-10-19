@@ -721,6 +721,13 @@ class Store extends EventTarget {
     this.save();
   }
 
+  applyTaskCompletion(task) {
+    const current = this.task(task?.id);
+    if (!current) return;
+    Object.assign(current, sanitizeDisplayData(task));
+    this.save("task-completion");
+  }
+
   addTask(payload) {
     this.state.tasks.unshift(sanitizeDisplayData({ id: `T-${Date.now()}`, status: "待处理", ...payload }));
     this.save();

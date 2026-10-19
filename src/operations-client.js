@@ -132,6 +132,18 @@ export async function recheckManagementCustomerMemberCheck(customerId) {
   return body.data;
 }
 
+export async function completeManagementTask(taskId, { customerId } = {}) {
+  const id = String(taskId || "").trim();
+  if (!id) throw new Error("任务编号不能为空");
+  const body = await managementRequest(`/api/admin/acquisition/tasks/${encodeURIComponent(id)}/complete`, {
+    method:"POST",
+    headers:requestHeaders({ json:true, idempotencyKey:idempotencyKey("task-complete", id) }),
+    body:JSON.stringify({ customer_id:String(customerId || "").trim() })
+  });
+  acknowledgeOperation("task-complete", id);
+  return { task:body.data?.task || null, replayed:body.data?.replayed === true };
+}
+
 export async function listManagementBadCases({ status = "", limit = 100 } = {}) {
   const query = new URLSearchParams();
   if (status) query.set("status", status);

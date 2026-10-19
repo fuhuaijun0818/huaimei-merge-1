@@ -1396,11 +1396,12 @@ export async function handleApiRequest(request, response) {
     const completeMatch = url.pathname.match(/^\/api\/admin\/acquisition\/handovers\/(ho_[a-f0-9-]+)\/complete$/i);
     const contactRevealMatch = url.pathname.match(/^\/api\/admin\/acquisition\/handovers\/(ho_[a-f0-9-]+)\/contact-reveal$/i);
     const badCaseReviewMatch = url.pathname.match(/^\/api\/admin\/acquisition\/bad-cases\/(fb_[a-f0-9-]+)\/review$/i);
+    const taskCompleteMatch = url.pathname.match(/^\/api\/admin\/acquisition\/tasks\/([A-Za-z0-9_.:-]{1,160})\/complete$/i);
     const humanWorkRoute = request.method === "POST" && url.pathname === "/api/admin/acquisition/human-work";
     const supported = listRoute
       || listBadCasesRoute
       || (request.method === "GET" && detailMatch)
-      || (request.method === "POST" && (claimMatch || completeMatch || contactRevealMatch || badCaseReviewMatch))
+      || (request.method === "POST" && (claimMatch || completeMatch || contactRevealMatch || badCaseReviewMatch || taskCompleteMatch))
       || humanWorkRoute;
     if (!supported) {
       sendError(request, response, requestId, 404, "API_NOT_FOUND", "未找到指定人工接管管理端点");
@@ -1438,14 +1439,16 @@ export async function handleApiRequest(request, response) {
       return true;
     }
     const adminIdempotencyKey = String(request.headers["idempotency-key"] || "").trim();
-    if ((completeMatch || contactRevealMatch || badCaseReviewMatch) && (adminIdempotencyKey.length < 8 || adminIdempotencyKey.length > 128)) {
+    if ((completeMatch || contactRevealMatch || badCaseReviewMatch || taskCompleteMatch) && (adminIdempotencyKey.length < 8 || adminIdempotencyKey.length > 128)) {
       sendError(
         request,
         response,
         requestId,
         400,
         "IDEMPOTENCY_KEY_REQUIRED",
-        contactRevealMatch
+        taskCompleteMatch
+          ? "完成任务必须提供8–128字符的Idempotency-Key"
+          : contactRevealMatch
           ? "查看联系方式必须提供8–128字符的一次性Idempotency-Key"
           : badCaseReviewMatch
             ? "处理Bad Case必须提供8–128字符的Idempotency-Key"
@@ -1466,8 +1469,12 @@ export async function handleApiRequest(request, response) {
     let principal;
     try {
       principal = await authorizeManagementRequest(request, {
-        requiredRoles:[listBadCasesRoute || badCaseReviewMatch ? "feedback:manage" : MANAGEMENT_ROLES.operationsAgent],
-        requiredCapabilities:[requiredCapability],
+        ...(taskCompleteMatch ? {} : {
+          requiredRoles:[listBadCasesRoute || badCaseReviewMatch ? "feedback:manage" : MANAGEMENT_ROLES.operationsAgent]
+        }),
+        ...(taskCompleteMatch
+          ? { requiredAnyCapabilities:[PHASE_ONE_CAPABILITIES.conversationsComplete, PHASE_ONE_CAPABILITIES.platformManage] }
+          : { requiredCapabilities:[requiredCapability] }),
         ...(contactRevealMatch ? {
           requiredAllRoles:[MANAGEMENT_ROLES.operationsAgent, MANAGEMENT_ROLES.contactReveal]
         } : {}),
@@ -1490,17 +1497,21 @@ export async function handleApiRequest(request, response) {
           ? "handovers.claim"
           : completeMatch
             ? "handovers.complete"
+            : taskCompleteMatch
+              ? "tasks.complete"
             : contactRevealMatch
               ? "handovers.contact-reveal"
               : badCaseReviewMatch
                 ? "feedback.bad-cases.review"
                 : "human-work.create";
-    const handoverObjectId = detailMatch?.[1] || claimMatch?.[1] || completeMatch?.[1] || contactRevealMatch?.[1] || "";
+    const handoverObjectId = detailMatch?.[1] || claimMatch?.[1] || completeMatch?.[1] || contactRevealMatch?.[1] || taskCompleteMatch?.[1] || "";
     const recordHandoverOperation = (outcome) => recordManagementAccess({
       principal,
       requestId,
       request,
-      action:contactRevealMatch
+      action:taskCompleteMatch
+        ? "management.task.complete"
+        : contactRevealMatch
         ? "management.contact.reveal_authorized"
         : listBadCasesRoute
           ? "management.conversation_feedback.read"
@@ -1509,7 +1520,7 @@ export async function handleApiRequest(request, response) {
         : request.method === "GET"
           ? "management.handover.read"
           : "management.handover.write",
-      resourceType:humanWorkRoute ? "human_work" : (listBadCasesRoute || badCaseReviewMatch ? "conversation_feedback" : "handover"),
+      resourceType:taskCompleteMatch ? "lead_task" : humanWorkRoute ? "human_work" : (listBadCasesRoute || badCaseReviewMatch ? "conversation_feedback" : "handover"),
       resourceId:handoverObjectId || badCaseReviewMatch?.[1] || "",
       outcome
     });
@@ -1518,7 +1529,7 @@ export async function handleApiRequest(request, response) {
         ? managementReadTenants(principal) : [principal.tenantId];
       const results = await Promise.all(operationTenants.map((tenantId) => callAcquisitionAdminOperation({
         operation,
-        handoverId:detailMatch?.[1] || claimMatch?.[1] || completeMatch?.[1] || contactRevealMatch?.[1] || badCaseReviewMatch?.[1] || "",
+        handoverId:detailMatch?.[1] || claimMatch?.[1] || completeMatch?.[1] || contactRevealMatch?.[1] || badCaseReviewMatch?.[1] || taskCompleteMatch?.[1] || "",
         tenantId,
         authorization:request.headers.authorization,
         developmentSubject:productionRuntime ? "" : principal.subject,
