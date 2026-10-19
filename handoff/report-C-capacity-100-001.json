@@ -1,0 +1,170 @@
+{
+  "role": "C",
+  "task_id": "capacity-100-001",
+  "summary": "按8步容量优化顺序实施：Node全局准入闸门与有界优先级队列、模型分阶段并发限制/指数退避/熔断、医疗与结构化快车道、GraphRAG 8 worker与线程池、Redis共享证据缓存、首轮确定性规划快路径与风险分级审核、横向扩容配置和10/30/50/100并发阶梯压测。",
+  "acceptance_steps": [
+    "100个请求同时进入Node时，只有最多24轮进入处理，其余进入有界队列；队列满或超时返回可重试429，不再全部打模型。",
+    "规划/生成/审核分别受8/16/8并发闸门限制；连续失败5次打开15秒熔断。",
+    "价格/排班/医疗风险走高优先级快车道；医疗风险仍先转人工。",
+    "GraphRAG容器实际运行8 worker；同步上下文构建使用asyncio.to_thread；Redis共享证据缓存实测第二次查询2.05ms。",
+    "首轮高频问题规划耗时为0；多轮追问仍保留LLM规划；自然改写仍执行独立审核。",
+    "GraphRAG-only cache-bypass压测：10并发P95 3.76秒、30并发P95 8.46秒；50/100并发出现429并记录。",
+    "执行 npm run team:verify，15项套件全部passed。"
+  ],
+  "tests": [
+    {
+      "command": "node tests/concurrency-gate.mjs",
+      "status": "passed",
+      "evidence": "全局上限、有界队列、优先级、超时和熔断通过"
+    },
+    {
+      "command": "node tests/graphrag-latency-optimization.mjs",
+      "status": "passed",
+      "evidence": "快路径规划、TopK、缓存规范化、政策锚点通过"
+    },
+    {
+      "command": "node tests/lead-store.mjs",
+      "status": "passed",
+      "evidence": "任务完成持久化、快照读取、幂等通过"
+    },
+    {
+      "command": "node tests/acquisition-service.mjs",
+      "status": "passed",
+      "evidence": "独立服务渠道、接管、任务完成接口通过"
+    },
+    {
+      "command": "node tests/management-handover-ui.mjs",
+      "status": "passed",
+      "evidence": "管理端接管、任务完成、滚动位置契约通过"
+    },
+    {
+      "command": "npm run team:verify",
+      "status": "passed",
+      "evidence": "15项套件全部passed"
+    },
+    {
+      "command": "python graphrag-service/loadtest/load_500.py --target graphrag --concurrency 10/30/50/100 --evidence-only --cache-bypass",
+      "status": "passed_with_expected_overload",
+      "evidence": "10并发P95 3.76秒；30并发P95 8.46秒；50并发44/50成功；100并发65/100成功，429按设计进入Node本地知识降级"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "server/platform/concurrency-gate.mjs",
+      "owner": "unassigned",
+      "change": "新增进程内优先级准入闸门，支持全局上限、有界队列、快车道预留、超时和熔断"
+    },
+    {
+      "path": "server/llm-client.mjs",
+      "owner": "A",
+      "change": "规划/生成/审核/理解分阶段并发闸门、指数退避、Retry-After、熔断和并发指标；低风险逐字复制/通用科普跳过审核"
+    },
+    {
+      "path": "server/agent-runtime.mjs",
+      "owner": "A",
+      "change": "新增首轮确定性规划快路径，保留多轮/歧义问题的LLM规划"
+    },
+    {
+      "path": "server/acquisition-service-server.mjs",
+      "owner": "shared",
+      "change": "请求进入processAcquisitionEnvelope前过全局turnGate；医疗/结构化优先级lane；容量指标写入operations/metrics"
+    },
+    {
+      "path": "graphrag-service/app/official_engine.py",
+      "owner": "C",
+      "change": "按worker缓存只读索引器和embedding store；上下文构建与完整检索放入asyncio.to_thread"
+    },
+    {
+      "path": "graphrag-service/app/redis_cache.py",
+      "owner": "C",
+      "change": "新增Redis共享证据缓存，Redis故障回退内存缓存"
+    },
+    {
+      "path": "graphrag-service/app/main.py",
+      "owner": "C",
+      "change": "缓存后端改为create_cache，支持Redis/内存选择"
+    },
+    {
+      "path": "graphrag-service/Dockerfile",
+      "owner": "C",
+      "change": "uvicorn worker从4调整为8"
+    },
+    {
+      "path": "graphrag-service/requirements.txt",
+      "owner": "C",
+      "change": "新增redis==6.4.0"
+    },
+    {
+      "path": "graphrag-service/loadtest/load_500.py",
+      "owner": "C",
+      "change": "新增--release-id、--evidence-only、--cache-bypass阶梯压测参数"
+    },
+    {
+      "path": "deploy/docker-compose.example.yml",
+      "owner": "shared",
+      "change": "GraphRAG并发16、队列3秒、请求15秒、Redis缓存配置"
+    },
+    {
+      "path": "deploy/docker-compose.canary.example.yml",
+      "owner": "shared",
+      "change": "同生产GraphRAG容量与Redis配置"
+    },
+    {
+      "path": ".env.example",
+      "owner": "shared",
+      "change": "补充容量、模型闸门、快路径、风险审核和GraphRAG Redis变量"
+    },
+    {
+      "path": "scripts/team-verify.mjs",
+      "owner": "shared",
+      "change": "将concurrency-gate和graphrag-latency-optimization纳入团队回归"
+    },
+    {
+      "path": "tests/concurrency-gate.mjs",
+      "owner": "unassigned",
+      "change": "新增准入门禁回归"
+    }
+  ],
+  "api_changes": [
+    {
+      "interface": "GET /v1/operations/metrics",
+      "change": "data新增capacity.turn和capacity.model；为附加字段",
+      "breaking": false
+    }
+  ],
+  "migrations": [],
+  "dependency_changes": [
+    {
+      "package": "redis",
+      "version": "6.4.0",
+      "scope": "GraphRAG Python service"
+    }
+  ],
+  "environment_variable_names": [
+    "HUAMEI_TURN_MAX_CONCURRENT",
+    "HUAMEI_TURN_MAX_QUEUE",
+    "HUAMEI_TURN_QUEUE_TIMEOUT_MS",
+    "HUAMEI_LLM_PLANNING_MAX_CONCURRENT",
+    "HUAMEI_LLM_GENERATION_MAX_CONCURRENT",
+    "HUAMEI_LLM_REVIEW_MAX_CONCURRENT",
+    "HUAMEI_LLM_UNDERSTANDING_MAX_CONCURRENT",
+    "HUAMEI_LLM_MAX_QUEUE",
+    "HUAMEI_LLM_QUEUE_TIMEOUT_MS",
+    "HUAMEI_LLM_CIRCUIT_FAILURE_THRESHOLD",
+    "HUAMEI_LLM_CIRCUIT_OPEN_MS",
+    "HUAMEI_FAST_PATH_PLANNING",
+    "HUAMEI_RISK_TIERED_REVIEW",
+    "HUAMEI_GRAPHRAG_CACHE_BACKEND",
+    "HUAMEI_GRAPHRAG_REDIS_URL",
+    "HUAMEI_GRAPHRAG_MAX_CONCURRENCY",
+    "HUAMEI_GRAPHRAG_QUEUE_TIMEOUT_SECONDS"
+  ],
+  "known_limitations": [
+    "50/100并发GraphRAG-only cache-bypass仍会出现429；100并发P95约22.7秒，未达到P95<10秒的目标。",
+    "远程embedding provider是100并发唯一知识问题的主要瓶颈；需要提高配额、换本地embedding或增加GraphRAG副本。",
+    "Node全局闸门是进程内闸门，多实例部署时每个实例独立计数；生产可进一步改为Redis分布式信号量。",
+    "GraphRAG 8 worker/Redis配置需要重建不可变镜像或按本次容器参数重新部署；只改本地容器不会自动进入生产。",
+    "本次未执行正式三审、生产容量签字和商业发布验收。"
+  ],
+  "rollback": "将HUAMEI_FAST_PATH_PLANNING/HUAMEI_RISK_TIERED_REVIEW设为false可回退模型调用优化；将GraphRAG缓存后端设为memory可回退Redis缓存；回退本次提交并恢复旧GraphRAG容器huamei-graphrag-baseline-old。"
+}
