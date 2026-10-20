@@ -1,0 +1,65 @@
+{
+  "role": "B",
+  "task_id": "reception-search-sync-001",
+  "summary": "修复接待工作台“客户档案里能看到客户，但搜索不到会话”：搜索改为先防抖触发一次完整服务端快照同步，再用最新列表过滤，并在快照无变化时强制把 DOM 列表与 store 对账；长开页面、切后台后重连和分页后的旧列表都能恢复目标会话。",
+  "acceptance_steps": [
+    "打开会话与接待，寻找一个已建档但不在当前左侧会话快照中的客户。",
+    "在接待工作台搜索该客户名称，预期：等待约 350ms 后先完成完整同步，再显示匹配会话，而不是直接提示没有匹配。",
+    "保持搜索输入框焦点，预期：同步和列表重建后仍停留在搜索框，可继续修改关键词。",
+    "如果会话已在 store 中但 DOM 因分页或局部刷新丢失，预期：搜索时重新对账并恢复列表节点。"
+  ],
+  "tests": [
+    {
+      "command": "node --check src/app.js",
+      "status": "passed",
+      "evidence": "管理端脚本语法检查通过"
+    },
+    {
+      "command": "node tests/management-list-pagination.mjs",
+      "status": "passed",
+      "evidence": "完整快照、搜索防抖和搜索前同步断言通过"
+    },
+    {
+      "command": "node tests/management-handover-ui.mjs",
+      "status": "passed",
+      "evidence": "接管队列、增量游标和会话同步契约通过"
+    },
+    {
+      "command": "node tests/management-local-actions.mjs",
+      "status": "passed",
+      "evidence": "管理端会话与页面动作闭环通过"
+    },
+    {
+      "command": "Chrome CDP 旧列表实测",
+      "status": "passed",
+      "evidence": "先把“图图”会话节点从 DOM 删除，再输入“图图”；1.5 秒后目标会话恢复为 1 条，activeElement=reception-search，输入值保持“图图”"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "src/app.js",
+      "owner": "shared",
+      "change": "会话同步支持 full 参数；接待台搜索防抖后强制完整快照并执行列表对账"
+    },
+    {
+      "path": "tests/management-handover-ui.mjs",
+      "owner": "B",
+      "change": "更新完整快照与增量游标断言"
+    },
+    {
+      "path": "tests/management-list-pagination.mjs",
+      "owner": "B",
+      "change": "新增搜索前同步和防抖契约"
+    }
+  ],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "当前仍是浏览器本地过滤；每次搜索防抖结束后会拉一次完整快照，会话量很大时应升级为服务端搜索。",
+    "如果服务端本身没有该客户的会话记录，搜索仍会如实显示没有匹配。",
+    "会话搜索不会绕过租户、岗位或科室权限，只同步当前身份可见范围。"
+  ],
+  "rollback": "回退 src/app.js 与两个管理端测试的本次提交即可；不涉及数据库、接口字段或环境变量。"
+}

@@ -64,7 +64,7 @@ assert.match(app, /case "conversation-detail": showConversationDetail\(id\);/, "
 assert.match(app, /function showConversationDetail\(/, "会话详情必须展示接待归属和状态");
 assert.match(app, /conversationSyncLoading/, "会话首次同步必须具备独立加载状态");
 assert.match(app, /acquisitionSnapshotHydrated: false/, "刷新后的新页面必须先标记为未加载完整会话快照");
-assert.match(app, /const afterCursor = ui\.acquisitionSnapshotHydrated\s*\?\s*encodeAcquisitionCursors\(readAcquisitionCursors\(\)\)\s*:\s*"";/, "只有已加载完整快照的当前页面才允许按游标请求增量");
+assert.match(app, /const afterCursor = !full && ui\.acquisitionSnapshotHydrated\s*\?\s*encodeAcquisitionCursors\(readAcquisitionCursors\(\)\)\s*:\s*"";/, "只有已加载完整快照的当前页面才允许按游标请求增量");
 assert.match(app, /store\.upsertAcquisitionSnapshot\(body\.data\);\s*persistAcquisitionCursors\(body\.data\?\.meta\?\.cursor\);\s*[\s\S]{0,320}ui\.acquisitionSnapshotHydrated = true;/, "首次全量同步成功后才能启用后续增量同步");
 assert.match(app, /正在加载会话/, "同步尚未完成时不能误报为空会话");
 assert.match(app, /会话同步失败/, "会话同步失败必须与真实空列表分开呈现");

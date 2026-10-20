@@ -4224,7 +4224,30 @@ document.addEventListener("input", (event) => {
     saveReplyDraft(event.target.dataset.conversationId, event.target.value);
   }
   if (isGuardedFormTarget(event.target)) markUnsavedFormDirty(true);
-  if(event.target.id==='reception-search'){ui.conversationQuery=event.target.value;filterReceptionList();}
+  if(event.target.id==='reception-search'){
+    ui.conversationQuery=event.target.value;
+    filterReceptionList();
+    if (event.isComposing) return;
+    window.clearTimeout(receptionSearchSyncTimer);
+    receptionSearchSyncTimer = window.setTimeout(() => {
+      if (routeInfo().route !== "conversations" || !ui.conversationQuery.trim()) return;
+      const query = ui.conversationQuery;
+      // The inbox search is local, so a long-lived tab can miss a conversation
+      // that arrived after its last snapshot. Refresh the complete server view
+      // before deciding that the customer has no matching conversation.
+      void syncAcquisitionCustomers({ full:true }).then(() => {
+        if (routeInfo().route !== "conversations") return;
+        // Reconcile the rendered inbox with the store even when the snapshot
+        // itself did not change (for example after a pagination/DOM refresh).
+        updateReceptionWindow();
+        const input = document.querySelector("#reception-search");
+        if (!input || input.value !== query) return;
+        input.focus({ preventScroll:true });
+        try { input.setSelectionRange(query.length, query.length); } catch {}
+        filterReceptionList();
+      });
+    }, 350);
+  }
   if(event.target.id==='reception-phrase-search'){let count=0;document.querySelectorAll('[data-phrase-search]').forEach(item=>{item.hidden=!item.dataset.phraseSearch.includes(event.target.value.trim().toLowerCase());if(!item.hidden)count++;});document.querySelectorAll('.reception-phrases details').forEach(group=>{group.hidden=![...group.querySelectorAll('[data-phrase-search]')].some(item=>!item.hidden);});const empty=document.querySelector('#reception-phrase-empty');if(empty)empty.hidden=Boolean(count);}
 
   if (event.target.id === "global-search") {
@@ -5000,6 +5023,7 @@ store.addEventListener("change", (event) => {
   if (!MANAGEMENT_SERVER_ONLY_SOURCES.has(event.detail?.source)) scheduleManagementOverlayPersist();
 });
 let acquisitionSyncPromise = null;
+let receptionSearchSyncTimer = null;
 let acquisitionChannelsSyncPromise = null;
 let handoverSyncPromise = null;
 let appointmentSyncPromise = null;
@@ -5012,14 +5036,17 @@ let handoverPollFailures = 0;
 let handoverPollingDestroyed = false;
 const HANDOVER_POLL_BASE_MS = 15_000;
 const HANDOVER_POLL_MAX_BACKOFF_MS = 60_000;
-const syncAcquisitionCustomers = async () => {
-  if (acquisitionSyncPromise) return acquisitionSyncPromise;
+const syncAcquisitionCustomers = async ({ full = false } = {}) => {
+  if (acquisitionSyncPromise) {
+    if (!full) return acquisitionSyncPromise;
+    return acquisitionSyncPromise.catch(() => []).then(() => syncAcquisitionCustomers({ full:true }));
+  }
   ui.conversationSyncLoading = true;
   ui.conversationSyncError = "";
   if (routeInfo().route === "conversations" && !store.state.conversations.length) render(true);
   const qualityRedactedView = hasCapability("conversations:read_redacted")
     && !hasCapability("customers:read_all") && !hasCapability("customers:read_assigned");
-  const afterCursor = ui.acquisitionSnapshotHydrated
+  const afterCursor = !full && ui.acquisitionSnapshotHydrated
     ? encodeAcquisitionCursors(readAcquisitionCursors())
     : "";
   // Quality replies contain pseudonymous IDs, not the source conversation
