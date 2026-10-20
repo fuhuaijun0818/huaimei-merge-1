@@ -8,6 +8,16 @@ const QUICK_QUESTIONS = [
 
 // 本机保存客户自己的会话凭证，用于刷新后回读服务端确认过的会话与人工消息。
 const SESSION_STORAGE_KEY = "huamei.advisor.session.v1";
+// 服务端更换签名密钥或会话过期后，旧 Cookie 可能比 localStorage 活得更久。
+// 这类 401 表示“换一张新会话凭证即可”，不能当成对客的致命错误。
+const RECOVERABLE_PUBLIC_SESSION_CODES = new Set([
+  "INVALID_SESSION_TOKEN",
+  "SESSION_TOKEN_EXPIRED",
+  "SESSION_CREDENTIAL_REQUIRED",
+  "SESSION_SCOPE_MISMATCH"
+]);
+const isRecoverablePublicSessionError = (response, body) => response?.status === 401
+  && RECOVERABLE_PUBLIC_SESSION_CODES.has(String(body?.error?.code || ""));
 
 const emptyConversation = () => [];
 const APPOINTMENT_LEAD_CAPTURE_PROMPT = Object.freeze({
@@ -696,6 +706,27 @@ export function App() {
     try { globalThis.localStorage?.removeItem(SESSION_STORAGE_KEY); } catch {}
   };
 
+  // A non-canonical session id asks the server for a new public credential even
+  // when the browser still carries an expired HttpOnly cookie from a previous
+  // deployment. The old cookie is replaced by the response's Set-Cookie.
+  const startFreshPublicSession = async (epoch = sessionEpochRef.current) => {
+    clearPersistedSessionCredential();
+    sessionIdRef.current = createSessionId();
+    sessionTokenRef.current = "";
+    const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/appointment-intakes/current"), {
+      method:"POST",
+      credentials:"include",
+      headers:{ "Content-Type":"application/json" },
+      body:JSON.stringify({ session_id:sessionIdRef.current })
+    });
+    const body = await response.json();
+    if (epoch !== sessionEpochRef.current) return null;
+    if (!response.ok) throw new Error(body?.error?.message || "新对话暂时无法建立，请重试。");
+    updateSessionCredential(body);
+    publicSessionReadyRef.current = true;
+    return body;
+  };
+
   const publicHeaders = () => ({
     "Content-Type":"application/json",
     ...(sessionTokenRef.current ? { "X-Huamei-Session-Token":sessionTokenRef.current } : {})
@@ -760,6 +791,13 @@ export function App() {
       const body = await response.json();
       if (epoch !== sessionEpochRef.current) return;
       if (!response.ok) {
+        // The stored credential can be invalid after a server restart or a
+        // signing-secret change. Replace it once, then retry with the new one.
+        if (isRecoverablePublicSessionError(response, body) && attempt < 1) {
+          try { await startFreshPublicSession(epoch); } catch {}
+          if (epoch === sessionEpochRef.current) return loadUploadCapability(attempt + 1);
+          return;
+        }
         if (attempt < 2 && epoch === sessionEpochRef.current) {
           window.setTimeout(() => void loadUploadCapability(attempt + 1), 800);
         }
@@ -784,7 +822,7 @@ export function App() {
 
   // 历史回读：客户与 AI 消息来自会话存储，人工顾问回复来自留档，由服务端合并后
   // 一并返回。首次加载失败时页面给出重试入口，绝不把旧消息挂到新客户身上。
-  const reloadHistory = async () => {
+  const reloadHistory = async (allowRecovery = true) => {
     const epoch = sessionEpochRef.current;
     try {
       const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-history"), {
@@ -794,6 +832,11 @@ export function App() {
       });
       const body = await response.json();
       if (epoch !== sessionEpochRef.current) return;
+      if (!response.ok && allowRecovery && isRecoverablePublicSessionError(response, body)) {
+        const fresh = await startFreshPublicSession(epoch);
+        if (fresh) return reloadHistory(false);
+        return;
+      }
       if (!response.ok) throw new Error(body?.error?.message || "无法恢复上次的咨询记录");
       updateSessionCredential(body);
       const restored = restoreConversationMessages(body.messages);
@@ -813,8 +856,16 @@ export function App() {
       let appointmentRestoreError = null;
       try {
         const currentResponse = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/appointment-intakes/current"), { method:"POST", credentials:"include", headers:{ "Content-Type":"application/json" }, body:"{}" });
-        const current = await currentResponse.json();
-        if (!currentResponse.ok) throw new Error(current?.error?.message || "无法恢复到院登记");
+        let current = await currentResponse.json();
+        if (!cancelled && epoch === sessionEpochRef.current
+          && !currentResponse.ok && isRecoverablePublicSessionError(currentResponse, current)) {
+          // A stale cookie is expected after a restart or secret rotation.
+          // Start an anonymous session instead of showing the customer a 401.
+          current = await startFreshPublicSession(epoch);
+          if (!current) return;
+        } else if (!currentResponse.ok) {
+          throw new Error(current?.error?.message || "无法恢复到院登记");
+        }
         if (!cancelled && epoch === sessionEpochRef.current) {
           updateSessionCredential(current);
           publicSessionReadyRef.current = true;

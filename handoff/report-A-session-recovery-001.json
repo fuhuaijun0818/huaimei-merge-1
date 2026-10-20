@@ -1,0 +1,55 @@
+{
+  "role": "A",
+  "task_id": "session-recovery-001",
+  "summary": "修复小美前台首屏反复出现“会话凭证无效”且上传加号消失：旧 HttpOnly 会话 Cookie 或本地会话凭证失效时，前端不再把它当成致命错误，而是自动创建新的匿名会话并重新加载上传能力位。",
+  "acceptance_steps": [
+    "在浏览器中保留一个失效的 hm_public_session Cookie，并在 localStorage 写入失效的 huamei.advisor.session.v1。",
+    "打开 http://127.0.0.1:4173/advisor/，预期：不出现“会话凭证无效”或“上次的咨询记录暂时无法恢复”，左下角出现“+”上传入口。",
+    "发送任意咨询，预期：会话已在新凭证下建立，不再因首屏旧凭证直接失败。",
+    "正常刷新已有有效会话时，仍应恢复原会话，不创建重复会话。",
+    "会话在页面打开期间自然过期时，当前轮次仍会提示过期；本轮仅修复首屏自动恢复和上传能力位恢复。"
+  ],
+  "tests": [
+    {
+      "command": "node tests/acquisition-advisor-otp-ui.mjs",
+      "status": "passed",
+      "evidence": "可恢复会话错误、startFreshPublicSession、首屏自动换新会话、上传能力位重试和历史单次恢复断言全部通过"
+    },
+    {
+      "command": "npm --prefix apps/acquisition-advisor run build",
+      "status": "passed",
+      "evidence": "Vite 生产构建成功，生成 dist/client/index.html 与 dist/server/index.js"
+    },
+    {
+      "command": "npm run team:verify",
+      "status": "passed",
+      "evidence": "team-baseline 17 项测试全部 passed"
+    },
+    {
+      "command": "Chrome CDP 失效Cookie+失效localStorage实测",
+      "status": "passed",
+      "evidence": "修复前 restoreFailed=true、attachButtons=0；修复后 restoreFailed=false、attachButtons=1、uploadCapabilityPresent=true，localStorage 已替换为新会话凭证"
+    },
+    {
+      "command": "Chrome CDP 恢复后刷新复测",
+      "status": "passed",
+      "evidence": "自动恢复后的 session_id 与刷新后的 session_id 相同，hasPlus=1，restoreFailed=false，未在刷新时重复创建会话"
+    },
+    {
+      "command": "POST /api/public/appointment-intakes/current 失效Cookie对照",
+      "status": "passed",
+      "evidence": "空body返回401 会话凭证无效；携带新的非规范session_id返回200并下发新session_id/session_token，证明自动换新会话路径有效"
+    }
+  ],
+  "shared_changes": [],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "页面打开期间会话自然过期后，当前发送轮次仍会提示过期，需要在下一轮或新对话中重新建立会话。",
+    "自动恢复只清理 localStorage 中的旧凭证；HttpOnly Cookie 由服务端响应覆盖，前端不能直接删除。",
+    "未改变公开会话的签名、租户隔离或鉴权规则，只处理失效凭证后的匿名会话重建。"
+  ],
+  "rollback": "回退本次 App.jsx、UI 契约测试与 AGENTS.md 提交即可；不改数据库、接口字段、迁移或环境变量。"
+}

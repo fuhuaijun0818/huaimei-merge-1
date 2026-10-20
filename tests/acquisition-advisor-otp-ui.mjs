@@ -46,5 +46,11 @@ assert.doesNotMatch(source, /content:`\[附件\] \$\{file\.name\}`/, "上传完�
 assert.match(source, /const attachmentContexts = retryOfId \? retryAttachments : pendingAttachments;/, "发送和重试必须使用同一批附件上下文");
 assert.match(source, /pendingAttachments=\{pendingAttachments\}/, "输入框必须接收待发送附件列表");
 assert.match(source, /onRemoveAttachment=\{removePendingAttachment\}/, "输入框移除附件时必须释放本地预览资源");
+assert.match(source, /const RECOVERABLE_PUBLIC_SESSION_CODES = new Set\(\[/, "失效的公开会话凭证必须被识别为可恢复状态");
+assert.match(source, /const startFreshPublicSession = async/, "旧Cookie失效时必须能创建新的匿名会话");
+assert.match(source, /current = await startFreshPublicSession\(epoch\)/, "首屏恢复遇到失效凭证时必须自动换新会话");
+assert.match(source, /return loadUploadCapability\(attempt \+ 1\)/, "上传能力位遇到失效凭证时必须换新会话后重试");
+assert.match(source, /return reloadHistory\(false\)/, "历史回读遇到失效凭证时只能自动恢复一次");
+assert.doesNotMatch(source, /if \(!currentResponse\.ok\) throw new Error\(current\?\.error\?\.message \|\| "无法恢复到院登记"\);/, "失效会话不得直接以错误中断首屏");
 
 console.log("acquisition advisor direct lead-capture UI contract tests passed");
