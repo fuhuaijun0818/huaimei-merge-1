@@ -1,0 +1,70 @@
+{
+  "role": "B",
+  "task_id": "conversation-subpages-stable-001",
+  "summary": "人工接管和会话质检也改为不跟随后台会话轮询自动重绘/拉取全量：停留在这些页面时跳过 acquisition-customers 大快照，新增“刷新队列/刷新数据”按钮，手动刷新只替换 #page-content。Bad Case库继续使用自身刷新队列。",
+  "acceptance_steps": [
+    "打开“会话与接待 → 人工接管”，停留15秒，预期：页面/侧栏不闪烁，Network 中不出现1.2MB会话快照。",
+    "点击“刷新队列”，预期：接管数据更新，但侧栏和页头不重建。",
+    "打开“会话质检”，停留15秒，预期同样不自动重绘；点击“刷新数据”才更新内容区。",
+    "进入页面时仍会拉取一次完整快照，保证首次展示数据完整。"
+  ],
+  "tests": [
+    {
+      "command": "node --check src/app.js",
+      "status": "passed",
+      "evidence": "管理端脚本语法检查通过"
+    },
+    {
+      "command": "node tests/management-handover-ui.mjs",
+      "status": "passed",
+      "evidence": "接管/质检刷新入口、后台跳过和局部重绘契约通过"
+    },
+    {
+      "command": "node tests/management-list-pagination.mjs",
+      "status": "passed",
+      "evidence": "完整快照、后台限流和分页契约通过"
+    },
+    {
+      "command": "node tests/management-local-actions.mjs",
+      "status": "passed",
+      "evidence": "管理端页面动作闭环通过"
+    },
+    {
+      "command": "Chrome CDP 人工接管页15秒监测",
+      "status": "passed",
+      "evidence": "shell=0，sidebar=0，page=0；仅1次后台接管轮询请求，无acquisition-customers大快照"
+    },
+    {
+      "command": "Chrome CDP 点击刷新队列",
+      "status": "passed",
+      "evidence": "shell=0，sidebar=0，page=1；只更新页面内容区"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "src/app.js",
+      "owner": "shared",
+      "change": "会话子页跳过后台自动重绘和全量客户快照；新增刷新队列/刷新数据动作"
+    },
+    {
+      "path": "src/subpages.js",
+      "owner": "shared",
+      "change": "人工接管和会话质检增加显式刷新按钮"
+    },
+    {
+      "path": "tests/management-handover-ui.mjs",
+      "owner": "B",
+      "change": "新增子页刷新入口和后台跳过契约"
+    }
+  ],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "人工接管和会话质检不再自动跟随会话变化更新，需要点击刷新或重新进入页面。",
+    "后台接管轮询仍会请求少量handovers数据，但不会触发页面重绘；客户/预约请求同理。",
+    "会话质检页复用人工接管页的验证路径，本次未单独做15秒计时监测。"
+  ],
+  "rollback": "回退 src/app.js、src/subpages.js 与 management-handover-ui 测试的本次提交即可；不涉及接口、数据库或环境变量。"
+}

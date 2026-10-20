@@ -3,8 +3,9 @@ import { readFile } from "node:fs/promises";
 import { conversationSyncSignaturePayload, messagesChangedSinceCursor } from "../server/acquisition-sync-cursor.mjs";
 import { templateVariableReminder, unresolvedTemplateVariables } from "../src/modules/reception/template-variable-validation.js";
 
-const [app, store, client, leadStore, router, operationsStore] = await Promise.all([
+const [app, subpages, store, client, leadStore, router, operationsStore] = await Promise.all([
   readFile(new URL("../src/app.js", import.meta.url), "utf8"),
+  readFile(new URL("../src/subpages.js", import.meta.url), "utf8"),
   readFile(new URL("../src/store.js", import.meta.url), "utf8"),
   readFile(new URL("../src/operations-client.js", import.meta.url), "utf8"),
   readFile(new URL("../server/lead-store.mjs", import.meta.url), "utf8"),
@@ -77,7 +78,10 @@ assert.match(app, /function renderCurrentPageContent\(\)/, "客户列表也必�
 assert.match(app, /客户列表\/客户360由操作员主动刷新/, "客户列表不得跟随后台会话轮询自动重绘");
 assert.doesNotMatch(app, /schedulePageContentRender\(1500\)/, "客户列表后台同步不能自动重建上百行表格");
 assert.match(app, /data-action="refresh-customers"/, "客户列表必须提供显式刷新入口");
-assert.match(app, /background && \(routeInfo\(\)\.route === "customers" \|\| routeInfo\(\)\.route === "customer"\)/, "客户页后台会话同步必须直接跳过");
+assert.match(app, /background && \(routeInfo\(\)\.route === "customers"[\s\S]{0,160}routeInfo\(\)\.route === "conversations" && routeInfo\(\)\.id\)/, "客户页和会话子页的后台会话同步必须直接跳过");
+assert.match(subpages, /data-action="refresh-takeovers"/, "人工接管队列必须提供显式刷新入口");
+assert.match(subpages, /data-action="refresh-quality"/, "会话质检必须提供显式刷新入口");
+assert.match(app, /event\.detail\?\.source === "acquisition-sync" \|\| event\.detail\?\.source === "acquisition-operations-sync"\) return/, "接管/质检子页不得跟随后台同步自动重绘");
 assert.match(app, /requestConversationSync/, "SSE会话事件必须合并，不能每几秒拉取全量快照");
 assert.match(app, /function selectFirstReceptionMatch\(\)/, "接待搜索命中后必须自动切入可见会话");
 assert.match(app, /filterReceptionList\(\);\s*selectFirstReceptionMatch\(\);/, "搜索过滤后必须同步右侧聊天区");

@@ -3464,6 +3464,14 @@ async function handleAction(action, id, target) {
       document.activeElement?.blur?.();
       renderCurrentPageContent();
       break;
+    case "refresh-takeovers":
+      await Promise.all([syncAcquisitionCustomers({ full:true }), syncAcquisitionHandovers(false, { background:true })]);
+      renderConversationsSubpage();
+      break;
+    case "refresh-quality":
+      await syncAcquisitionCustomers({ full:true });
+      renderConversationsSubpage();
+      break;
     case "reveal-appointment-contact": await revealHandoverContactFromUi(id, target, { appointment:true }); break;
     case "refresh-appointments": await syncAppointmentOperations(true); break;
     case "clear-appointment-filters": ui.appointmentFilters = { status:"pending", preferredDate:"", assignee:"" }; await syncAppointmentOperations(true); break;
@@ -4974,7 +4982,9 @@ window.addEventListener("hashchange", () => {
     // behind by a previous tab or SPA page.
     window.setTimeout(() => {
       if (routeInfo().route !== "conversations") return;
-      void syncAcquisitionCustomers({ full:true });
+      void syncAcquisitionCustomers({ full:true }).then(() => {
+        if (routeInfo().route === "conversations" && routeInfo().id) renderConversationsSubpage();
+      });
     }, 0);
     if (route.id === "bad-cases") void syncBadCases();
   }
@@ -5095,6 +5105,9 @@ store.addEventListener("change", (event) => {
     if(document.querySelector('.reception-page .conversation-layout')){updateReceptionWindow();return;}
     if(!['conversations','customers','customer'].includes(routeInfo().route))return;
     if(routeInfo().route === "conversations" && routeInfo().id) {
+      // 接管/质检子页和客户页一样，不在后台同步时自动重建表格；
+      // 使用页面上的刷新按钮或重新进入获取最新数据。
+      if (event.detail?.source === "acquisition-sync" || event.detail?.source === "acquisition-operations-sync") return;
       scheduleConversationsSubpageRender();
       return;
     }
@@ -5123,7 +5136,8 @@ let handoverPollingDestroyed = false;
 const HANDOVER_POLL_BASE_MS = 15_000;
 const HANDOVER_POLL_MAX_BACKOFF_MS = 60_000;
 const syncAcquisitionCustomers = async ({ full = false, background = false } = {}) => {
-  if (background && (routeInfo().route === "customers" || routeInfo().route === "customer")) return [];
+  if (background && (routeInfo().route === "customers" || routeInfo().route === "customer"
+    || (routeInfo().route === "conversations" && routeInfo().id))) return [];
   if (background && !full && Date.now() - lastBackgroundAcquisitionSyncAt < 10_000) return [];
   if (acquisitionSyncPromise) {
     if (!full) return acquisitionSyncPromise;

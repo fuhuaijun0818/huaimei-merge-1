@@ -212,7 +212,8 @@ function conversationTakeovers() {
     return [customerCell(customer),badge(`${customer.macroStage}/${customer.microStage}`,"outline"),conversation.channel,conversation.lastMessage,badge(index?"5分钟":"28分钟",index?"warning":"danger"),customer.owner,actionLink("进入会话","conversation",conversation.id)];
   });
   return subpage("conversations","takeovers","人工接管队列","医疗边界、异常描述、投诉和AI把握不足的问题优先交由人工处理，并保留AI停止回答的位置。",
-    `<div class="grid cols-4" style="margin-bottom:16px">${metric("等待接管",String(rows.length),"当前系统内会话","alert")}${metric("高优先任务",String(metrics.urgentTasks.length),"按任务状态统计","clock")}${metric("已完成任务",String(metrics.tasks.filter((item) => item.status === "已完成").length),"本地任务记录","check")}${metric("会话总数",String(metrics.conversations.length),"不推测外部渠道数据","shield")}</div><section class="card">${rows.length?table(["客户","当前环节","渠道","触发内容","等待","责任人","操作"],rows):empty("当前没有待接管会话","AI将在命中边界时自动创建接管任务")}</section>`);
+    `<div class="grid cols-4" style="margin-bottom:16px">${metric("等待接管",String(rows.length),"当前系统内会话","alert")}${metric("高优先任务",String(metrics.urgentTasks.length),"按任务状态统计","clock")}${metric("已完成任务",String(metrics.tasks.filter((item) => item.status === "已完成").length),"本地任务记录","check")}${metric("会话总数",String(metrics.conversations.length),"不推测外部渠道数据","shield")}</div><section class="card">${rows.length?table(["客户","当前环节","渠道","触发内容","等待","责任人","操作"],rows):empty("当前没有待接管会话","AI将在命中边界时自动创建接管任务")}</section>`,
+    `<button class="btn" data-action="refresh-takeovers">${icon("refresh",15)}刷新队列</button>`);
 }
 
 function conversationQuality() {
@@ -223,7 +224,8 @@ function conversationQuality() {
     return [conversation.id, customer?.name || "客户待关联", conversation.channel || "未记录", conversation.lastMessage || "暂无客户消息", needsReview ? "待复核" : "已归档"];
   });
   return subpage("conversations", "quality", "会话质检", "按知识正确性、医疗边界、合规表达、服务完整性和客户推进效果对会话评分。",
-    `<div class="grid cols-4" style="margin-bottom:16px">${metric("待质检会话", String(samples.filter((item) => item[4] === "待复核").length), "需要人工判断", "message")}${metric("已归档会话", String(samples.filter((item) => item[4] === "已归档").length), "当前本地会话记录", "chart")}${metric("已记录Bad Case", "以Bad Case库为准", "仅统计已反馈问题", "shield")}${metric("待复核", String(samples.filter((item) => item[4] === "待复核").length), "不生成虚构质检分数", "alert")}</div><section class="card">${samples.length ? table(["客户", "渠道", "最近内容", "质检状态", "详情"], samples.map(([id,name,channel,message,status]) => [name,channel,message,badge(status,status === "已归档" ? "success":"warning"),actionLink("查看会话", "conversation", id)])) : empty("暂无会话记录", "客户开始咨询后将在此进入质检流程")}</section>`);
+    `<div class="grid cols-4" style="margin-bottom:16px">${metric("待质检会话", String(samples.filter((item) => item[4] === "待复核").length), "需要人工判断", "message")}${metric("已归档会话", String(samples.filter((item) => item[4] === "已归档").length), "当前本地会话记录", "chart")}${metric("已记录Bad Case", "以Bad Case库为准", "仅统计已反馈问题", "shield")}${metric("待复核", String(samples.filter((item) => item[4] === "待复核").length), "不生成虚构质检分数", "alert")}</div><section class="card">${samples.length ? table(["客户", "渠道", "最近内容", "质检状态", "详情"], samples.map(([id,name,channel,message,status]) => [name,channel,message,badge(status,status === "已归档" ? "success":"warning"),actionLink("查看会话", "conversation", id)])) : empty("暂无会话记录", "客户开始咨询后将在此进入质检流程")}</section>`,
+    `<button class="btn" data-action="refresh-quality">${icon("refresh",15)}刷新数据</button>`);
 }
 
 function conversationBadCases({ badCases = [], badCasesLoading = false, badCasesError = "" } = {}) {
