@@ -1,0 +1,60 @@
+{
+  "role": "B",
+  "task_id": "reception-search-select-001",
+  "summary": "修复接待台进入时显示旧增量快照、搜索后右侧聊天区仍停在旧会话：进入会话模块时强制拉取一次完整快照；搜索过滤后如果当前会话不在结果中，自动选择第一条可见会话并更新右侧聊天区。",
+  "acceptance_steps": [
+    "进入“会话与接待 → 会话收件箱”，预期：初始“全部”数量直接是服务端完整快照，而不是先显示较少的旧游标数据。",
+    "在接待工作台搜索“图图”，预期：左侧只显示匹配会话，右侧聊天区自动切换到“图图”，不再停留在“未填写称呼”。",
+    "搜索后输入框保持焦点，可继续修改关键词。",
+    "清空搜索词时不强制切换会话，保留当前选中的会话。"
+  ],
+  "tests": [
+    {
+      "command": "node --check src/app.js",
+      "status": "passed",
+      "evidence": "管理端脚本语法检查通过"
+    },
+    {
+      "command": "node tests/management-handover-ui.mjs",
+      "status": "passed",
+      "evidence": "完整快照、搜索后自动选中和局部重绘契约通过"
+    },
+    {
+      "command": "node tests/management-list-pagination.mjs",
+      "status": "passed",
+      "evidence": "列表分页和搜索同步契约通过"
+    },
+    {
+      "command": "node tests/management-local-actions.mjs",
+      "status": "passed",
+      "evidence": "管理端页面动作闭环通过"
+    },
+    {
+      "command": "Chrome CDP 进入+搜索实测",
+      "status": "passed",
+      "evidence": "进入初始 total=308；搜索“图图”后 visible=1，chatHead=图图，activeElement=reception-search"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "src/app.js",
+      "owner": "shared",
+      "change": "进入会话模块强制完整快照；搜索过滤后自动选中第一条可见会话"
+    },
+    {
+      "path": "tests/management-handover-ui.mjs",
+      "owner": "B",
+      "change": "新增完整快照与搜索选中断言"
+    }
+  ],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "搜索没有匹配时不会自动切换右侧会话，只会显示左侧无匹配提示。",
+    "搜索自动选中第一条匹配会话；如果需要浏览同名的多个会话，仍需在左侧继续选择。",
+    "进入会话模块会拉取一次完整快照，数据量很大时会增加一次请求耗时，但可避免旧游标造成缺会话。"
+  ],
+  "rollback": "回退 src/app.js 与 management-handover-ui 测试的本次提交即可；不影响服务端数据和接口。"
+}

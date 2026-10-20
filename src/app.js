@@ -4263,6 +4263,17 @@ function filterReceptionList() {
   const empty = document.querySelector('#reception-empty');
   if (empty) empty.hidden = Boolean(document.querySelectorAll('.conversation-item:not([hidden])').length);
 }
+
+function selectFirstReceptionMatch() {
+  if (!String(ui.conversationQuery || "").trim()) return;
+  const items = [...document.querySelectorAll(".conversation-item")].filter((item) => !item.hidden);
+  if (!items.length || items.some((item) => item.dataset.id === ui.conversationId)) return;
+  const nextId = items[0]?.dataset.id;
+  if (!nextId || nextId === ui.conversationId) return;
+  ui.conversationId = nextId;
+  updateReceptionWindow();
+}
+
 document.addEventListener("input", (event) => {
   if (event.target.id === "message-input") {
     saveReplyDraft(event.target.dataset.conversationId, event.target.value);
@@ -4272,6 +4283,7 @@ document.addEventListener("input", (event) => {
     ui.conversationQuery=event.target.value;
     filterReceptionList();
     if (event.isComposing) return;
+    selectFirstReceptionMatch();
     window.clearTimeout(receptionSearchSyncTimer);
     receptionSearchSyncTimer = window.setTimeout(() => {
       if (routeInfo().route !== "conversations" || !ui.conversationQuery.trim()) return;
@@ -4289,6 +4301,7 @@ document.addEventListener("input", (event) => {
         input.focus({ preventScroll:true });
         try { input.setSelectionRange(query.length, query.length); } catch {}
         filterReceptionList();
+        selectFirstReceptionMatch();
       });
     }, 350);
   }
@@ -4945,7 +4958,15 @@ window.addEventListener("hashchange", () => {
   if (!handoverOnlyMode) syncAvatarStudioScope();
   render();
   const route = routeInfo();
-  if (route.route === "conversations" && route.id === "bad-cases") void syncBadCases();
+  if (route.route === "conversations") {
+    // Entering the inbox must start from a complete view, not a cursor left
+    // behind by a previous tab or SPA page.
+    window.setTimeout(() => {
+      if (routeInfo().route !== "conversations") return;
+      void syncAcquisitionCustomers({ full:true });
+    }, 0);
+    if (route.id === "bad-cases") void syncBadCases();
+  }
 });
 
 const MANAGEMENT_SERVER_ONLY_SOURCES = new Set([
