@@ -2787,13 +2787,15 @@ function updateReceptionWindow() {
 
 // 人工接管/会话质检/Bad Case 都是只读子页。后台同步时只替换页面内容，
 // 保留侧栏、页头和当前滚动位置，避免整页重建造成闪烁。
-function renderConversationsSubpage() {
+function renderCurrentPageContent() {
   const container = document.querySelector("#page-content");
   if (!container || document.querySelector(".modal-backdrop")) return;
+  const active = document.activeElement;
+  if (active?.closest("#page-content")
+    && ["INPUT", "TEXTAREA", "SELECT", "BUTTON", "A"].includes(active.tagName)) return;
   const scrollY = window.scrollY;
-  const focused = document.activeElement;
-  const focusState = focused?.id && focused.closest("#page-content")
-    ? { id:focused.id, start:focused.selectionStart, end:focused.selectionEnd }
+  const focusState = active?.id && active.closest("#page-content")
+    ? { id:active.id, start:active.selectionStart, end:active.selectionEnd }
     : null;
   container.innerHTML = currentPage();
   hydrateListPagination();
@@ -2807,6 +2809,10 @@ function renderConversationsSubpage() {
   window.scrollTo(0, scrollY);
 }
 
+function renderConversationsSubpage() {
+  renderCurrentPageContent();
+}
+
 let conversationsSubpageRenderTimer = null;
 function scheduleConversationsSubpageRender() {
   if (conversationsSubpageRenderTimer) return;
@@ -2815,6 +2821,18 @@ function scheduleConversationsSubpageRender() {
     const route = routeInfo();
     if (route.route === "conversations" && route.id) renderConversationsSubpage();
   }, 500);
+}
+
+let pageContentRenderTimer = null;
+function schedulePageContentRender(delay = 500) {
+  if (pageContentRenderTimer) return;
+  pageContentRenderTimer = window.setTimeout(() => {
+    pageContentRenderTimer = null;
+    const route = routeInfo();
+    if ((route.route === "conversations" && route.id) || route.route === "customers" || route.route === "customer") {
+      renderCurrentPageContent();
+    }
+  }, delay);
 }
 
 function refreshOperationsView() {
@@ -5087,6 +5105,10 @@ store.addEventListener("change", (event) => {
       scheduleConversationsSubpageRender();
       return;
     }
+    if(routeInfo().route === "customers" || routeInfo().route === "customer") {
+      schedulePageContentRender(1500);
+      return;
+    }
   }
   render(true);
   if (!MANAGEMENT_SERVER_ONLY_SOURCES.has(event.detail?.source)) scheduleManagementOverlayPersist();
@@ -5442,14 +5464,32 @@ const bootstrapManagementApplication = async () => {
 void bootstrapManagementApplication();
 
 let conversationEvents=null;
+let conversationSyncRequestTimer=null;
+let lastConversationSyncRequestAt=0;
+const requestConversationSync=()=>{
+  if(conversationSyncRequestTimer)return;
+  // Multiple SSE ticks can arrive while one large snapshot is still fresh.
+  // Coalesce them instead of fetching the whole inbox every few seconds.
+  const delay=Math.max(0,10_000-(Date.now()-lastConversationSyncRequestAt));
+  conversationSyncRequestTimer=window.setTimeout(()=>{
+    conversationSyncRequestTimer=null;
+    lastConversationSyncRequestAt=Date.now();
+    void syncAcquisitionCustomers();
+  },delay);
+};
 function connectConversationEvents(){
   if(handoverOnlyMode||!hasCapability('conversations:read_assigned')||document.hidden||!window.EventSource)return;
   if(conversationEvents)return;
   conversationEvents=new EventSource('/api/local/conversation-events');
-  conversationEvents.addEventListener('conversations',()=>{void syncAcquisitionCustomers();});
+  conversationEvents.addEventListener('conversations',requestConversationSync);
   conversationEvents.addEventListener('sync-error',()=>{ui.conversationSyncError='实时同步暂时中断，正在重连';});
 }
-function disconnectConversationEvents(){conversationEvents?.close();conversationEvents=null;}
+function disconnectConversationEvents(){
+  conversationEvents?.close();
+  conversationEvents=null;
+  if(conversationSyncRequestTimer)clearTimeout(conversationSyncRequestTimer);
+  conversationSyncRequestTimer=null;
+}
 window.addEventListener('pagehide',disconnectConversationEvents);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)disconnectConversationEvents();else connectConversationEvents();});
 window.addEventListener('focus',connectConversationEvents);

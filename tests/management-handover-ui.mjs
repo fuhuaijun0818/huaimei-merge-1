@@ -73,6 +73,9 @@ assert.match(app, /action === "refresh-conversations"/, "重新同步动作必�
 assert.match(app, /function renderConversationsSubpage\(\)/, "人工接管、会话质检和Bad Case子页必须支持局部内容重绘");
 assert.match(app, /container\.innerHTML = currentPage\(\)/, "子页刷新只能替换页面内容，不能重建整个应用外壳");
 assert.match(app, /scheduleConversationsSubpageRender\(\)/, "后台同步必须合并子页重绘，避免频繁闪烁");
+assert.match(app, /function renderCurrentPageContent\(\)/, "客户列表也必须使用内容区局部重绘");
+assert.match(app, /schedulePageContentRender\(1500\)/, "客户列表后台同步必须合并重绘");
+assert.match(app, /requestConversationSync/, "SSE会话事件必须合并，不能每几秒拉取全量快照");
 assert.match(app, /function selectFirstReceptionMatch\(\)/, "接待搜索命中后必须自动切入可见会话");
 assert.match(app, /filterReceptionList\(\);\s*selectFirstReceptionMatch\(\);/, "搜索过滤后必须同步右侧聊天区");
 assert.match(app, /Entering the inbox must start from a complete view/, "进入会话模块必须先拉取完整会话快照");

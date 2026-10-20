@@ -1,0 +1,60 @@
+{
+  "role": "B",
+  "task_id": "global-flicker-001",
+  "summary": "修复客户列表及其他后台页面的周期性闪烁和过快轮询：SSE 会话事件原先每来一次就立即拉取约 1.2MB 快照，客户页又走整页 render(true)。现在 SSE 同步合并为最多 10 秒一次，客户/customer 页面改为只替换 #page-content 并合并 1.5 秒内的重绘，输入或弹窗交互期间跳过背景重绘。",
+  "acceptance_steps": [
+    "打开“客户与会员 → 客户列表”，停留 20 秒，预期：侧栏、页头和页面外壳不闪烁，页面内容最多按同步结果更新。",
+    "打开开发者工具 Network，观察 20 秒，预期：acquisition-customers 不再每 3 秒请求，最多约 10–15 秒一次。",
+    "在客户搜索框中输入时遇到后台同步，预期：不丢失输入焦点和已输入内容。",
+    "弹窗打开期间遇到后台同步，预期：不重建页面或清空表单。"
+  ],
+  "tests": [
+    {
+      "command": "node --check src/app.js",
+      "status": "passed",
+      "evidence": "管理端脚本语法检查通过"
+    },
+    {
+      "command": "node tests/management-handover-ui.mjs",
+      "status": "passed",
+      "evidence": "客户页局部重绘、同步合并和搜索选中断言通过"
+    },
+    {
+      "command": "node tests/management-list-pagination.mjs",
+      "status": "passed",
+      "evidence": "列表分页和内容区重绘契约通过"
+    },
+    {
+      "command": "node tests/management-local-actions.mjs",
+      "status": "passed",
+      "evidence": "管理端页面动作闭环通过"
+    },
+    {
+      "command": "Chrome CDP 客户列表页 20 秒网络与 DOM 监测",
+      "status": "passed",
+      "evidence": "shellMutations=0，sidebarMutations=0，pageContentMutations=1，acquisition-customers 请求数=1"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "src/app.js",
+      "owner": "shared",
+      "change": "SSE会话同步10秒合并；客户/customer页局部内容重绘；交互期间跳过背景重绘"
+    },
+    {
+      "path": "tests/management-handover-ui.mjs",
+      "owner": "B",
+      "change": "新增客户页防闪烁和SSE合并契约"
+    }
+  ],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "增量快照仍可能较大：客户端游标查询受4KB URL上限约束，部分会话会以完整对象返回；本次先降低频率和避免整页重绘，尚未改成服务端游标令牌或POST请求体。",
+    "会话同步从即时事件变为最多约10秒一次的合并刷新；如果需要更强实时性，应优先优化增量契约而不是恢复高频全量请求。",
+    "客户页在输入框/按钮聚焦或弹窗打开时跳过背景重绘，数据会在交互结束后再更新。"
+  ],
+  "rollback": "回退 src/app.js 与 management-handover-ui 测试的本次提交即可；不涉及接口、数据库或环境变量。"
+}
