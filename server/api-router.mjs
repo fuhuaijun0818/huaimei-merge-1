@@ -21,7 +21,7 @@ import {
   resolveAppointmentIntake, changeCustomerAppointment
 } from "./appointment-intake-store.mjs";
 import { getLlmStatus } from "./llm-client.mjs";
-import { publicKnowledgeMediaDenial, resolvePublicKnowledgeMedia } from "./knowledge-media.mjs";
+import { findPublicMediaAssetByContentHash, publicKnowledgeMediaDenial, resolvePublicKnowledgeMedia } from "./knowledge-media.mjs";
 import { getKnowledgeGovernanceOverview } from "./knowledge-governance-overview.mjs";
 import {
   completeKnowledgeIntakeAsset, createKnowledgeIntakeDocument,
@@ -75,6 +75,25 @@ const PUBLIC_WEB_RATE_LIMIT = Math.max(5, Number(process.env.HUAMEI_PUBLIC_WEB_R
 // 兜底节流，token 到达即推送。
 const PUBLIC_CHAT_STREAM_PACING_MS = Math.max(0, Math.min(Number(process.env.HUAMEI_CHAT_STREAM_PACING_MS || 60), 1_000));
 const MAX_BODY_BYTES = 64 * 1024;
+const normalizePublicAttachments = (value) => Array.isArray(value)
+  ? value.slice(0, 3).map((item) => {
+    const uploadId = String(item?.upload_id || "").trim();
+    const matched = item?.matched_asset && typeof item.matched_asset === "object" ? item.matched_asset : null;
+    const sourcePath = matched ? String(matched.source_relative_path || "").trim().slice(0, 500) : "";
+    return {
+      ...(uploadId ? { upload_id:uploadId.slice(0, 80) } : {}),
+      ...(String(item?.file_name || "").trim() ? { file_name:String(item.file_name).trim().slice(0, 200) } : {}),
+      ...(sourcePath ? {
+        matched_asset:{
+          source_relative_path:sourcePath,
+          asset_id:String(matched.asset_id || "").trim().slice(0, 80) || null,
+          title:String(matched.title || "").trim().slice(0, 160) || null,
+          product_hint:String(matched.product_hint || "").trim().slice(0, 80) || null,
+          requires_verification:matched.requires_verification === true
+        }
+      } : {})
+    };
+  }).filter((item) => item.upload_id || item.matched_asset) : [];
 // The management overlay contains only operator-maintained records and source
 // overrides, never the full knowledge package. A dedicated cap lets a real
 // catalog edit complete without weakening public API request limits.
@@ -1740,10 +1759,12 @@ export async function handleApiRequest(request, response) {
       sendJson(request, response, requestId, 429, { error:{ code:"RATE_LIMITED", message:"咨询请求较多，请稍后再试" }, request_id:requestId }, { ...rateHeaders, "Retry-After":"60" });
       return true;
     }
+    const attachments = normalizePublicAttachments(payload.attachments);
     try {
       const result = await callAcquisitionChannel("web", {
         tenant_id:tenantId,
         message,
+        ...(attachments.length ? { attachments } : {}),
         message_id:typeof payload.message_id === "string" ? payload.message_id : "",
         session_id:session.sessionId,
         interests:Array.isArray(payload.interests) ? payload.interests.slice(0, 3) : []
@@ -1804,10 +1825,12 @@ export async function handleApiRequest(request, response) {
       sendJson(request, response, requestId, 429, { error:{ code:"RATE_LIMITED", message:"咨询请求较多，请稍后再试" }, request_id:requestId }, { ...rateHeaders, "Retry-After":"60" });
       return true;
     }
+    const attachments = normalizePublicAttachments(payload.attachments);
     try {
       const result = await callAcquisitionChannel("web", {
         tenant_id:tenantId,
         message,
+        ...(attachments.length ? { attachments } : {}),
         session_id:session.sessionId,
         interests:Array.isArray(payload.interests) ? payload.interests.slice(0, 3) : []
       }, { requestId, caller:"huamei_web_gateway", idempotencyKey:String(request.headers["idempotency-key"] || "").trim().slice(0, 160) });
@@ -1977,10 +2000,28 @@ export async function handleApiRequest(request, response) {
       sendError(request, response, requestId, 503, "CUSTOMER_UPLOAD_STORAGE_UNAVAILABLE", "上传暂时无法保存，请稍后重试");
       return true;
     }
+    const contentSha256 = createHash("sha256").update(buffer).digest("hex");
+    const matched = findPublicMediaAssetByContentHash(contentSha256);
+    const matchedPath = matched
+      ? String(matched.asset.source_relative_path || "").replace(/^公开资料\//, "")
+      : "";
+    const productHint = matchedPath
+      ? String(matchedPath.split("/").slice(-2, -1)[0] || "").replace(/(?:产品)?介绍$/u, "").trim()
+      : "";
     sendJson(request, response, requestId, 200, {
       upload_id:uploadId,
       mime_type:mimeType,
       size_bytes:buffer.length,
+      content_sha256:contentSha256,
+      matched_asset:matched ? {
+        asset_id:matched.asset.asset_id,
+        source_relative_path:matchedPath,
+        asset_source_relative_path:matched.asset.source_relative_path,
+        title:productHint || matched.asset.content_label || matched.asset.file_name,
+        product_hint:productHint || null,
+        media_type:matched.asset.media_type,
+        requires_verification:matched.asset.source_verification_required === true
+      } : null,
       scope:"customer_only",
       note:"客户上传内容只保存在本机客户专属目录，不进入公开知识库与公开素材。",
       request_id:requestId

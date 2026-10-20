@@ -154,6 +154,7 @@ async function processAcquisitionEnvelopeWithPublication(envelope, metadata = {}
       owner:envelope.context.owner || `${channel}渠道`,
       tenant_id:tenantId,
       external_user_id:envelope.actor.external_user_id,
+      uploaded_assets:Array.isArray(envelope.attachments) ? envelope.attachments : [],
       ...sessionContext
     }
   }, {
@@ -199,7 +200,8 @@ async function processAcquisitionEnvelopeWithPublication(envelope, metadata = {}
   const media = selectPublicKnowledgeMedia({
     message,
     citations:deliveredCitations,
-    intent:result.output.structured_data?.intent || ""
+    intent:result.output.structured_data?.intent || "",
+    preferredAssetId:result.guardrails?.uploaded_image_context?.asset_id || ""
   });
   const orchestration = buildAcquisitionOrchestration({ envelope, result, sessionSnapshot });
   return {

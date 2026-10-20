@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { analyzeAcquisitionEmotion, enrichAcquisitionResponseWithEmotion } from "../server/acquisition-emotion.mjs";
 import { routeAcquisitionAnswer } from "../server/acquisition-answer-routing.mjs";
-import { invokeAgent } from "../server/agent-runtime.mjs";
+import { invokeAgent, invokeAgentAsync } from "../server/agent-runtime.mjs";
 import { previewPublicKnowledgeMediaForSource, publicKnowledgeMediaTypeForPath, resolvePublicKnowledgeMedia, selectPublicKnowledgeMedia } from "../server/knowledge-media.mjs";
 
 const concern = analyzeAcquisitionEmotion("我有点担心恢复会不会很久");
@@ -67,5 +67,47 @@ const maskMedia = selectPublicKnowledgeMedia({
   intent:mask.output.structured_data.intent
 });
 assert.ok(maskMedia.some((item) => /明星产品.*面膜/.test(item.source_relative_path)), "明确产品名称时应自动带回已审核产品图片");
+
+const uploadedPath = "明星产品/禧善产品介绍/6d15ec78d241446bb3893bc34b10b459.jpg";
+const uploaded = await invokeAgentAsync("A-01", {
+  message:"介绍一下图片中的产品",
+  mode:"reply",
+  context:{
+    tenant_id:"huamei-shanghai",
+    uploaded_assets:[{
+      upload_id:"upl_test",
+      file_name:"6d15ec78d241446bb3893bc34b10b459.jpg",
+      matched_asset:{
+        source_relative_path:uploadedPath,
+        asset_id:"asset_387e1908f48de4f3",
+        title:"禧善产品介绍",
+        product_hint:"禧善",
+        requires_verification:true
+      }
+    }]
+  }
+});
+assert.equal(uploaded.output.structured_data.intent, "product_catalog_detail");
+assert.match(uploaded.output.message, /禧善/);
+assert.ok(uploaded.output.citations.some((item) => item.source_relative_path === uploadedPath));
+assert.equal(uploaded.guardrails.uploaded_image_context?.record_id, "kb_ocr_7626edc1c78ecb54");
+const uploadedMedia = selectPublicKnowledgeMedia({
+  message:"介绍一下图片中的产品",
+  citations:uploaded.output.citations,
+  intent:uploaded.output.structured_data.intent,
+  preferredAssetId:uploaded.guardrails.uploaded_image_context?.asset_id
+});
+assert.deepEqual(uploadedMedia.map((item) => item.source_relative_path), [uploadedPath], "回复必须回带客户上传的那张公开图片");
+
+const unmatched = await invokeAgentAsync("A-01", {
+  message:"介绍一下图片中的产品",
+  mode:"reply",
+  context:{
+    tenant_id:"huamei-shanghai",
+    uploaded_assets:[{ upload_id:"upl_unknown", matched_asset:{ source_relative_path:"明星产品/未知产品/unknown.jpg" } }]
+  }
+});
+assert.equal(unmatched.output.structured_data.intent, "need_clarification");
+assert.doesNotMatch(unmatched.output.message, /热玛吉/);
 
 console.log("✓ 情绪识别、通用科普/院方事实路由与公开资料预览白名单通过");

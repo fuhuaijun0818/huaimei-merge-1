@@ -1,0 +1,97 @@
+{
+  "role": "C",
+  "task_id": "uploaded-image-context-001",
+  "summary": "修复上传图片后仍回答上一轮热玛吉并展示热玛吉海报：上传图片现在按SHA-256匹配公开资料，匹配到6d15...jpg对应‘禧善产品介绍’；附件元数据随下一轮问题进入对话上下文，Agent注入对应已审核记录和同产品目录的说明，只回带客户上传的那张图片。未匹配图片不再猜测，改为澄清/转人工。",
+  "acceptance_steps": [
+    "上传6d15ec78d241446bb3893bc34b10b459.jpg，上传接口返回matched_asset.source_relative_path=明星产品/禧善产品介绍/6d15...jpg、product_hint=禧善。",
+    "随后提问‘介绍一下图片中的产品’，Agent意图为product_catalog_detail，回复围绕禧善产品并引用公开资料中的保湿/补水/使用说明，不再出现热玛吉。",
+    "回复media只包含客户上传的原图路径，引用为明星产品：禧善产品介绍。",
+    "未匹配的图片返回need_clarification，不沿用历史项目，不猜测图片内容。",
+    "执行node --env-file=.env.local tests/acquisition-emotion-media.mjs，上传图片上下文和白名单通过。"
+  ],
+  "tests": [
+    {
+      "command": "node --env-file=.env.local tests/acquisition-emotion-media.mjs",
+      "status": "passed",
+      "evidence": "上传图片匹配禧善记录、回复回带原图、未匹配图片澄清且不出现热玛吉"
+    },
+    {
+      "command": "真实链路processAcquisitionEnvelope（带matched_asset）",
+      "status": "passed",
+      "evidence": "intent=product_catalog_detail；reply围绕禧善；media仅6d15...jpg"
+    },
+    {
+      "command": "本地HTTP链路 /api/public/acquisition-upload -> /api/public/acquisition-chat",
+      "status": "passed",
+      "evidence": "upload_match=明星产品/禧善产品介绍/6d15...jpg；product_hint=禧善；reply为禧善公开资料介绍；media仅原图，requires_verification=true"
+    },
+    {
+      "command": "npm --prefix apps/acquisition-advisor run build",
+      "status": "passed",
+      "evidence": "新bundle构建成功"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "server/knowledge-media.mjs",
+      "owner": "C",
+      "change": "新增按内容SHA-256查找公开媒体资产；支持preferredAssetId精确回带上传图"
+    },
+    {
+      "path": "server/api-router.mjs",
+      "owner": "shared",
+      "change": "上传接口返回content_sha256/matched_asset/product_hint；聊天接口接收并规范化attachments"
+    },
+    {
+      "path": "server/acquisition-channel-adapters.mjs",
+      "owner": "shared",
+      "change": "web envelope保留受控附件元数据"
+    },
+    {
+      "path": "server/acquisition-domain-service.mjs",
+      "owner": "shared",
+      "change": "附件上下文传入Agent；回复媒体优先使用上传匹配资产"
+    },
+    {
+      "path": "server/agent-runtime.mjs",
+      "owner": "A",
+      "change": "识别上传图片匹配记录，覆盖上一轮项目上下文；匹配时生成安全产品介绍并回带原图，未匹配时澄清/转人工"
+    },
+    {
+      "path": "apps/acquisition-advisor/src/App.jsx",
+      "owner": "A",
+      "change": "上传响应保存matched_asset；下一轮问题携带附件上下文；流式和普通回执都透传attachments"
+    },
+    {
+      "path": "tests/acquisition-emotion-media.mjs",
+      "owner": "unassigned",
+      "change": "新增上传图片匹配、原图回带和未匹配澄清回归"
+    }
+  ],
+  "api_changes": [
+    {
+      "interface": "POST /api/public/acquisition-upload",
+      "change": "响应新增content_sha256、matched_asset；matched_asset包含source_relative_path、asset_id、product_hint",
+      "breaking": false
+    },
+    {
+      "interface": "POST /api/public/acquisition-chat and /stream",
+      "change": "请求新增attachments元数据；不接受原始图片二进制",
+      "breaking": false
+    }
+  ],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [
+    "HUAMEI_CUSTOMER_UPLOAD_ENABLED",
+    "HUAMEI_PUBLIC_MEDIA_MANIFEST",
+    "HUAMEI_RAW_DATA_ROOT"
+  ],
+  "known_limitations": [
+    "只对内容哈希与公开素材包完全一致的图片做匹配；任意客户图片不做视觉识别。",
+    "匹配后使用已审核OCR记录生成安全产品介绍，具体成分、适用人群和使用效果仍需院方审核/医生面诊。",
+    "未匹配图片会澄清或转人工，不会猜测图片内容。",
+    "生产仍需使用正式public-materials包/OSS描述，本地媒体清单仅用于开发。"
+  ],
+  "rollback": "回退agent-runtime上传上下文、knowledge-media哈希匹配、BFF attachments透传和App.jsx附件上下文提交；上传文件仍保存在客户专属目录。"
+}

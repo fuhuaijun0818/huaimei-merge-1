@@ -62,7 +62,7 @@ for (const path of sourceFiles) {
     reviewed_source:true,
     default_agent_action:"public_media_candidate",
     ocr_status:"not_requested",
-    source_verification_required:/(?:医生介绍|项目介绍|项目价格|政策|权益|活动)/.test(sourceRelativePath),
+    source_verification_required:/(?:医生介绍|项目介绍|项目价格|政策|权益|活动|明星产品)/.test(sourceRelativePath),
     storage:{ status:"not_uploaded", provider:"local" }
   });
 }

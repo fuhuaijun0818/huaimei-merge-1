@@ -86,6 +86,25 @@ const cleanContext = (value) => {
     .map(([key, item]) => [String(key).slice(0, 80), item]));
 };
 
+const normalizeAttachments = (value) => Array.isArray(value)
+  ? value.slice(0, 3).map((item) => {
+    const matched = item?.matched_asset && typeof item.matched_asset === "object" ? item.matched_asset : null;
+    const sourcePath = matched ? String(matched.source_relative_path || "").trim().slice(0, 500) : "";
+    return {
+      ...(String(item?.upload_id || "").trim() ? { upload_id:String(item.upload_id).trim().slice(0, 80) } : {}),
+      ...(String(item?.file_name || "").trim() ? { file_name:String(item.file_name).trim().slice(0, 200) } : {}),
+      ...(sourcePath ? {
+        matched_asset:{
+          source_relative_path:sourcePath,
+          asset_id:String(matched.asset_id || "").trim().slice(0, 80) || null,
+          title:String(matched.title || "").trim().slice(0, 160) || null,
+          product_hint:String(matched.product_hint || "").trim().slice(0, 80) || null,
+          requires_verification:matched.requires_verification === true
+        }
+      } : {})
+    };
+  }).filter((item) => item.upload_id || item.matched_asset) : [];
+
 export const normalizeAcquisitionChannel = (value) => channelAliases.get(String(value || "api").trim().toLowerCase()) || "";
 
 const configurationFor = (definition, env = process.env) => {
@@ -179,7 +198,7 @@ export function getChannelOutboundDeliveryState(channelValue, { env = process.en
   };
 }
 
-const baseEnvelope = ({ tenantId, channel, conversationId, messageId, text, timestamp, actor = {}, context = {}, interests = [] }) => ({
+const baseEnvelope = ({ tenantId, channel, conversationId, messageId, text, timestamp, actor = {}, context = {}, interests = [], attachments = [] }) => ({
   schema_version:"1.1",
   tenant_id:tenantId,
   channel,
@@ -195,7 +214,8 @@ const baseEnvelope = ({ tenantId, channel, conversationId, messageId, text, time
     ...(trimmed(actor.display_name, 80) ? { display_name:trimmed(actor.display_name, 80) } : {})
   },
   context:cleanContext(context),
-  interests:normalizeInterests(interests)
+  interests:normalizeInterests(interests),
+  attachments:normalizeAttachments(attachments)
 });
 
 const normalizeWebInbound = (payload = {}) => baseEnvelope({
@@ -206,7 +226,8 @@ const normalizeWebInbound = (payload = {}) => baseEnvelope({
   text:payload.message,
   timestamp:payload.timestamp,
   actor:{ customer_id:payload.customer_id },
-  interests:payload.interests
+  interests:payload.interests,
+  attachments:payload.attachments
 });
 
 const normalizeWecomInbound = (payload = {}) => {

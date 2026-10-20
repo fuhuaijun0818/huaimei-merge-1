@@ -178,6 +178,19 @@ export function previewPublicKnowledgeMediaForSource(sourceRelativePath = "") {
   return mediaForAsset(asset);
 }
 
+export function findPublicMediaAssetByContentHash(contentHash = "") {
+  const hash = String(contentHash || "").trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(hash)) return null;
+  for (const asset of loadAssets().values()) {
+    if (String(asset?.content_sha256 || "").toLowerCase() !== hash) continue;
+    if (!isPublicDeliveryEligible(asset)) continue;
+    const media = mediaForAsset(asset);
+    if (!media) continue;
+    return { asset, media };
+  }
+  return null;
+}
+
 export function attachPublicKnowledgeMediaPreviews(citations = []) {
   if (!Array.isArray(citations)) return [];
   return citations.map((citation) => {
@@ -197,10 +210,22 @@ export function attachPublicKnowledgeMediaPreviews(citations = []) {
   });
 }
 
-export function selectPublicKnowledgeMedia({ message = "", citations = [], intent = "" } = {}) {
+export function selectPublicKnowledgeMedia({ message = "", citations = [], intent = "", preferredAssetId = "" } = {}) {
   const allowDelivery = MEDIA_REQUEST.test(String(message)) || AUTO_MEDIA_INTENTS.has(String(intent));
   if (!allowDelivery) return [];
   const assets = loadAssets();
+  const preferredId = String(preferredAssetId || "").trim();
+  if (preferredId) {
+    const preferred = assets.get(preferredId);
+    if (preferred && isPublicDeliveryEligible(preferred)) {
+      const preferredPath = String(preferred.source_relative_path || "");
+      const citationPath = (Array.isArray(citations) ? citations : [])
+        .map((item) => String(item?.source_relative_path || ""))
+        .find((path) => path && (path === preferredPath || `公开资料/${path}` === preferredPath));
+      const media = mediaForAsset(preferred, citationPath || preferredPath);
+      if (media) return [media];
+    }
+  }
   const text = String(message);
   const sourcePaths = new Set((Array.isArray(citations) ? citations : [])
     .map((item) => String(item?.source_relative_path || "").trim())

@@ -451,6 +451,21 @@ const normalizeContext = (context = {}) => ({
   pending_choice:normalizePendingChoice(context.pending_choice),
   known_projects:Array.isArray(context.known_projects) ? context.known_projects.slice(0, 12).map((item) => String(item).slice(0, 80)) : [],
   known_doctors:Array.isArray(context.known_doctors) ? context.known_doctors.slice(0, 12).map((item) => String(item).slice(0, 40)) : [],
+  uploaded_assets:Array.isArray(context.uploaded_assets)
+    ? context.uploaded_assets.slice(0, 3).map((item) => ({
+      upload_id:String(item?.upload_id || "").slice(0, 80),
+      file_name:String(item?.file_name || "").slice(0, 200),
+      matched_asset:item?.matched_asset && typeof item.matched_asset === "object"
+        ? {
+          source_relative_path:String(item.matched_asset.source_relative_path || "").slice(0, 500),
+          asset_id:String(item.matched_asset.asset_id || "").slice(0, 80) || null,
+          title:String(item.matched_asset.title || "").slice(0, 160) || null,
+          product_hint:String(item.matched_asset.product_hint || "").slice(0, 80) || null,
+          requires_verification:item.matched_asset.requires_verification === true
+        }
+        : null
+    })).filter((item) => item.matched_asset?.source_relative_path)
+    : [],
   last_intent:String(context.last_intent || "").slice(0, 80),
   dialogue_stage:String(context.dialogue_stage || "").slice(0, 80),
   recent_turns: Array.isArray(context.recent_turns)
@@ -2180,6 +2195,26 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
   const elapsedMs = (startedAt) => Number((performance.now() - startedAt).toFixed(2));
   const definition=AGENT_DEFINITIONS.find(item=>item.id===agentId||item.slug===agentId);
   const originalContext=normalizeContext(payload.context);
+  const uploadedAssets=Array.isArray(originalContext.uploaded_assets)
+    ? originalContext.uploaded_assets.filter((item)=>item?.matched_asset?.source_relative_path).slice(0,3)
+    : [];
+  const uploadedAsset=uploadedAssets[0]?.matched_asset || null;
+  const uploadedKnowledge=uploadedAsset
+    ? loadHuameiKnowledge().publicRecords.find((record)=>record.source_relative_path===uploadedAsset.source_relative_path) || null
+    : null;
+  const uploadedProductHint=String(uploadedAsset?.product_hint || "").trim()
+    || String(uploadedAsset?.source_relative_path || "").split("/").slice(-2,-1)[0]?.replace(/(?:产品)?介绍$/u,"").trim()
+    || "上传图片";
+  if(uploadedKnowledge) {
+    originalContext.known_projects=[...new Set([...(originalContext.known_projects||[]),uploadedProductHint])];
+    originalContext.uploaded_image_context={
+      product_hint:uploadedProductHint,
+      record_id:uploadedKnowledge.record_id,
+      source_relative_path:uploadedKnowledge.source_relative_path,
+      title:uploadedKnowledge.title
+    };
+    payload={...payload,context:originalContext};
+  }
   const semanticRisk=inspectRisk(payload.message);
   let plan={used:false,reason:'safety_or_other_agent'};
   if(definition?.id==='A-01' && semanticRisk.decision==='allow' && !originalContext.active_critical_risk) {
@@ -2250,6 +2285,134 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
     return finalize(localResponse);
   }
   const localIntent = localResponse.output.structured_data?.intent || "";
+  if (uploadedKnowledge) {
+    const recordText=String(uploadedKnowledge.content || "").slice(0, 1_200);
+    const productFolder=uploadedKnowledge.source_relative_path.split("/").slice(0,-1).join("/");
+    const siblingRecords=loadHuameiKnowledge().publicRecords
+      .filter((record)=>record.record_id!==uploadedKnowledge.record_id
+        && record.record_type===uploadedKnowledge.record_type
+        && String(record.source_relative_path||"").startsWith(`${productFolder}/`)
+        && String(record.content||"").length>=80
+        && /(?:保湿|补水|修护|凝胶|水分|成分|使用)/.test(String(record.content||"")))
+      .map((record)=>{
+        const text=String(record.content||"");
+        let score=0;
+        if(text.includes(uploadedProductHint)) score+=5;
+        if(/保湿凝胶|补水|水分|锁水/.test(text)) score+=12;
+        if(/智能网状|携带自重|长效补水|修复受损/.test(text)) score+=10;
+        if(/使用方式|使用方法/.test(text)) score+=2;
+        if(/术后|涂抹/.test(text)) score+=3;
+        if(/薰衣草|精油/.test(text)) score-=6;
+        if(/伤口|创面/.test(text)) score-=3;
+        return { record, score };
+      })
+      .sort((left,right)=>right.score-left.score || String(right.record.content).length-String(left.record.content).length)
+      .map(({record})=>record)
+      .slice(0,2);
+    const productFacts=siblingRecords
+      .flatMap((record)=>String(record.content||"").split(/[。；\n]/)
+        .map((sentence)=>sentence.replace(/^[•\-\s]+/u,"").trim())
+        .filter((sentence)=>sentence.length>=12
+          && !/^(?:资料分类|原始素材|标题|来源)[：:]/u.test(sentence)
+          && /(?:保湿|补水|修护|凝胶|水分|成分|使用)/.test(sentence))
+        .sort((left,right)=>{
+          const score=(sentence)=>(
+            (/智能网状|携带自重|长效补水|修复受损/.test(sentence)?10:0)
+            + (/(?:保湿|补水|水分|锁水)/.test(sentence)?5:0)
+            - (/^(?:使用|使用方法|使用方式)/.test(sentence)?3:0)
+          );
+          return score(right)-score(left);
+        })
+        .slice(0,1))
+      .slice(0,2)
+      .join("；")
+      .slice(0,220);
+    const recordCitation={
+      knowledge_id:uploadedKnowledge.record_id,
+      source_record_id:uploadedKnowledge.record_id,
+      title:uploadedKnowledge.title,
+      version:loadHuameiKnowledge().version,
+      source_relative_path:uploadedKnowledge.source_relative_path,
+      excerpt:recordText,
+      usage:"consumer_safe_uploaded_image_context",
+      review_status:uploadedKnowledge.verification_note ? "需核验" : "已纳入索引",
+      requires_verification:Boolean(uploadedKnowledge.verification_note),
+      verification_note:uploadedKnowledge.verification_note || ""
+    };
+    localResponse.output.structured_data={
+      ...localResponse.output.structured_data,
+      intent:"product_catalog_detail",
+      answer_routing:{
+        ...(localResponse.output.structured_data?.answer_routing || {}),
+        route:"enterprise_knowledge_graph",
+        retrieval_strategy:"rag_metadata",
+        model_generation_mode:"grounded_copy_only",
+        reason:"customer_uploaded_image_matched_public_material"
+      },
+      knowledge_hits:[
+        {
+          knowledge_id:uploadedKnowledge.record_id,
+          record_type:uploadedKnowledge.record_type,
+          modality:"ocr_text",
+          title:uploadedKnowledge.title,
+          source_relative_path:uploadedKnowledge.source_relative_path,
+          general_information:recordText,
+          requires_verification:Boolean(uploadedKnowledge.verification_note),
+          verification_note:uploadedKnowledge.verification_note || ""
+        },
+        ...siblingRecords.map((record)=>({
+          knowledge_id:record.record_id,
+          record_type:record.record_type,
+          modality:"ocr_text",
+          title:record.title,
+          source_relative_path:record.source_relative_path,
+          general_information:String(record.content||"").slice(0,1_200),
+          requires_verification:Boolean(record.verification_note),
+          verification_note:record.verification_note || ""
+        })),
+        ...(localResponse.output.structured_data?.knowledge_hits || [])
+      ].slice(0, 10)
+    };
+    const uploadedKind=uploadedKnowledge.source_relative_path.startsWith("明星产品/")
+      ? "产品"
+      : uploadedKnowledge.source_relative_path.startsWith("医生介绍/") ? "医生资料" : "项目资料";
+    localResponse.output.message=productFacts
+      ? `您上传的是${uploadedProductHint}${uploadedKind}的公开介绍资料。公开资料提到：${productFacts}。具体成分、适用人群、使用方法和效果需以院方审核资料及医生面诊为准。`
+      : `您上传的是${uploadedProductHint}${uploadedKind}的公开介绍资料。根据这份资料，可以了解产品名称、使用方式和护理方向；具体成分、适用人群、使用方法和效果需以院方审核资料及医生面诊为准。`;
+    const siblingCitations=siblingRecords.map((record)=>({
+      knowledge_id:record.record_id,
+      source_record_id:record.record_id,
+      title:record.title,
+      version:loadHuameiKnowledge().version,
+      source_relative_path:record.source_relative_path,
+      excerpt:String(record.content||"").slice(0,1_200),
+      usage:"consumer_safe_uploaded_image_context",
+      review_status:record.verification_note ? "需核验" : "已纳入索引",
+      requires_verification:Boolean(record.verification_note),
+      verification_note:record.verification_note || ""
+    }));
+    localResponse.output.citations=dedupeCitations([recordCitation,...siblingCitations,...(localResponse.output.citations || [])]);
+    localResponse.guardrails.uploaded_image_context={
+      matched:true,
+      product_hint:uploadedProductHint,
+      asset_id:uploadedAsset?.asset_id || null,
+      record_id:uploadedKnowledge.record_id,
+      source_relative_path:uploadedKnowledge.source_relative_path
+    };
+    localResponse.guardrails.llm_used=false;
+    localResponse.guardrails.llm_skip_reason="uploaded_image_matched_deterministic_intro";
+    return finalize(localResponse);
+  } else if (uploadedAssets.length) {
+    localResponse.output.message="已收到图片，但当前无法直接识别图片内容。请补充产品名称，或转人工由顾问查看。";
+    localResponse.output.structured_data={
+      ...localResponse.output.structured_data,
+      intent:"need_clarification"
+    };
+    localResponse.guardrails.uploaded_image_context={ matched:false };
+    localResponse.guardrails.llm_used=false;
+    localResponse.guardrails.llm_skip_reason="uploaded_image_unmatched";
+    return finalize(localResponse);
+  }
   const answerRouting = localResponse.output.structured_data?.answer_routing || {};
   context.dialogue_stage = localResponse.output.structured_data?.dialogue_stage || context.dialogue_stage;
   if (agent.id === 'A-01' && process.env.HUAMEI_NATURAL_DIALOGUE_ENABLED === 'true' && localResponse.status === 'completed') {

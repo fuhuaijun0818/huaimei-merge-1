@@ -572,6 +572,7 @@ export function App() {
   const [uploadError, setUploadError] = useState("");
   const fileInputRef = useRef(null);
   const pendingUploadRef = useRef(null);
+  const uploadedAttachmentRef = useRef(null);
   const chatStarted = messages.length > 0 || isLoading || Boolean(appointmentState.intake);
 
   const statusText = useMemo(() => isLoading ? "正在为您整理相关项目信息…" : "", [isLoading]);
@@ -921,7 +922,7 @@ export function App() {
   };
 
   // A-005：分片推送 + 最终回执。重复片段按序号丢弃，断线时带 since_seq 只补缺失片段。
-  const streamReply = async ({ question, messageKey, controller }) => {
+  const streamReply = async ({ question, messageKey, controller, attachments = [] }) => {
     const streamId = `stream-${messageKey}`;
     let sinceSeq = 0;
     let text = "";
@@ -948,6 +949,7 @@ export function App() {
         client_message_id:messageKey,
         message_id:messageKey,
         since_seq:since,
+        ...(attachments.length ? { attachments } : {}),
         session_id:sessionIdRef.current,
         ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {})
       }),
@@ -959,7 +961,7 @@ export function App() {
       if (!response.ok || !response.body) {
         const detail = await response.json().catch(() => null);
         // 流式通道不可用时回落到普通接口，客户照样能拿到回执。
-        if (attempt === 0 && sinceSeq === 0) return requestReplyReceipt({ question, messageKey, controller });
+        if (attempt === 0 && sinceSeq === 0) return requestReplyReceipt({ question, messageKey, controller, attachments });
         throw new Error(detail?.error?.message || "咨询服务暂时不可用");
       }
       const reader = response.body.getReader();
@@ -984,12 +986,12 @@ export function App() {
     return receipt;
   };
 
-  const requestReplyReceipt = async ({ question, messageKey, controller }) => {
+  const requestReplyReceipt = async ({ question, messageKey, controller, attachments = [] }) => {
     const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-chat"), {
       method:"POST",
       credentials:"include",
       headers:{ ...publicHeaders(), "Idempotency-Key":messageKey },
-      body:JSON.stringify({ message:question, client_message_id:messageKey, message_id:messageKey, session_id:sessionIdRef.current, ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {}) }),
+      body:JSON.stringify({ message:question, client_message_id:messageKey, message_id:messageKey, ...(attachments.length ? { attachments } : {}), session_id:sessionIdRef.current, ...(sessionTokenRef.current ? { session_token:sessionTokenRef.current } : {}) }),
       signal:controller.signal
     });
     const body = await response.json();
@@ -1097,11 +1099,19 @@ export function App() {
       updateSessionCredential(body);
       if (!response.ok) throw new Error(body?.error?.message || "上传失败，请稍后重试");
       pendingUploadRef.current = null;
+      uploadedAttachmentRef.current = {
+        upload_id:body.upload_id,
+        file_name:file.name,
+        matched_asset:body.matched_asset || null
+      };
       setMessages((current) => [...current, {
         id:`upload-${body.upload_id}`,
         role:"user",
         content:`[附件] ${file.name}`,
-        attachment:{ name:file.name, mime:file.type, size:file.size, uploadId:body.upload_id, status:"uploaded" },
+        attachment:{
+          name:file.name, mime:file.type, size:file.size, uploadId:body.upload_id, status:"uploaded",
+          matchedAsset:body.matched_asset || null
+        },
         at:new Date().toISOString()
       }]);
     } catch (error) {
@@ -1111,6 +1121,9 @@ export function App() {
 
   const sendQuestion = async ({ question, clientMessageId, retryOfId }) => {
     const messageKey = clientMessageId || globalThis.crypto?.randomUUID?.() || `web-msg-${Date.now()}`;
+    const attachmentContext = retryOfId ? null : uploadedAttachmentRef.current;
+    if (!retryOfId) uploadedAttachmentRef.current = null;
+    const attachments = attachmentContext ? [attachmentContext] : [];
     questionInFlightRef.current = true;
     inputRef.current?.focus({ preventScroll:true });
     setMessages((current) => retryOfId
@@ -1127,11 +1140,11 @@ export function App() {
     try {
       let receipt = null;
       try {
-        receipt = await streamReply({ question, messageKey, controller });
+        receipt = await streamReply({ question, messageKey, controller, attachments });
       } catch (streamError) {
         if (streamError.name === "AbortError") throw streamError;
         // 流式通道不可用时回落到普通接口，保证客户仍能拿到回执。
-        receipt = await requestReplyReceipt({ question, messageKey, controller });
+        receipt = await requestReplyReceipt({ question, messageKey, controller, attachments });
       }
       applyReplyReceipt(receipt, messageKey, question);
     } catch (requestError) {
