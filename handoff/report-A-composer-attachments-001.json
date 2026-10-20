@@ -1,0 +1,50 @@
+{
+  "role": "A",
+  "task_id": "composer-attachments-001",
+  "summary": "将小美前台输入框改为参考图的同容器布局：待发送图片缩略图位于输入容器顶部，文字输入与加号、发送按钮位于下方；上传成功不再立即生成一条独立的[附件]消息，而是随客户问题一起发送，并在已发送的用户气泡中保留缩略图。",
+  "acceptance_steps": [
+    "打开 http://127.0.0.1:4173/advisor/，通过左下角“+”上传一张 jpg/png/webp 图片。",
+    "预期：缩略图出现在输入容器内部顶部、文字框上方，右上角有移除按钮；页面不新增独立的[附件]消息。",
+    "输入“介绍一下产品”并发送，预期：用户气泡先显示缩略图，再显示文字，问题与附件上下文一起提交。",
+    "在 390×844 手机宽度重复上传，预期：缩略图按 84px 显示、文字框仍在其下方且不溢出容器。",
+    "最多允许 3 个待发送附件，与服务端 public attachments 上限一致；第 4 个会提示先发送或移除。"
+  ],
+  "tests": [
+    {
+      "command": "node tests/acquisition-advisor-otp-ui.mjs",
+      "status": "passed",
+      "evidence": "composer-box、composer-attachments、pendingAttachments、onRemoveAttachment、发送与重试附件上下文断言全部通过"
+    },
+    {
+      "command": "npm --prefix apps/acquisition-advisor run build",
+      "status": "passed",
+      "evidence": "Vite 生产构建成功，生成 dist/client/index.html 与 dist/server/index.js"
+    },
+    {
+      "command": "npm run team:verify",
+      "status": "passed",
+      "evidence": "team-baseline 17 项测试全部 passed"
+    },
+    {
+      "command": "Chrome CDP 本地页面实测 1280×900",
+      "status": "passed",
+      "evidence": "attachmentCount=1; attachmentSizes=[112,112]; attachmentsBeforeInput=true; inputBelowAttachments=true; userMessagesAfterUpload=0; removeButtonCount=1; uploadError 为空"
+    },
+    {
+      "command": "Chrome CDP 本地页面实测 390×844",
+      "status": "passed",
+      "evidence": "attachmentCount=1; attachmentSizes=[84,84]; attachmentsBeforeInput=true; inputBelowAttachments=true; userMessagesAfterUpload=0; uploadError 为空"
+    }
+  ],
+  "shared_changes": [],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "本轮只调整附件在输入区和用户气泡中的呈现，未新增图片像素识别或视觉诊断能力。",
+    "仍要求客户输入文字问题后再发送；纯图片无文字的发送入口未开放。",
+    "附件缩略图使用浏览器本地 object URL，发送后随当前会话保留，新对话或离开页面时释放。"
+  ],
+  "rollback": "回退本任务的 App.jsx、styles.css、UI 契约测试与 AGENTS.md 提交即可；不涉及数据迁移、接口字段或环境变量变更。"
+}

@@ -37,5 +37,14 @@ assert.match(source, /message\.isFinalSegment && !isHandoverNotice && <Conversat
 assert.doesNotMatch(source, /composer-waiting|aria-label="停止等待"/, "客户端等待中不展示“正在整理资料/停止等待”提示");
 assert.match(source, /uploadCapability\?\.enabled && \(/, "服务端上传能力位开启时必须渲染附件入口");
 assert.match(source, /loadUploadCapability\(attempt \+ 1\)/, "能力位加载失败或初始化竞态时必须重试");
+assert.match(source, /const \[pendingAttachments, setPendingAttachments\] = useState\(\[\]\)/, "待发送附件必须由输入框状态管理");
+assert.match(source, /className=\{`composer-box \$\{pendingAttachments\.length \? "has-attachments" : ""\}`\}/, "附件缩略图与文字输入必须共用一个输入容器");
+assert.match(source, /className="composer-attachments"/, "待发送图片缩略图必须显示在输入框内部");
+assert.match(source, /className="composer-attachment-remove"/, "待发送附件必须支持发送前移除");
+assert.match(source, /setPendingAttachments\(\(current\) => \[\s*\.\.\.current\.filter/, "上传成功后的附件必须进入待发送区");
+assert.doesNotMatch(source, /content:`\[附件\] \$\{file\.name\}`/, "上传完成后不得立即生成独立的附件消息");
+assert.match(source, /const attachmentContexts = retryOfId \? retryAttachments : pendingAttachments;/, "发送和重试必须使用同一批附件上下文");
+assert.match(source, /pendingAttachments=\{pendingAttachments\}/, "输入框必须接收待发送附件列表");
+assert.match(source, /onRemoveAttachment=\{removePendingAttachment\}/, "输入框移除附件时必须释放本地预览资源");
 
 console.log("acquisition advisor direct lead-capture UI contract tests passed");

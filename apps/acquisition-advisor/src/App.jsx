@@ -168,54 +168,77 @@ function FeedbackIcon({ type }) {
   );
 }
 
-function Composer({ value, onChange, onSubmit, disabled, restoringSession, inputRef, onStop, waiting, uploadCapability, onUpload, uploadError, onRetryUpload }) {
+function Composer({ value, onChange, onSubmit, disabled, restoringSession, inputRef, onStop, waiting, uploadCapability, onUpload, uploadError, onRetryUpload, pendingAttachments = [], onRemoveAttachment }) {
   const filePickerRef = useRef(null);
   const canSend = value.trim() && !disabled;
   return (
     <div className="composer-area">
       <form className="composer" onSubmit={onSubmit}>
         {uploadCapability?.enabled && (
-          <>
-            <input
-              ref={filePickerRef}
-              type="file"
-              className="composer-file"
-              accept={(uploadCapability.accepted_types || []).join(",")}
-              aria-label="添加图片或资料"
-              onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; onUpload?.(file); }}
-            />
-            <button type="button" className="attach-button" aria-label="添加图片或资料" onClick={() => filePickerRef.current?.click()}>
-              +
-            </button>
-          </>
+          <input
+            ref={filePickerRef}
+            type="file"
+            className="composer-file"
+            accept={(uploadCapability.accepted_types || []).join(",")}
+            aria-label="添加图片或资料"
+            onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; onUpload?.(file); }}
+          />
         )}
-        <textarea
-          ref={inputRef}
-          aria-label="咨询内容"
-          autoComplete="off"
-          rows={1}
-          disabled={restoringSession}
-          onKeyDown={(event) => {
-            if (event.key !== "Enter") return;
-            // 中文输入法组合态的回车只用于确认候选词，不发送消息。
-            if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
-              event.preventDefault();
-              return;
-            }
-            // Shift+Enter 在输入框内换行，回车才发送。
-            if (event.shiftKey) return;
-            event.preventDefault();
-            if (!value.trim() || disabled) return;
-            onSubmit({ preventDefault() {} });
-          }}
-          maxLength={1000}
-          onChange={(event) => onChange(event.target.value)}
-          placeholder="描述您的关注点，例如：脸部松弛、肤色暗沉…"
-          value={value}
-        />
-        <button className="send-button" type="submit" disabled={!canSend} aria-label="发送咨询">
-          <SendIcon />
-        </button>
+        <div className={`composer-box ${pendingAttachments.length ? "has-attachments" : ""}`}>
+          {pendingAttachments.length > 0 && (
+            <div className="composer-attachments" aria-label="待发送附件">
+              {pendingAttachments.map((item) => (
+                <div className="composer-attachment" key={item.upload_id}>
+                  {item.previewUrl
+                    ? <img src={item.previewUrl} alt={item.file_name || "待发送图片"} />
+                    : <span className="composer-attachment-file">PDF</span>}
+                  <button
+                    type="button"
+                    className="composer-attachment-remove"
+                    aria-label={`移除附件 ${item.file_name || ""}`}
+                    onClick={() => onRemoveAttachment?.(item.upload_id)}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="composer-row">
+            {uploadCapability?.enabled && (
+              <button type="button" className="attach-button" aria-label="添加图片或资料" onClick={() => filePickerRef.current?.click()}>
+                +
+              </button>
+            )}
+            <textarea
+              ref={inputRef}
+              aria-label="咨询内容"
+              autoComplete="off"
+              rows={1}
+              disabled={restoringSession}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                // 中文输入法组合态的回车只用于确认候选词，不发送消息。
+                if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
+                  event.preventDefault();
+                  return;
+                }
+                // Shift+Enter 在输入框内换行，回车才发送。
+                if (event.shiftKey) return;
+                event.preventDefault();
+                if (!value.trim() || disabled) return;
+                onSubmit({ preventDefault() {} });
+              }}
+              maxLength={1000}
+              onChange={(event) => onChange(event.target.value)}
+              placeholder="描述您的关注点，例如：脸部松弛、肤色暗沉…"
+              value={value}
+            />
+            <button className="send-button" type="submit" disabled={!canSend} aria-label="发送咨询">
+              <SendIcon />
+            </button>
+          </div>
+        </div>
       </form>
       {uploadError && (
         <div className="upload-status" role="alert">
@@ -491,6 +514,13 @@ function ConversationFeedback({ feedback, onFeedback }) {
 function ChatMessage({ message, showLeadCapture, leadState, appointmentState, onLeadSubmit, onAppointmentSubmit, feedback, onFeedback, onPreview, onRetry }) {
   if (message.role === "user") return (
     <div className={`user-message ${message.status ? `is-${message.status}` : ""}`}>
+      {message.attachments?.length > 0 && (
+        <div className="message-attachments" aria-label="已发送附件">
+          {message.attachments.map((item) => item.previewUrl
+            ? <img key={item.upload_id} src={item.previewUrl} alt={item.file_name || "已发送图片"} />
+            : <span key={item.upload_id} className="message-attachment-file">{item.file_name || "PDF"}</span>)}
+        </div>
+      )}
       <span className="user-message-text">{message.content}</span>
       {message.attachment && (
         <em className="attachment-state">
@@ -570,9 +600,11 @@ export function App() {
   const [unseenCount, setUnseenCount] = useState(0);
   const [uploadCapability, setUploadCapability] = useState(null);
   const [uploadError, setUploadError] = useState("");
+  const [pendingAttachments, setPendingAttachments] = useState([]);
   const fileInputRef = useRef(null);
   const pendingUploadRef = useRef(null);
-  const uploadedAttachmentRef = useRef(null);
+  // 附件缩略图使用浏览器本地 object URL；发送、移除或离开页面时统一释放。
+  const attachmentUrlsRef = useRef(new Set());
   const chatStarted = messages.length > 0 || isLoading || Boolean(appointmentState.intake);
 
   const statusText = useMemo(() => isLoading ? "正在为您整理相关项目信息…" : "", [isLoading]);
@@ -587,6 +619,26 @@ export function App() {
     setUnseenCount(0);
   };
 
+  const trackAttachmentPreview = (url) => {
+    if (url) attachmentUrlsRef.current.add(url);
+    return url;
+  };
+
+  const releaseAttachmentPreview = (url) => {
+    if (url && attachmentUrlsRef.current.delete(url)) URL.revokeObjectURL(url);
+  };
+
+  const removePendingAttachment = (uploadId) => {
+    const target = pendingAttachments.find((item) => item.upload_id === uploadId);
+    if (target) releaseAttachmentPreview(target.previewUrl);
+    setPendingAttachments((current) => current.filter((item) => item.upload_id !== uploadId));
+  };
+
+  useEffect(() => () => {
+    for (const url of attachmentUrlsRef.current) URL.revokeObjectURL(url);
+    attachmentUrlsRef.current.clear();
+  }, []);
+
   useEffect(() => {
     if (atBottomRef.current) stickToBottom();
     else setUnseenCount((current) => current + 1);
@@ -594,6 +646,9 @@ export function App() {
 
   const resetConversation = async () => {
     const epoch = ++sessionEpochRef.current;
+    pendingAttachments.forEach((item) => releaseAttachmentPreview(item.previewUrl));
+    messages.forEach((message) => (message.attachments || []).forEach((item) => releaseAttachmentPreview(item.previewUrl)));
+    setPendingAttachments([]);
     setRestoringSession(true);
     setInput("");
     setMessages(emptyConversation());
@@ -1063,6 +1118,10 @@ export function App() {
   // A-025 AC2：客户上传图片/资料（受服务端能力位控制；失败可重试，客户附件不进知识引用）。
   const submitUpload = async (file) => {
     if (!file || typeof file === "undefined") return;
+    if (pendingAttachments.length >= 3) {
+      setUploadError("最多添加 3 个附件，请先发送或移除已有附件");
+      return;
+    }
     const accepted = uploadCapability?.accepted_types || ["image/jpeg", "image/png", "image/webp", "application/pdf"];
     const maxBytes = file.type === "application/pdf"
       ? (uploadCapability?.max_pdf_bytes || 32 * 1024 * 1024)
@@ -1099,38 +1158,60 @@ export function App() {
       updateSessionCredential(body);
       if (!response.ok) throw new Error(body?.error?.message || "上传失败，请稍后重试");
       pendingUploadRef.current = null;
-      uploadedAttachmentRef.current = {
-        upload_id:body.upload_id,
-        file_name:file.name,
-        matched_asset:body.matched_asset || null
-      };
-      setMessages((current) => [...current, {
-        id:`upload-${body.upload_id}`,
-        role:"user",
-        content:`[附件] ${file.name}`,
-        attachment:{
-          name:file.name, mime:file.type, size:file.size, uploadId:body.upload_id, status:"uploaded",
-          matchedAsset:body.matched_asset || null
-        },
-        at:new Date().toISOString()
-      }]);
+      const previewUrl = file.type.startsWith("image/")
+        ? trackAttachmentPreview(URL.createObjectURL(file))
+        : "";
+      const duplicate = pendingAttachments.find((item) => item.upload_id === body.upload_id);
+      if (duplicate) releaseAttachmentPreview(duplicate.previewUrl);
+      // 上传成功只进入输入框待发送区，等客户连同问题一起发送后再生成对话消息。
+      setPendingAttachments((current) => [
+        ...current.filter((item) => item.upload_id !== body.upload_id),
+        {
+          upload_id: body.upload_id,
+          file_name: file.name,
+          mime_type: file.type,
+          size: file.size,
+          previewUrl,
+          matched_asset: body.matched_asset || null
+        }
+      ]);
     } catch (error) {
       setUploadError(error.message);
     }
   };
 
-  const sendQuestion = async ({ question, clientMessageId, retryOfId }) => {
+  const sendQuestion = async ({ question, clientMessageId, retryOfId, attachments: retryAttachments = [] }) => {
     const messageKey = clientMessageId || globalThis.crypto?.randomUUID?.() || `web-msg-${Date.now()}`;
-    const attachmentContext = retryOfId ? null : uploadedAttachmentRef.current;
-    if (!retryOfId) uploadedAttachmentRef.current = null;
-    const attachments = attachmentContext ? [attachmentContext] : [];
+    // 发送前附件还挂在输入框里；发送后缩略图随用户消息保留，重试时仍使用同一批附件。
+    const attachmentContexts = retryOfId ? retryAttachments : pendingAttachments;
+    const attachments = attachmentContexts.map((item) => ({
+      upload_id:item.upload_id,
+      file_name:item.file_name,
+      matched_asset:item.matched_asset || null
+    }));
+    if (!retryOfId) setPendingAttachments([]);
     questionInFlightRef.current = true;
     inputRef.current?.focus({ preventScroll:true });
     setMessages((current) => retryOfId
       ? current.map((item) => item.id === retryOfId ? { ...item, status:"sending", error:"" } : item)
       // 本地消息 id 与服务端 message_id 用同一个标识：历史轮询回来时是替换
       // 这条乐观消息，而不是再追加一遍。
-      : [...current, { id:messageKey, clientMessageId:messageKey, role:"user", content:question, at:new Date().toISOString(), status:"sending", error:"", optimistic:true }]);
+      : [...current, {
+          id:messageKey,
+          clientMessageId:messageKey,
+          role:"user",
+          content:question,
+          attachments:attachmentContexts.map((item) => ({
+            upload_id:item.upload_id,
+            file_name:item.file_name,
+            matched_asset:item.matched_asset || null,
+            previewUrl:item.previewUrl || ""
+          })),
+          at:new Date().toISOString(),
+          status:"sending",
+          error:"",
+          optimistic:true
+        }]);
     if (!retryOfId) setInput("");
     setError("");
     setIsLoading(true);
@@ -1200,7 +1281,7 @@ export function App() {
   const retryQuestion = (message) => {
     if (!message || isLoading) return;
     stoppedByUserRef.current = false;
-    void sendQuestion({ question:message.content, clientMessageId:message.clientMessageId, retryOfId:message.id });
+    void sendQuestion({ question:message.content, clientMessageId:message.clientMessageId, retryOfId:message.id, attachments:message.attachments || [] });
   };
 
   const leadPromptMessageId = [...messages].reverse().find((message) => message.role === "assistant"
@@ -1273,7 +1354,7 @@ export function App() {
           )}
           {error && <span className="sr-only">{error}</span>}
         </div>
-        <Composer value={input} onChange={setInput} onSubmit={submitQuestion} disabled={isLoading || restoringSession} restoringSession={restoringSession} inputRef={inputRef} onStop={stopWaiting} waiting={isLoading} uploadCapability={uploadCapability} onUpload={submitUpload} uploadError={uploadError} onRetryUpload={() => submitUpload(pendingUploadRef.current)} />
+        <Composer value={input} onChange={setInput} onSubmit={submitQuestion} disabled={isLoading || restoringSession} restoringSession={restoringSession} inputRef={inputRef} onStop={stopWaiting} waiting={isLoading} uploadCapability={uploadCapability} onUpload={submitUpload} uploadError={uploadError} onRetryUpload={() => submitUpload(pendingUploadRef.current)} pendingAttachments={pendingAttachments} onRemoveAttachment={removePendingAttachment} />
       </main>
       <KnowledgeMediaPreview preview={knowledgePreview} onClose={() => setKnowledgePreview(null)} />
     </div>
