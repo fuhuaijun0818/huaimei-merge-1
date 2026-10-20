@@ -17,7 +17,7 @@ assert.match(app, /data-paginated-list="physicians"/, "医师卡片列表需要�
 assert.match(app, /data-paginated-list="conversations"/, "会话收件箱需要纳入统一分页");
 assert.match(styles, /\.data-table tbody tr\[hidden\]/, "非当前页表格行需要隐藏");
 assert.match(styles, /\.collection-pagination/, "卡片列表分页器需要有独立视觉样式");
-assert.match(app, /const syncAcquisitionCustomers = async \(\{ full = false \} = \{\}\) =>/, "会话同步必须支持强制完整快照");
+assert.match(app, /const syncAcquisitionCustomers = async \(\{ full = false, background = false \} = \{\}\) =>/, "会话同步必须支持强制完整快照和后台限流");
 assert.match(app, /receptionSearchSyncTimer/, "接待台搜索必须对完整同步做防抖，避免逐字请求");
 assert.match(app, /syncAcquisitionCustomers\(\{ full:true \}\)/, "接待台搜索无本地结果前必须先拉取完整服务端会话");
 

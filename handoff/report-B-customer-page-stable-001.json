@@ -1,0 +1,70 @@
+{
+  "role": "B",
+  "task_id": "customer-page-stable-001",
+  "summary": "进一步消除客户列表周期性闪烁：客户列表/客户360不再订阅后台会话轮询做自动重绘，只保留显式“刷新数据”；后台会话同步统一增加10秒限流，并在客户页直接跳过。刷新按钮改为只替换 #page-content，侧栏和页头不重建。",
+  "acceptance_steps": [
+    "打开“客户与会员 → 客户列表”，停留15秒，预期：没有周期性闪烁，Network 中不再每几秒出现 acquisition-customers 请求。",
+    "点击“刷新数据”，预期：客户列表更新，但侧栏、页头不重建，页面不整体白闪。",
+    "在客户搜索框输入时，预期：后台同步不打断输入焦点。",
+    "从客户列表进入会话接待，预期：进入时仍会拉取完整会话快照，不因跳过客户页后台同步而缺数据。"
+  ],
+  "tests": [
+    {
+      "command": "node --check src/app.js",
+      "status": "passed",
+      "evidence": "管理端脚本语法检查通过"
+    },
+    {
+      "command": "node tests/management-handover-ui.mjs",
+      "status": "passed",
+      "evidence": "客户页跳过后台重绘、刷新入口和局部重绘契约通过"
+    },
+    {
+      "command": "node tests/management-list-pagination.mjs",
+      "status": "passed",
+      "evidence": "完整快照、后台限流和分页契约通过"
+    },
+    {
+      "command": "node tests/management-local-actions.mjs",
+      "status": "passed",
+      "evidence": "管理端页面动作闭环通过"
+    },
+    {
+      "command": "Chrome CDP 客户页15秒稳定监测",
+      "status": "passed",
+      "evidence": "shell=0，sidebar=0，page=0，acquisition-customers 请求=0"
+    },
+    {
+      "command": "Chrome CDP 点击刷新数据",
+      "status": "passed",
+      "evidence": "请求=1，shell=0，sidebar=0，page=1；只更新内容区"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "src/app.js",
+      "owner": "shared",
+      "change": "客户页跳过后台会话同步重绘；新增刷新数据按钮和局部刷新；后台会话同步统一10秒限流"
+    },
+    {
+      "path": "tests/management-handover-ui.mjs",
+      "owner": "B",
+      "change": "新增客户页跳过重绘、刷新入口和局部刷新契约"
+    },
+    {
+      "path": "tests/management-list-pagination.mjs",
+      "owner": "B",
+      "change": "更新会话同步签名契约以包含 background 限流参数"
+    }
+  ],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "客户列表不再自动跟随后台会话轮询更新，需要点击“刷新数据”或重新进入页面；这是为了避免上百行表格周期性重建。",
+    "其他需要会话实时性的页面仍使用10秒合并同步；如果要求秒级更新，应优化增量游标契约，而不是恢复高频全量请求。",
+    "增量快照仍可能因4KB客户端游标上限返回较大响应；本次主要解决请求频率和重绘闪烁。"
+  ],
+  "rollback": "回退 src/app.js 与两个管理端测试的本次提交即可；不涉及数据库、接口或环境变量。"
+}

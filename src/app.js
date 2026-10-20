@@ -593,7 +593,7 @@ function customersPage() {
     return matchesQuery && (ui.customerStage === "全部" || customer.macroStage === ui.customerStage) && (ui.customerOwner === "全部负责人" || customer.owner === ui.customerOwner);
   });
   const presales = isPresalesWorkspace();
-  const actions = presales ? "" : `<button class="btn" data-action="segment">${icon("filter",15)}创建动态分群</button><button class="btn primary" data-action="new-customer">${icon("plus",15)}新增客户</button>`;
+  const actions = presales ? "" : `<button class="btn" data-action="refresh-customers">${icon("refresh",15)}刷新数据</button><button class="btn" data-action="segment">${icon("filter",15)}创建动态分群</button><button class="btn primary" data-action="new-customer">${icon("plus",15)}新增客户</button>`;
   return `<div class="page">${pageHead(presales ? "客户会话" : "客户经营", presales ? "已进入聊天的客户" : "客户经营", presales ? "仅展示已进入聊天或接待队列的客户；选择客户后直接进入对应会话，不提供客户画像、阶段、归属或旅程维护。" : "统一查看客户阶段、兴趣、负责人、建议动作与分群，让每次跟进都有清晰依据。", actions)}
     <div class="grid cols-4" style="margin-bottom:16px">${metric("统一客户档案", String(metrics.customers.length), "当前系统已建档", "users")}${metric("售前客户", String(metrics.countStage("售前")), "按统一阶段口径", "spark")}${metric("售中客户", String(metrics.countStage("售中")), "按统一阶段口径", "calendar")}${metric("售后活跃", String(metrics.countStage("售后")), `复购窗口 ${metrics.customers.filter((item) => item.microStage === "复购窗口").length}`, "refresh")}</div>
     <section class="card">
@@ -2823,18 +2823,6 @@ function scheduleConversationsSubpageRender() {
   }, 500);
 }
 
-let pageContentRenderTimer = null;
-function schedulePageContentRender(delay = 500) {
-  if (pageContentRenderTimer) return;
-  pageContentRenderTimer = window.setTimeout(() => {
-    pageContentRenderTimer = null;
-    const route = routeInfo();
-    if ((route.route === "conversations" && route.id) || route.route === "customers" || route.route === "customer") {
-      renderCurrentPageContent();
-    }
-  }, delay);
-}
-
 function refreshOperationsView() {
   const route = routeInfo();
   if (route.route === "workbench") {
@@ -3471,6 +3459,11 @@ async function handleAction(action, id, target) {
       }
       break;
     case "refresh-handovers": await syncAcquisitionHandovers(true); break;
+    case "refresh-customers":
+      await syncAcquisitionCustomers({ full:true });
+      document.activeElement?.blur?.();
+      renderCurrentPageContent();
+      break;
     case "reveal-appointment-contact": await revealHandoverContactFromUi(id, target, { appointment:true }); break;
     case "refresh-appointments": await syncAppointmentOperations(true); break;
     case "clear-appointment-filters": ui.appointmentFilters = { status:"pending", preferredDate:"", assignee:"" }; await syncAppointmentOperations(true); break;
@@ -5106,7 +5099,8 @@ store.addEventListener("change", (event) => {
       return;
     }
     if(routeInfo().route === "customers" || routeInfo().route === "customer") {
-      schedulePageContentRender(1500);
+      // 客户列表/客户360由操作员主动刷新或重新进入时更新；后台会话轮询
+      // 不应每十几秒重建包含上百行的客户表。
       return;
     }
   }
@@ -5114,6 +5108,7 @@ store.addEventListener("change", (event) => {
   if (!MANAGEMENT_SERVER_ONLY_SOURCES.has(event.detail?.source)) scheduleManagementOverlayPersist();
 });
 let acquisitionSyncPromise = null;
+let lastBackgroundAcquisitionSyncAt = 0;
 let receptionSearchSyncTimer = null;
 let acquisitionChannelsSyncPromise = null;
 let handoverSyncPromise = null;
@@ -5127,11 +5122,14 @@ let handoverPollFailures = 0;
 let handoverPollingDestroyed = false;
 const HANDOVER_POLL_BASE_MS = 15_000;
 const HANDOVER_POLL_MAX_BACKOFF_MS = 60_000;
-const syncAcquisitionCustomers = async ({ full = false } = {}) => {
+const syncAcquisitionCustomers = async ({ full = false, background = false } = {}) => {
+  if (background && (routeInfo().route === "customers" || routeInfo().route === "customer")) return [];
+  if (background && !full && Date.now() - lastBackgroundAcquisitionSyncAt < 10_000) return [];
   if (acquisitionSyncPromise) {
     if (!full) return acquisitionSyncPromise;
     return acquisitionSyncPromise.catch(() => []).then(() => syncAcquisitionCustomers({ full:true }));
   }
+  if (background) lastBackgroundAcquisitionSyncAt = Date.now();
   ui.conversationSyncLoading = true;
   ui.conversationSyncError = "";
   if (routeInfo().route === "conversations" && !store.state.conversations.length) render(true);
@@ -5364,7 +5362,7 @@ const scheduleHandoverPoll = (delayMs = HANDOVER_POLL_BASE_MS) => {
     await Promise.all([
       syncAcquisitionHandovers(false, { background:true }),
       syncAppointmentOperations(false, { background:true }),
-      ...(!handoverOnlyMode ? [syncAcquisitionCustomers()] : [])
+      ...(!handoverOnlyMode ? [syncAcquisitionCustomers({ background:true })] : [])
     ]);
     handoverPollFailures = lastHandoverSyncSucceeded ? 0 : Math.min(handoverPollFailures + 1, 3);
     const nextDelay = lastHandoverSyncSucceeded
@@ -5381,7 +5379,7 @@ const resumeHandoverPolling = async ({ immediate = false } = {}) => {
     await Promise.all([
       syncAcquisitionHandovers(false, { background:true }),
       syncAppointmentOperations(false, { background:true }),
-      ...(!handoverOnlyMode ? [syncAcquisitionCustomers()] : [])
+      ...(!handoverOnlyMode ? [syncAcquisitionCustomers({ background:true })] : [])
     ]);
     handoverPollFailures = lastHandoverSyncSucceeded ? 0 : Math.min(handoverPollFailures + 1, 3);
   }
@@ -5392,7 +5390,7 @@ const resumeHandoverPolling = async ({ immediate = false } = {}) => {
 window.addEventListener("focus", () => {
   if (!hasCapability("conversations:read_assigned")) return;
   if (!handoverOnlyMode) {
-    syncAcquisitionCustomers();
+    syncAcquisitionCustomers({ background:true });
     syncAcquisitionChannels();
   }
   resumeHandoverPolling({ immediate:true });
@@ -5402,7 +5400,7 @@ document.addEventListener("visibilitychange", () => {
   if (!hasCapability("conversations:read_assigned")) return;
   if (document.visibilityState === "visible") {
     if (!handoverOnlyMode) {
-      syncAcquisitionCustomers();
+      syncAcquisitionCustomers({ background:true });
       syncAcquisitionChannels();
     }
     resumeHandoverPolling({ immediate:true });
@@ -5474,7 +5472,7 @@ const requestConversationSync=()=>{
   conversationSyncRequestTimer=window.setTimeout(()=>{
     conversationSyncRequestTimer=null;
     lastConversationSyncRequestAt=Date.now();
-    void syncAcquisitionCustomers();
+    void syncAcquisitionCustomers({ background:true });
   },delay);
 };
 function connectConversationEvents(){
