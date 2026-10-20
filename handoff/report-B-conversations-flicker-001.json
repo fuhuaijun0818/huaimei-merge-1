@@ -1,0 +1,60 @@
+{
+  "role": "B",
+  "task_id": "conversations-flicker-001",
+  "summary": "修复人工接管、会话质检和 Bad Case库的频繁闪烁：后台会话同步原先每次都对整个应用执行 render(true)，侧栏、页头和页面内容一起重建。现在三个会话子页只替换 #page-content，并把短时间内的多次同步合并为一次重绘，同时保留滚动位置和输入焦点。",
+  "acceptance_steps": [
+    "打开“会话与接待 → 会话质检”，停留超过 15 秒，预期：侧栏、页头和导航不闪烁，页面内容最多按同步结果更新。",
+    "打开“人工接管”并等待后台接管轮询，预期：不会出现整页白闪，滚动位置保持不变。",
+    "打开“Bad Case库”，点击“刷新队列”，预期：只更新内容区和按钮状态，侧栏不重建。",
+    "在页面内的输入框或分页控件上操作时遇到后台同步，预期：焦点和滚动位置不丢失。"
+  ],
+  "tests": [
+    {
+      "command": "node --check src/app.js",
+      "status": "passed",
+      "evidence": "管理端脚本语法检查通过"
+    },
+    {
+      "command": "node tests/management-handover-ui.mjs",
+      "status": "passed",
+      "evidence": "接管队列、同步契约和局部重绘断言通过"
+    },
+    {
+      "command": "node tests/management-list-pagination.mjs",
+      "status": "passed",
+      "evidence": "列表分页和子页重绘契约通过"
+    },
+    {
+      "command": "node tests/management-local-actions.mjs",
+      "status": "passed",
+      "evidence": "管理端页面动作闭环通过"
+    },
+    {
+      "command": "Chrome CDP 会话质检页 17 秒监测",
+      "status": "passed",
+      "evidence": "shellMutations=0，sidebarMutations=0，pageContentMutations=1；页面保持 #/conversations/quality，服务状态运行正常"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "src/app.js",
+      "owner": "shared",
+      "change": "新增会话子页局部内容重绘和 500ms 合并调度；后台同步不再整页重建"
+    },
+    {
+      "path": "tests/management-handover-ui.mjs",
+      "owner": "B",
+      "change": "新增子页局部重绘与防闪烁契约"
+    }
+  ],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "页面内容区在数据真正变化时仍会更新，超大会话表可能出现内容级刷新；侧栏和页头不会重建。",
+    "弹窗打开期间跳过局部重绘，避免清空正在填写的表单。",
+    "未对人工接管和 Bad Case页分别做 17 秒计时监测；三页共用同一个局部重绘入口，已用会话质检页验证。"
+  ],
+  "rollback": "回退 src/app.js 与 management-handover-ui 测试的本次提交即可；不涉及接口、数据或环境变量。"
+}

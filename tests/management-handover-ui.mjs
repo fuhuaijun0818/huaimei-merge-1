@@ -70,6 +70,9 @@ assert.match(app, /正在加载会话/, "同步尚未完成时不能误报为空
 assert.match(app, /会话同步失败/, "会话同步失败必须与真实空列表分开呈现");
 assert.match(app, /data-action="refresh-conversations"/, "会话同步失败必须提供明确的重新同步动作");
 assert.match(app, /action === "refresh-conversations"/, "重新同步动作必须重新请求会话快照");
+assert.match(app, /function renderConversationsSubpage\(\)/, "人工接管、会话质检和Bad Case子页必须支持局部内容重绘");
+assert.match(app, /container\.innerHTML = currentPage\(\)/, "子页刷新只能替换页面内容，不能重建整个应用外壳");
+assert.match(app, /scheduleConversationsSubpageRender\(\)/, "后台同步必须合并子页重绘，避免频繁闪烁");
 assert.match(router, /messagesChangedSinceCursor\(conversation\.messages, afterSequence\)/, "管理端增量同步必须使用同轮次消息补发逻辑");
 assert.match(router, /client merges them by stable message ID/, "同轮次出站消息重放必须依靠稳定消息标识去重");
 assert.match(router, /conversationSyncSignaturePayload\(conversation, durableCursor\)/, "留资后会话切换正式客户档案时必须触发增量同步");

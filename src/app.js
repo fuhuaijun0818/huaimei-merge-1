@@ -2785,6 +2785,50 @@ function updateReceptionWindow() {
   if(list && listScroll !== undefined) list.scrollTop=listScroll;
 }
 
+// 人工接管/会话质检/Bad Case 都是只读子页。后台同步时只替换页面内容，
+// 保留侧栏、页头和当前滚动位置，避免整页重建造成闪烁。
+function renderConversationsSubpage() {
+  const container = document.querySelector("#page-content");
+  if (!container || document.querySelector(".modal-backdrop")) return;
+  const scrollY = window.scrollY;
+  const focused = document.activeElement;
+  const focusState = focused?.id && focused.closest("#page-content")
+    ? { id:focused.id, start:focused.selectionStart, end:focused.selectionEnd }
+    : null;
+  container.innerHTML = currentPage();
+  hydrateListPagination();
+  if (focusState) {
+    const target = document.getElementById(focusState.id);
+    target?.focus({ preventScroll:true });
+    if (typeof focusState.start === "number" && target?.setSelectionRange) {
+      target.setSelectionRange(focusState.start, focusState.end);
+    }
+  }
+  window.scrollTo(0, scrollY);
+}
+
+let conversationsSubpageRenderTimer = null;
+function scheduleConversationsSubpageRender() {
+  if (conversationsSubpageRenderTimer) return;
+  conversationsSubpageRenderTimer = window.setTimeout(() => {
+    conversationsSubpageRenderTimer = null;
+    const route = routeInfo();
+    if (route.route === "conversations" && route.id) renderConversationsSubpage();
+  }, 500);
+}
+
+function refreshOperationsView() {
+  const route = routeInfo();
+  if (route.route === "workbench") {
+    render(true);
+    return;
+  }
+  if (route.route !== "conversations") return;
+  if (document.querySelector(".reception-page .conversation-layout")) updateReceptionWindow();
+  else if (route.id) renderConversationsSubpage();
+  else render(true);
+}
+
 function render(preserveScroll = false) {
   const focused = preserveScroll ? document.activeElement : null;
   const focusState = focused?.id && focused.closest("#app") ? {id:focused.id, start:focused.selectionStart, end:focused.selectionEnd} : null;
@@ -5018,6 +5062,10 @@ store.addEventListener("change", (event) => {
   if (["management-hydrate", "acquisition-sync", "acquisition-operations-sync"].includes(event.detail?.source)) {
     if(document.querySelector('.reception-page .conversation-layout')){updateReceptionWindow();return;}
     if(!['conversations','customers','customer'].includes(routeInfo().route))return;
+    if(routeInfo().route === "conversations" && routeInfo().id) {
+      scheduleConversationsSubpageRender();
+      return;
+    }
   }
   render(true);
   if (!MANAGEMENT_SERVER_ONLY_SOURCES.has(event.detail?.source)) scheduleManagementOverlayPersist();
@@ -5068,14 +5116,14 @@ const syncAcquisitionCustomers = async ({ full = false } = {}) => {
     .catch(() => {
       ui.conversationSyncLoading = false;
       ui.conversationSyncError = "会话同步失败，请重新同步";
-      if (routeInfo().route === "conversations") render(true);
+      if (routeInfo().route === "conversations") refreshOperationsView();
     })
     .finally(() => {
       ui.conversationSyncLoading = false;
       acquisitionSyncPromise = null;
       // A successful but truly empty response must replace the loading view;
       // a non-empty snapshot already triggers the normal store render.
-      if (routeInfo().route === "conversations" && !store.state.conversations.length) render(true);
+      if (routeInfo().route === "conversations" && !store.state.conversations.length) refreshOperationsView();
     });
   return acquisitionSyncPromise;
 };
@@ -5095,10 +5143,7 @@ const syncAcquisitionChannels = async () => {
     .finally(() => {
       ui.acquisitionChannelsLoading = false;
       acquisitionChannelsSyncPromise = null;
-      if (routeInfo().route === "conversations") {
-        if (document.querySelector('.reception-page .conversation-layout')) updateReceptionWindow();
-        else render(true);
-      }
+      if (routeInfo().route === "conversations") refreshOperationsView();
     });
   return acquisitionChannelsSyncPromise;
 };
@@ -5174,7 +5219,7 @@ const syncAcquisitionHandovers = async (announce = false, { background = false }
   if (handoverSyncPromise) return handoverSyncPromise;
   if (!background) {
     ui.operationsLoading = true;
-    if (["workbench", "conversations"].includes(routeInfo().route)) render(true);
+    refreshOperationsView();
   }
   handoverSyncPromise = listManagementHandovers({ limit:200 })
     .then((handovers) => {
@@ -5201,8 +5246,7 @@ const syncAcquisitionHandovers = async (announce = false, { background = false }
       if (!background) ui.operationsLoading = false;
       handoverSyncPromise = null;
       if (!background && ["workbench", "conversations"].includes(routeInfo().route)) {
-        if (routeInfo().route === "conversations" && document.querySelector('.reception-page .conversation-layout')) updateReceptionWindow();
-        else render(true);
+        refreshOperationsView();
       }
     });
   return handoverSyncPromise;
@@ -5236,7 +5280,7 @@ const syncBadCases = async (announce = false) => {
   if (badCaseSyncPromise) return badCaseSyncPromise;
   ui.badCasesLoading = true;
   ui.badCasesError = "";
-  if (routeInfo().route === "conversations" && routeInfo().id === "bad-cases") render(true);
+  if (routeInfo().route === "conversations" && routeInfo().id === "bad-cases") renderConversationsSubpage();
   badCaseSyncPromise = listManagementBadCases({ limit:200 })
     .then((badCases) => {
       ui.badCases = badCases;
@@ -5254,7 +5298,7 @@ const syncBadCases = async (announce = false) => {
     .finally(() => {
       ui.badCasesLoading = false;
       badCaseSyncPromise = null;
-      if (routeInfo().route === "conversations" && routeInfo().id === "bad-cases") render(true);
+      if (routeInfo().route === "conversations" && routeInfo().id === "bad-cases") renderConversationsSubpage();
     });
   return badCaseSyncPromise;
 };
