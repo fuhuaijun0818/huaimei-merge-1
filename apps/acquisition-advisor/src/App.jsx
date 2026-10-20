@@ -615,6 +615,7 @@ export function App() {
       if (!response.ok) throw new Error(body?.error?.message || "新对话暂时无法建立，请重试。");
       updateSessionCredential(body);
       publicSessionReadyRef.current = true;
+      await loadUploadCapability();
     } catch (err) { if (epoch === sessionEpochRef.current) setError(err.message); }
     finally { if (epoch === sessionEpochRef.current) setRestoringSession(false); }
   };
@@ -682,7 +683,7 @@ export function App() {
 
   // A-025：上传等能力位由服务端下发。这个接口同时会按本机保存的会话凭证续签
   // 本机会话，因此刷新后仍能拿到同一会话的能力开关；取不到时按"未启用上传"处理。
-  const loadUploadCapability = async () => {
+  const loadUploadCapability = async (attempt = 0) => {
     const epoch = sessionEpochRef.current;
     const stored = readStoredSessionCredential();
     if (stored) {
@@ -702,11 +703,26 @@ export function App() {
       });
       const body = await response.json();
       if (epoch !== sessionEpochRef.current) return;
-      if (!response.ok) return;
+      if (!response.ok) {
+        if (attempt < 2 && epoch === sessionEpochRef.current) {
+          window.setTimeout(() => void loadUploadCapability(attempt + 1), 800);
+        }
+        return;
+      }
       updateSessionCredential(body);
-      if (body?.capabilities?.customer_upload) setUploadCapability(body.capabilities.customer_upload);
+      if (body?.capabilities?.customer_upload) {
+        setUploadCapability(body.capabilities.customer_upload);
+      } else if (attempt < 2 && epoch === sessionEpochRef.current) {
+        // The capability endpoint may race with a new session or a backend
+        // restart. Retry briefly instead of leaving the attach button hidden
+        // for the whole tab lifetime.
+        window.setTimeout(() => void loadUploadCapability(attempt + 1), 800);
+      }
     } catch {
       // 能力位取不到时按"上传未启用"处理，不阻塞对话本身。
+      if (attempt < 2 && epoch === sessionEpochRef.current) {
+        window.setTimeout(() => void loadUploadCapability(attempt + 1), 800);
+      }
     }
   };
 

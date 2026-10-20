@@ -1,0 +1,58 @@
+{
+  "role": "C",
+  "task_id": "advisor-upload-capability-001",
+  "summary": "修复客户端输入区不显示图片/PDF上传入口：服务端能力位由HUAMEI_CUSTOMER_UPLOAD_ENABLED控制，已在本地开启；前端增加能力位初始化竞态重试，并在新对话建立后重新加载能力位。压缩后的旧bundle不再使用，当前服务已提供新bundle。",
+  "acceptance_steps": [
+    "POST /api/public/acquisition-conversation 返回 capabilities.customer_upload.enabled=true。",
+    "刷新客户端后输入区左侧出现“+”上传入口，支持jpg/png/webp/pdf。",
+    "新对话或能力位首次请求失败时，前端最多重试2次，不再永久隐藏上传入口。",
+    "执行 node tests/acquisition-advisor-otp-ui.mjs，上传入口与重试契约通过。",
+    "执行 npm --prefix apps/acquisition-advisor run build，生产构建通过。"
+  ],
+  "tests": [
+    {
+      "command": "Invoke-RestMethod POST /api/public/acquisition-conversation",
+      "status": "passed",
+      "evidence": "customer_upload.enabled=true"
+    },
+    {
+      "command": "node tests/acquisition-advisor-otp-ui.mjs",
+      "status": "passed",
+      "evidence": "uploadCapability.enabled渲染条件和loadUploadCapability重试断言通过"
+    },
+    {
+      "command": "npm --prefix apps/acquisition-advisor run build",
+      "status": "passed",
+      "evidence": "新bundle index-B7fCndw7.js构建成功，/advisor/已引用新bundle"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "apps/acquisition-advisor/src/App.jsx",
+      "owner": "A",
+      "change": "能力位加载失败重试；新对话完成后重新加载上传能力位"
+    },
+    {
+      "path": "tests/acquisition-advisor-otp-ui.mjs",
+      "owner": "A",
+      "change": "新增上传入口和重试契约断言"
+    },
+    {
+      "path": ".env.example",
+      "owner": "shared",
+      "change": "记录HUAMEI_CUSTOMER_UPLOAD_ENABLED开关及隐私边界"
+    }
+  ],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [
+    "HUAMEI_CUSTOMER_UPLOAD_ENABLED"
+  ],
+  "known_limitations": [
+    "上传文件保存在客户专属目录，不进入公开知识库；当前文本模型不接收图片像素，不做图片诊断。",
+    "要实现图片问答需要额外接入视觉模型、图片转写和医疗安全审核。",
+    "生产环境是否开启上传需由部署配置决定，默认示例为false。"
+  ],
+  "rollback": "将HUAMEI_CUSTOMER_UPLOAD_ENABLED设为false并回退App.jsx能力位重试提交；已上传文件仍在客户专属目录，不会进入公开知识。"
+}

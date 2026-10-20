@@ -35,5 +35,7 @@ assert.match(source, /transcript:messages\.slice\(-24\)/, "踩反馈必须携带
 assert.match(source, /const isHandoverNotice = source === "system"\s*\|\| message\.status === "handover_required"\s*\|\| message\.handover\?\.required === true;/, "转人工与系统提示必须被识别为非机器人回答");
 assert.match(source, /message\.isFinalSegment && !isHandoverNotice && <ConversationFeedback/, "拆分短句的一轮回答只能展示一组反馈控件，转人工提示不展示赞踩");
 assert.doesNotMatch(source, /composer-waiting|aria-label="停止等待"/, "客户端等待中不展示“正在整理资料/停止等待”提示");
+assert.match(source, /uploadCapability\?\.enabled && \(/, "服务端上传能力位开启时必须渲染附件入口");
+assert.match(source, /loadUploadCapability\(attempt \+ 1\)/, "能力位加载失败或初始化竞态时必须重试");
 
 console.log("acquisition advisor direct lead-capture UI contract tests passed");
