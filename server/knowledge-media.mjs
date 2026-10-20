@@ -14,7 +14,10 @@ const configuredPublicMaterialsRoot = String(process.env.HUAMEI_PUBLIC_MATERIALS
 const publicMaterialsRoot = configuredPublicMaterialsRoot
   ? resolve(projectRoot, configuredPublicMaterialsRoot)
   : join(knowledgeRoot, "public-materials-v1");
-const publicMaterialsManifestPath = join(publicMaterialsRoot, "assets.jsonl");
+const configuredMediaManifest = String(process.env.HUAMEI_PUBLIC_MEDIA_MANIFEST || "").trim();
+const publicMaterialsManifestPath = configuredMediaManifest
+  ? resolve(projectRoot, configuredMediaManifest)
+  : join(publicMaterialsRoot, "assets.jsonl");
 const PUBLIC_MEDIA_EXTENSIONS = new Map([
   [".jpg", { mime:"image/jpeg", type:"image" }],
   [".jpeg", { mime:"image/jpeg", type:"image" }],

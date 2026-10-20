@@ -79,6 +79,7 @@
     "infra:check": "node scripts/check-infrastructure.mjs",
     "release:preflight": "node scripts/production-release-preflight.mjs",
     "knowledge:governance": "node scripts/knowledge-governance-cli.mjs",
+    "knowledge:build-media-manifest": "node scripts/build-public-media-manifest.mjs",
     "knowledge:ingest-public-materials": "node scripts/ingest-public-materials.mjs",
     "knowledge:sync-public-materials-oss": "node scripts/sync-public-materials-to-oss.mjs",
     "evidence:evaluation": "node scripts/formal-production-evaluation.mjs",

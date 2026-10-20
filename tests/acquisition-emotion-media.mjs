@@ -21,9 +21,9 @@ const genericRoute = routeAcquisitionAnswer({
   intent:"project_comparison",
   analysis:{ entities:{ projects:["胸部整形"] } }
 });
-assert.equal(genericRoute.route, "generic_model_education");
-assert.equal(genericRoute.model_generation_mode, "generic_education");
-assert.match(genericRoute.generic_education_topic, /胸部整形/);
+assert.equal(genericRoute.route, "enterprise_knowledge_graph");
+assert.equal(genericRoute.retrieval_strategy, "graph_rag");
+assert.equal(genericRoute.model_generation_mode, "grounded_copy_only");
 const enterpriseRoute = routeAcquisitionAnswer({
   message:"李健院长这周有排班吗？",
   intent:"doctor_schedule_verification",

@@ -1,0 +1,69 @@
+{
+  "role": "C",
+  "task_id": "media-manifest-001",
+  "summary": "修复‘李健院长的丰胸宣传海报’只有文字没有海报：根因是媒体assets.jsonl未加载（manifest_loaded=false），新增本地媒体清单构建器，从公开资料目录生成540个媒体描述，并支持HUAMEI_PUBLIC_MEDIA_MANIFEST/HUAMEI_RAW_DATA_ROOT。完整链路现返回2张李健隆胸相关图片。",
+  "acceptance_steps": [
+    "执行npm run knowledge:build-media-manifest，生成540个媒体描述。",
+    "getPublicKnowledgeMediaStatus返回manifest_loaded=true、eligible_assets=539。",
+    "对同一问题调用selectPublicKnowledgeMedia，返回李健-特贝茨超感隆胸-手卡、李健隆胸个人介绍两张图片。",
+    "processAcquisitionEnvelope对‘李健院长的丰胸宣传海报’返回reply.media 2条，image/jpeg可解析。",
+    "执行node --env-file=.env.local tests/acquisition-emotion-media.mjs，公开资料预览白名单通过。"
+  ],
+  "tests": [
+    {
+      "command": "npm run knowledge:build-media-manifest",
+      "status": "passed",
+      "evidence": "asset_count=540"
+    },
+    {
+      "command": "node --env-file=.env.local tests/acquisition-emotion-media.mjs",
+      "status": "passed",
+      "evidence": "医生公开宣传资料可随回复返回，图片与丰胸/隆胸方向匹配，BFF预览URL可解析"
+    },
+    {
+      "command": "真实链路processAcquisitionEnvelope('李健院长的丰胸宣传海报')",
+      "status": "passed",
+      "evidence": "reply.media 2条；图片源15,848,724字节JPEG"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "server/knowledge-media.mjs",
+      "owner": "C",
+      "change": "支持HUAMEI_PUBLIC_MEDIA_MANIFEST独立媒体清单路径"
+    },
+    {
+      "path": "scripts/build-public-media-manifest.mjs",
+      "owner": "C",
+      "change": "新增不依赖macOS OCR的本地媒体清单构建器"
+    },
+    {
+      "path": "package.json",
+      "owner": "shared",
+      "change": "新增knowledge:build-media-manifest脚本"
+    },
+    {
+      "path": "tests/acquisition-emotion-media.mjs",
+      "owner": "unassigned",
+      "change": "更新路由断言到当前GraphRAG路由，保留媒体预览回归"
+    },
+    {
+      "path": ".env.example",
+      "owner": "shared",
+      "change": "补充本地媒体清单和raw data路径说明"
+    }
+  ],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [
+    "HUAMEI_PUBLIC_MEDIA_MANIFEST",
+    "HUAMEI_RAW_DATA_ROOT"
+  ],
+  "known_limitations": [
+    "本地媒体清单写入.local-data，不提交到Git；生产仍应使用已审核public-materials包和OSS描述。",
+    "媒体选择当前优先返回手卡和个人介绍；如业务要求优先宣传海报，需要再调整排序权重。",
+    "未执行正式素材审核、OSS上传或生产回源验收。"
+  ],
+  "rollback": "移除HUAMEI_PUBLIC_MEDIA_MANIFEST/HUAMEI_RAW_DATA_ROOT即可回退到未加载媒体清单状态；回退knowledge-media.mjs和构建脚本。"
+}
