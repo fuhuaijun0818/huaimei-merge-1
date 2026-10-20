@@ -1,0 +1,34 @@
+{
+  "role": "A",
+  "task_id": "unseen-count-001",
+  "summary": "修复小美前台“有 N 条新消息”在没有新消息时持续增长：流式回复的每个片段和历史轮询的每次合并都被当成新消息累加。现在按 groupId/id 去重，只统计客户上滑期间真正新增的助手或系统消息组，客户自己的消息不计入。",
+  "acceptance_steps": [
+    "打开一条已有历史消息的会话，向上滚动离开底部。",
+    "等待超过 6 秒且不发送任何消息，预期：新消息提示不会自行增长。",
+    "发送一条新问题并让助手回复，预期：提示按助手回复轮次（消息组）增加，而不是按流式片段数量增加。",
+    "点击“有 N 条新消息”回到底部，预期：提示清零。"
+  ],
+  "tests": [
+    {
+      "command": "node tests/acquisition-advisor-otp-ui.mjs",
+      "status": "passed",
+      "evidence": "消息组去重、排除客户消息、移除 messages/isLoading 旧计数依赖的契约断言通过"
+    },
+    {
+      "command": "npm --prefix apps/acquisition-advisor run build",
+      "status": "passed",
+      "evidence": "Vite 生产构建成功，生成新的 dist/client bundle"
+    }
+  ],
+  "shared_changes": [],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "新消息提示按助手回复组计数：一轮回复拆成多个气泡时显示 1 条，不按气泡数重复计数。",
+    "本轮未改变“刷新后恢复上次会话”的产品行为；要开始空白会话仍需点击“新对话”。",
+    "未在真实浏览器中等待整轮模型回复计时验证，已通过源码契约测试和生产构建。"
+  ],
+  "rollback": "回退 App.jsx 与 UI 契约测试的本次提交即可；不影响服务端消息、接口或历史数据。"
+}

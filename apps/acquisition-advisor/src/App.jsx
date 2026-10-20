@@ -603,6 +603,7 @@ export function App() {
   const stoppedByUserRef = useRef(false);
   const scrollerRef = useRef(null);
   const atBottomRef = useRef(true);
+  const seenMessageKeysRef = useRef(new Set());
   // 公开会话凭证就绪后才开始历史轮询与送达确认，避免首次加载时打空请求。
   const publicSessionReadyRef = useRef(false);
   const [restoringSession, setRestoringSession] = useState(true);
@@ -650,9 +651,28 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    // 流式回复会持续更新同一个消息，不能每次都加一条“新消息”。
+    // 按 groupId/id 去重后，只统计用户主动上滑期间真正新增的助手/系统消息组。
+    const messageKeys = new Map();
+    for (const message of messages) {
+      const key = String(message.groupId || message.id || "");
+      if (!key || messageKeys.has(key)) continue;
+      messageKeys.set(key, message.role);
+    }
+    const incoming = [...messageKeys].filter(([key, role]) =>
+      role !== "user" && !seenMessageKeysRef.current.has(key)
+    );
+    for (const key of messageKeys.keys()) seenMessageKeysRef.current.add(key);
+    if (atBottomRef.current) {
+      stickToBottom();
+      return;
+    }
+    if (incoming.length) setUnseenCount((current) => current + incoming.length);
+  }, [messages]);
+
+  useEffect(() => {
     if (atBottomRef.current) stickToBottom();
-    else setUnseenCount((current) => current + 1);
-  }, [messages, isLoading]);
+  }, [isLoading]);
 
   const resetConversation = async () => {
     const epoch = ++sessionEpochRef.current;

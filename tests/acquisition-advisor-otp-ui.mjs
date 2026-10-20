@@ -52,5 +52,9 @@ assert.match(source, /current = await startFreshPublicSession\(epoch\)/, "首屏
 assert.match(source, /return loadUploadCapability\(attempt \+ 1\)/, "上传能力位遇到失效凭证时必须换新会话后重试");
 assert.match(source, /return reloadHistory\(false\)/, "历史回读遇到失效凭证时只能自动恢复一次");
 assert.doesNotMatch(source, /if \(!currentResponse\.ok\) throw new Error\(current\?\.error\?\.message \|\| "无法恢复到院登记"\);/, "失效会话不得直接以错误中断首屏");
+assert.match(source, /const seenMessageKeysRef = useRef\(new Set\(\)\)/, "新消息提示必须记录已经见过的消息组");
+assert.match(source, /const incoming = \[\.\.\.messageKeys\]\.filter/, "新消息提示必须按消息组去重");
+assert.match(source, /role !== "user" && !seenMessageKeysRef\.current\.has\(key\)/, "客户自己发送的消息不能计入新消息提示");
+assert.doesNotMatch(source, /\}, \[messages, isLoading\]\);/, "流式片段更新不能触发新消息计数");
 
 console.log("acquisition advisor direct lead-capture UI contract tests passed");
