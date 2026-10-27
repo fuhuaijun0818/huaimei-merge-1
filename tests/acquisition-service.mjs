@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
 
+// This is an in-process contract test.  It must never inherit the developer's
+// live PostgreSQL configuration from .env.local; otherwise its task-completion
+// fixture appears in the real reception inbox as production customer data.
+process.env.HUAMEI_PERSISTENCE_BACKEND = "local_json";
+process.env.HUAMEI_DATABASE_URL = "";
+process.env.HUAMEI_CACHE_BACKEND = "memory";
 process.env.HUAMEI_LLM_ENABLED = "false";
 process.env.HUAMEI_GRAPHRAG_ENABLED = "false";
 process.env.HUAMEI_ACQUISITION_SESSION_STORE_FILE = ":memory:";

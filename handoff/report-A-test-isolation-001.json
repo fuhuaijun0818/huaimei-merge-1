@@ -1,0 +1,37 @@
+{
+  "role": "A",
+  "task_id": "test-isolation-001",
+  "summary": "修复 acquisition-service 合同测试污染开发库：该测试通过真实租户 huamei-shanghai 写入“任务完成测试客户”，在 .env.local 切到 PostgreSQL 后进入真实接待列表。测试现在强制 local_json、空数据库连接和 memory 缓存，全程回到内存/本地测试数据。",
+  "acceptance_steps": [
+    "在 .env.local 指向 PostgreSQL 的机器上执行 node tests/acquisition-service.mjs。",
+    "预期：测试通过，但不会在 huamei-shanghai 或任何 PostgreSQL 租户新增客户、会话、任务。",
+    "任务完成测试仍覆盖留资、任务完成、幂等重放和指标读取。"
+  ],
+  "tests": [
+    {
+      "command": "node tests/acquisition-service.mjs",
+      "status": "passed",
+      "evidence": "售前智能体独立服务健康检查、统一协议、会话隔离、人工接管和任务完成闭环全部通过"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "tests/acquisition-service.mjs",
+      "owner": "A",
+      "change": "测试强制 local_json、空 HUAMEI_DATABASE_URL 和 memory 缓存，禁止继承开发库"
+    }
+  ],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [
+    "HUAMEI_PERSISTENCE_BACKEND",
+    "HUAMEI_DATABASE_URL",
+    "HUAMEI_CACHE_BACKEND"
+  ],
+  "known_limitations": [
+    "本次只修复了已确认写出“任务完成测试客户”的 acquisition-service 测试；其他会启动真实 server.mjs 的离线测试仍建议在 local_json 或隔离 PostgreSQL 下运行。",
+    "已存在于开发库的历史测试客户不会因本提交自动删除，需要单独确认后清理。"
+  ],
+  "rollback": "回退 tests/acquisition-service.mjs 的本次提交即可；不影响生产代码或测试数据。"
+}
