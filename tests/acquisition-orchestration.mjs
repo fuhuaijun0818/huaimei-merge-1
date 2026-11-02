@@ -116,6 +116,10 @@ const handoverAppointment = buildHandoverAppointmentProposal({
 });
 assert.equal(handoverAppointment?.type, "appointment_request", "人工接管期间的明确预约请求仍应提供待确认登记动作");
 assert.match(handoverAppointment?.id || "", /^act_[a-f0-9]{24}$/);
+const handoverVisitRequest = buildHandoverAppointmentProposal({
+  tenantId:"huamei-shanghai", conversationId:"handover-conversation", messageId:"handover-book-visit", message:"我想周六下午去面诊"
+});
+assert.equal(handoverVisitRequest?.type, "appointment_request", "人工接管期间的自然到院表达仍应提供待确认登记动作");
 assert.equal(buildHandoverAppointmentProposal({
   tenantId:"huamei-shanghai", conversationId:"handover-conversation", messageId:"handover-book-2", message:"我暂时不想预约"
 }), null, "客户明确拒绝预约时不得展示登记入口");

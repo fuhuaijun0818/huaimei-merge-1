@@ -1,4 +1,4 @@
-export const ACQUISITION_ANSWER_ROUTING_VERSION = "1.2.0";
+export const ACQUISITION_ANSWER_ROUTING_VERSION = "1.3.0";
 
 const ENTERPRISE_FACT_PATTERN = /(?:上海华美|华美(?:医院)?|本院|你们(?:医院|这里)|医生|院长|主任|专家|排班|出诊|可约|预约|价格|报价|多少钱|收费|活动|优惠|会员|地址|电话|营业时间|曼托|傲诺拉|特贝茨|璀璨|水滴形|水滴型|微绒|光面|型号|品牌)/i;
 const GENERIC_EDUCATION_PATTERN = /(?:原理|是什么|区别|对比|比较|恢复|术后|注意|流程|一般|常见|多久|怎么选)/;
@@ -99,14 +99,19 @@ export function routeAcquisitionAnswer({ message = "", intent = "", analysis = {
   if (status !== "completed" || RISK_OR_RESTRICTED_INTENTS.has(intent)) {
     return { route:"deterministic_safety", retrieval_strategy:"none", tool_execution:"blocked", freshness:freshnessFor(intent, text), model_generation_mode:"disabled", reason:"risk_or_restricted", version:ACQUISITION_ANSWER_ROUTING_VERSION };
   }
+  const stableGeneralEducation = ["project_explanation", "project_comparison", "conversation_followup"].includes(intent)
+    && /一般|常见/.test(text)
+    && /(?:原理|是什么|区别|对比|比较|恢复|术后|注意|流程|多久|怎么选)/.test(text)
+    && GENERIC_PROJECT_PATTERN.test(text);
   if (ENTERPRISE_INTENTS.has(intent)
     || ENTERPRISE_FACT_PATTERN.test(text)
     || (analysis?.entities?.doctors || []).length
     || (analysis?.entities?.products || []).length
-    || (analysis?.entities?.projects || []).length) {
+    || ((analysis?.entities?.projects || []).length && !stableGeneralEducation)) {
     return enterprisePlan({ message:text, intent, analysis });
   }
-  if (["project_explanation", "project_comparison", "conversation_followup"].includes(intent) && GENERIC_EDUCATION_PATTERN.test(text) && GENERIC_PROJECT_PATTERN.test(text)) {
+  if (stableGeneralEducation
+    || (["project_explanation", "project_comparison", "conversation_followup"].includes(intent) && GENERIC_EDUCATION_PATTERN.test(text) && GENERIC_PROJECT_PATTERN.test(text))) {
     return {
       route:"generic_model_education",
       retrieval_strategy:"none",

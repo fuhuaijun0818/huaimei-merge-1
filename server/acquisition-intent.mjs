@@ -2,7 +2,7 @@ import { projectKnowledge } from "../src/project-knowledge.js";
 import { understandConcern } from "./acquisition-concern-understanding.mjs";
 import { resolvePendingChoice, resolveBreastMethodCorrection } from "./acquisition-choice-slots.mjs";
 
-export const INTENT_ENGINE_VERSION = "3.3.0";
+export const INTENT_ENGINE_VERSION = "3.4.0";
 
 export const INTENT_ONTOLOGY = Object.freeze({
   medical_emergency:{ domain:"risk", evidence_route:"none", action:"handover_medical_urgent" },
@@ -149,14 +149,36 @@ export const doctorProjectGroupFor = (message = "") => {
 
 let catalogCache = { records:null, catalog:null };
 
+const GENERIC_MODEL_ALIASES = new Set([
+  "国产", "进口", "美国进口", "韩国进口", "内切", "外切"
+]);
+
+const knowledgeAliasParts = (value = "") => unique(
+  String(value || "")
+    .split(/[、,，/]/u)
+    .map((alias) => alias.trim().replace(/等$/u, ""))
+    .filter((alias) => alias.length >= 2 && !GENERIC_MODEL_ALIASES.has(alias))
+);
+
 export function buildAcquisitionEntityCatalog(knowledgeRecords = []) {
   if (catalogCache.records === knowledgeRecords && catalogCache.catalog) return catalogCache.catalog;
   const projectAliases = new Map();
+  const modelAliases = [];
   for (const item of projectKnowledge) {
     const canonical = String(item.project || item.cardTitle || "").trim();
-    for (const alias of [item.project, item.cardTitle, item.sourceTitle, item.brandOrModel]) {
+    for (const alias of [item.project, item.cardTitle, item.sourceTitle]) {
       const normalized = normalize(alias);
       if (canonical && normalized.length >= 2) projectAliases.set(normalized, { canonical, alias:String(alias), source:"project_knowledge" });
+    }
+    for (const alias of knowledgeAliasParts(item.brandOrModel)) {
+      modelAliases.push({ alias, canonical });
+    }
+  }
+  // 项目正式名称优先于组合字段中的品牌别名，避免“热玛吉”被泛化为抗衰大类。
+  for (const { alias, canonical } of modelAliases) {
+    const normalized = normalize(alias);
+    if (canonical && normalized.length >= 2 && !projectAliases.has(normalized)) {
+      projectAliases.set(normalized, { canonical, alias, source:"brand_or_model" });
     }
   }
   for (const group of PROJECT_ALIAS_OVERRIDES) {
@@ -240,6 +262,29 @@ const extractEntities = (message, catalog) => {
   };
 };
 
+const explicitProjectCorrectionFor = (message, entities, catalog) => {
+  const match = String(message).match(
+    /(?:不是|并非|不要)\s*([^，。！？；;]{1,40}?)\s*[，,；;]?\s*(?:而是|是|换成|改成)\s*([^，。！？；;]{1,40})/u
+  );
+  if (!match) return null;
+  const rejectedMatches = nonOverlappingEntities(match[1], catalog.projects, (entry) => entry.alias);
+  const replacementMatches = nonOverlappingEntities(match[2], catalog.projects, (entry) => entry.alias);
+  if (!rejectedMatches.length || !replacementMatches.length) return null;
+  const rejectedProjects = unique(rejectedMatches.map((item) => item.entry.canonical));
+  if (rejectedProjects.some((project) => replacementMatches.some((item) => item.entry.canonical === project))) return null;
+  const replacementProjects = unique(replacementMatches.map((item) => item.entry.canonical));
+  return {
+    ...entities,
+    projects:replacementProjects,
+    project_mentions:replacementMatches.map((item) => ({ canonical:item.entry.canonical, mention:item.alias })),
+    project_correction:{
+      matched_by:"explicit_project_correction",
+      rejected_projects:rejectedProjects,
+      replacement_projects:replacementProjects
+    }
+  };
+};
+
 const dialogueActsFor = (message = "") => {
   const text = String(message);
   return unique([
@@ -253,7 +298,7 @@ const dialogueActsFor = (message = "") => {
     /(?:活动|政策|套餐|优惠|赠品|有效|过期|限购|权益)/.test(text) ? "policy" : "",
     /(?:核验|确认|现在|当前|最新)/.test(text) ? "verify" : "",
     /(?:排班|出诊|坐诊|在院|可约|能约|号源|预约)/.test(text) && /(?:医生|院长|主任|专家|[一-龥]{2,4})/.test(text) ? "schedule" : "",
-    /(?:帮我预约|我要预约|想预约|安排到院|约面诊)/.test(text) ? "book" : "",
+    /(?:帮我预约|我要预约|想预约|安排到院|约面诊|(?:我)?(?:想|要|准备|计划).{0,10}(?:(?:去|来)(?:医院|面诊|到院)|做面诊|到院))/.test(text) ? "book" : "",
     /(?:什么时候|哪天|周末|工作日|上午|下午)/.test(text) && /(?:预约|到院|面诊|有空)/.test(text) ? "ask_time" : "",
     /(?:目录|下面.*(?:哪些|有什么)|哪些(?:项目|项目或)?资料|有什么(?:项目|项目或)?资料|服务范围|明星(?:产品|项目)|爆款|热销)/.test(text) ? "navigate" : "",
     /(?:地址|怎么走|停车|营业时间|联系电话)/.test(text) ? "service" : "",
@@ -320,6 +365,8 @@ export function recognizeAcquisitionIntent(message, options = {}) {
   let entities = referencesKnownDoctor
     ? { ...extractedEntities, doctors:contextDoctors.slice(0, 1), doctor_mentions:["会话已确认医生"] }
     : extractedEntities;
+  const projectCorrection = explicitProjectCorrectionFor(message, entities, catalog);
+  if (projectCorrection) entities = projectCorrection;
   const correction = resolveBreastMethodCorrection(message, context);
   const explicitOtherProject = extractedEntities.projects.some((project) => !/(?:胸|乳房|^自体脂肪$)/.test(project));
   const pendingChoiceResolution = correction || (explicitOtherProject
@@ -406,8 +453,11 @@ export function recognizeAcquisitionIntent(message, options = {}) {
     || entities.project_mentions.length >= 2
     || (/(?:假体)/.test(message) && /(?:自体脂肪|脂肪)/.test(message))
   );
-  if (explicitComparison) add("project_comparison", 0.96, ["multiple_project_mentions", "comparison_act"]);
-  if (entities.projects.length) add("project_explanation", acts.has("inform") ? 0.83 : 0.69, ["project_entity"]);
+  const correctionReason = entities.project_correction?.matched_by === "explicit_project_correction"
+    ? ["explicit_project_correction"]
+    : [];
+  if (explicitComparison) add("project_comparison", 0.96, ["multiple_project_mentions", "comparison_act", ...correctionReason]);
+  if (entities.projects.length) add("project_explanation", acts.has("inform") ? 0.83 : 0.69, ["project_entity", ...correctionReason]);
   if (!entities.projects.length && entities.concerns.length) add("project_discovery_by_concern", 0.82, ["concern_entity", "missing_explicit_project"]);
 
   const contextProjects = unique([
@@ -416,7 +466,10 @@ export function recognizeAcquisitionIntent(message, options = {}) {
   ]);
   const recentNamedProjects = unique([...(context.recent_turns || [])].reverse().filter(turn=>turn.role === 'user').flatMap(turn=>extractEntities(turn.content || '',catalog).project_mentions.map(item=>item.mention))).slice(0,2);
   const comparisonReferences = recentNamedProjects.length === 2 ? recentNamedProjects : contextProjects;
-  if (!entities.projects.length && !entities.doctors.length && /这两|那两|两者|它们|二者/.test(message) && /区别|差别|不同|对比|比较/.test(message) && comparisonReferences.length === 2) {
+  if (!entities.projects.length && !entities.doctors.length
+    && /这两|那两|两者|它们|二者/.test(message)
+    && /区别|差别|不同|对比|比较|怎么选|如何选|哪个好/.test(message)
+    && comparisonReferences.length === 2) {
     entities = {...entities, projects:[...comparisonReferences], resolved_reference:'two_projects'};
     add('project_comparison', .995, ['two_project_reference_resolved']);
   }
@@ -444,7 +497,7 @@ export function recognizeAcquisitionIntent(message, options = {}) {
   if (!currentHasExplicitEntity && contextProjects.length && acts.has("recovery")) {
     add("conversation_followup", 0.94, ["recovery_facet_act", "context_project_available"]);
   }
-  if (!currentHasExplicitEntity && contextProjects.length && acts.has("time_preference")) {
+  if (!currentHasExplicitEntity && contextProjects.length && acts.has("time_preference") && !acts.has("book")) {
     add("appointment_query", 0.95, ["contextual_time_preference", "context_project_available"]);
   }
   const confirmCarryIntents = new Set([
@@ -467,6 +520,25 @@ export function recognizeAcquisitionIntent(message, options = {}) {
 
   const sorted = [...candidates.values()].sort((a, b) => b.score - a.score || a.intent.localeCompare(b.intent));
   const primary = sorted[0];
+  const contextCarryIntents = new Set([
+    "project_comparison",
+    "price_verification",
+    "policy_verification",
+    "appointment_query",
+    "appointment_request",
+    "conversation_followup"
+  ]);
+  const carriesContextProjects = !currentHasExplicitEntity
+    && contextProjects.length > 0
+    && contextCarryIntents.has(primary.intent)
+    && !entities.projects.length;
+  if (carriesContextProjects) {
+    entities = {
+      ...entities,
+      projects:contextProjects.slice(0, primary.intent === "project_comparison" ? 2 : 1),
+      context_projects_bound:true
+    };
+  }
   const ontology = INTENT_ONTOLOGY[primary.intent];
   const clarificationRequired = primary.score < 0.55
     || (primary.intent === "doctor_discovery_by_project" && !entities.projects.length)
@@ -493,7 +565,10 @@ export function recognizeAcquisitionIntent(message, options = {}) {
     confidence:Number(primary.score.toFixed(4)),
     confidence_band:confidenceBand(primary.score),
     clarification_required:clarificationRequired,
-    reason_codes:primary.reason_codes,
+    reason_codes:unique([
+      ...primary.reason_codes,
+      ...(carriesContextProjects ? ["context_projects_bound_to_entities"] : [])
+    ]),
     candidate_intents:sorted.slice(0, 5).map((item) => ({ ...item, score:Number(item.score.toFixed(4)) })),
     evidence_plan:{ route:ontology.evidence_route, access:ontology.evidence_route === "restricted_metadata_only" ? "metadata_only" : "public_safe", filters },
     next_action:clarificationRequired ? "ask_one_clarifying_question" : ontology.action,

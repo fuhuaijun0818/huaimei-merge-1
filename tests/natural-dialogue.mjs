@@ -12,7 +12,8 @@ const old=globalThis.fetch;
 globalThis.fetch=async(url,options)=>{
  const b=JSON.parse(options.body);requests.push(b);
  const review=b.messages[0].content.includes('独立答复审核器');
- return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(review?{grounded:approve,responsive:approve,safe:approve}:{status:'completed',message:candidate,recommended_actions:[{type:'book_now'}],structured_data:{project:'恶意替换'}})}}]}));
+ const input=JSON.parse(b.messages[1].content);const labels=(input.documents||[]).map(item=>item.label);
+ return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(review?{grounded:approve,responsive:approve,safe:approve}:{status:'completed',message:candidate,used_evidence:labels.length?[labels[0]]:[],uncertainties:[],recommended_actions:[{type:'book_now'}],structured_data:{project:'恶意替换'}})}}]}));
 };
 try {
  const context={known_projects:['热玛吉'],recent_turns:[{role:'user',content:'我想了解热玛吉，我叫测试客户，手机号13812345678'},{role:'assistant',content:'您想了解原理吗？'}]};

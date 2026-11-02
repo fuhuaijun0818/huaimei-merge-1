@@ -122,11 +122,27 @@ assert.deepEqual(
 
 const namedDoctorGraphEvidence = filterGraphRagEvidenceForResponse([
   { record_id:"li-jian", title:"李健院长介绍", source_relative_path:"医生介绍/整形外科/李健/profile.md", content:"李健院长擅长方向" },
-  { record_id:"other-doctor", title:"其他医生介绍", source_relative_path:"医生介绍/整形外科/其他/profile.md", content:"其他医生擅长方向" }
+  { record_id:"other-doctor", title:"其他医生介绍", source_relative_path:"医生介绍/整形外科/其他/profile.md", content:"其他医生擅长方向" },
+  { record_id:"li-jian-project", title:"李健鼻部项目", source_relative_path:"项目介绍/整形外科/鼻部整形/profile.md", content:"李健院长擅长鼻部整形" }
 ], {
   output:{ structured_data:{ intent:"doctor_profile", intent_analysis:{ entities:{ projects:[], doctors:["李健"], concerns:["擅长"], quoted_terms:[] } } } }
 }, "介绍一下李健院长擅长什么");
 assert.deepEqual(namedDoctorGraphEvidence.map((item) => item.record_id), ["li-jian"], "点名医生时不得因‘介绍/擅长’等通用词引入其他医生证据");
+
+const productCatalogGraphEvidence = filterGraphRagEvidenceForResponse([
+  { record_id:"prod-dir", title:"华美资料目录：瑞可丽小金瓶", source_relative_path:"明星产品/瑞可丽中胚产品/瑞可丽小金瓶", content:"瑞可丽小金瓶产品目录" },
+  { record_id:"prod-image", title:"明星产品：瑞可丽小金瓶", source_relative_path:"明星产品/瑞可丽中胚产品/瑞可丽小金瓶/小金瓶.jpg", content:"瑞可丽小金瓶产品公开介绍" },
+  { record_id:"prod-sibling", title:"明星产品：瑞可丽天鹅童颜", source_relative_path:"明星产品/瑞可丽中胚产品/瑞可丽天鹅童颜", content:"瑞可丽天鹅童颜产品公开介绍" },
+  { record_id:"prod-policy", title:"营销政策：微整星品", source_relative_path:"6月份政策/微整政策/微整星品/a.jpg", content:"瑞可丽小金瓶活动政策" },
+  { record_id:"prod-project", title:"项目介绍：注射美容", source_relative_path:"项目介绍/注射美容/水光/a.jpg", content:"瑞可丽小金瓶相关项目介绍" }
+], {
+  output:{ structured_data:{ intent:"product_catalog_detail", intent_analysis:{ entities:{ projects:["瑞可丽小金瓶"], doctors:[], concerns:[], quoted_terms:[] } } } }
+}, "瑞可丽小金瓶是什么");
+assert.deepEqual(
+  productCatalogGraphEvidence.map((item) => item.record_id),
+  ["prod-dir", "prod-image"],
+  "产品目录意图必须限制在明星产品目录，不能混入政策、项目或其他产品"
+);
 
 const priceVerification = invokeAgent("A-01", { ...base, message:"双眼皮预算一万左右，现在怎么收费，有活动吗？", context:{ ...base.context, interests:[] } });
 assert.equal(priceVerification.status, "completed");

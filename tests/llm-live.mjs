@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { invokeAgentAsync } from "../server/agent-runtime.mjs";
 import { getLlmStatus } from "../server/llm-client.mjs";
 
+const normalizedModel = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 const status = getLlmStatus();
 assert.equal(status.enabled, true, "HUAMEI_LLM_ENABLED必须为true");
 assert.equal(status.configured, true, "模型Base URL、API Key和Model必须已配置");
@@ -18,8 +19,12 @@ assert.equal(response.status, "completed");
 assert.equal(response.guardrails.llm_used, true);
 assert.equal(response.guardrails.llm_fallback, undefined);
 assert.notEqual(response.usage.provider, "local_rule_runtime_fallback");
-assert.equal(response.usage.model, status.model);
-assert.ok(Number(response.usage.total_tokens) > 0);
+assert.ok(
+  normalizedModel(response.usage.model).startsWith(normalizedModel(status.model)),
+  `模型响应 ${response.usage.model} 应属于配置模型 ${status.model}`
+);
+assert.ok(Number.isInteger(response.usage.total_tokens) && response.usage.total_tokens >= 0);
+assert.ok(Number(response.usage.generation_latency_ms) > 0, "真实模型请求应记录生成延迟");
 assert.ok(response.output.citations.some((item) => item.knowledge_id === "K-001"));
 
 const guard = await invokeAgentAsync("A-01", {
@@ -34,5 +39,6 @@ assert.equal(guard.guardrails.llm_used, false);
 assert.equal(guard.guardrails.llm_skip_reason, "deterministic_guardrail");
 
 console.log(`✓ 真实模型调用通过：${response.usage.provider} / ${response.usage.model}`);
-console.log(`✓ 令牌 ${response.usage.total_tokens} · 延迟 ${response.usage.latency_ms}ms · 引用 K-001`);
+const usageLabel = response.usage.total_tokens > 0 ? `令牌 ${response.usage.total_tokens}` : "网关未回传 token 计量";
+console.log(`✓ ${usageLabel} · 延迟 ${response.usage.latency_ms}ms · 引用 K-001`);
 console.log("✓ 医疗适用性输入在请求模型前已转人工");

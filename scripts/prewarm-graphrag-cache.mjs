@@ -11,6 +11,10 @@ const args = Object.fromEntries(process.argv.slice(2).map((value) => {
   const match = value.match(/^--([^=]+)(?:=(.*))?$/);
   return match ? [match[1], match[2] ?? true] : [value, true];
 }));
+const selectedIntents = new Set(String(args.intents || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean));
 const casePath = join(
   root,
   "artifacts",
@@ -42,13 +46,14 @@ const indexVersion = admission.active_release?.manifest?.index_version
   || process.env.HUAMEI_GRAPHRAG_INDEX_VERSION
   || null;
 if (!releaseId || !indexVersion) {
-  throw new Error("缓存预热需要已激活知识release和index version");
+  throw new Error(`缓存预热需要已激活知识release和index version（当前mode=${admission.mode || "unknown"}；preview模式不能预热）`);
 }
 
 const entries = [];
 const seen = new Set();
 for (const testCase of cases) {
   if (!testCase.graphrag?.eligible || !testCase.graphrag?.query) continue;
+  if (selectedIntents.size && !selectedIntents.has(testCase.intent || testCase.category)) continue;
   const params = graphRagParamsForIntent(testCase.intent || testCase.category || "");
   const key = JSON.stringify([
     testCase.graphrag.query,
@@ -134,6 +139,7 @@ const report = {
   schema_version:"huamei.graphrag.cache-prewarm-report.v1",
   generated_at:new Date().toISOString(),
   dataset_id:"graphrag-retrieval-baseline-20261019.2",
+  selected_intents:[...selectedIntents].sort(),
   dataset_sha256:createHash("sha256").update(await readFile(casePath)).digest("hex"),
   release_id:releaseId,
   index_version:indexVersion,

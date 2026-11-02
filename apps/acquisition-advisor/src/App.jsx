@@ -321,7 +321,11 @@ function PublicMediaCard({ item, src, onPreview }) {
         : failed
           ? <MediaUnavailable url={src} fallback="该资料链接已失效" />
           : <img src={src} alt={item.alt || item.title || "公开宣传资料"} loading="lazy" onError={() => setFailed(true)} />}
-      <span className="public-media-caption">{item.title || "公开宣传资料"}{item.requires_verification ? <em>资料需核验</em> : null}</span>
+      <span className={`public-media-caption${item.requires_verification ? " verification-only" : ""}`}>
+        {item.requires_verification
+          ? <em>资料需核验</em>
+          : item.title || "公开宣传资料"}
+      </span>
     </button>
   );
 }

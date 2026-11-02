@@ -37,7 +37,7 @@ assert.equal(presalesPromisesSafe('现在还没有确认车辆'),true);
 process.env.HUAMEI_LLM_ENABLED='true';
 process.env.HUAMEI_LLM_BASE_URL='http://127.0.0.1:9999/v1';process.env.HUAMEI_LLM_API_KEY='test';process.env.HUAMEI_LLM_MODEL='test';
 const oldFetch=globalThis.fetch;const requests=[];let candidate='退款条件还需要核对。';
-globalThis.fetch=async(url,options)=>{const b=JSON.parse(options.body);requests.push(b);const review=b.messages[0].content.includes('独立答复审核器');return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(review?{grounded:true,responsive:true,safe:true}:{status:'completed',message:candidate})}}]}));};
+globalThis.fetch=async(url,options)=>{const b=JSON.parse(options.body);requests.push(b);const review=b.messages[0].content.includes('独立答复审核器');const input=JSON.parse(b.messages[1].content);const labels=(input.documents||[]).map(item=>item.label);return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(review?{grounded:true,responsive:true,safe:true}:{status:'completed',message:candidate,used_evidence:labels.length?[labels[0]]:[],uncertainties:[]})}}]}));};
 try {
  r=await invokeAgentAsync('A-01',{message:'定金不做能退吗？有接站吗？',context:{known_projects:['提眉']}});
  assert.equal(r.guardrails.model_output_rejected,true);assert.match(r.output.message,/接送/);
@@ -49,7 +49,8 @@ try {
  const request=JSON.parse(requests.at(-2).messages[1].content);
  assert.equal(request.decision_context.model_generation_mode,'natural_grounded_dialogue');
  assert.deepEqual(request.sales_plan.topics,['same_day','price']);
- assert.doesNotMatch(request.approved_facts,/500|22周年/);
+ assert.equal(request.approved_facts,undefined);
+ assert.ok(Array.isArray(request.documents));
 } finally {globalThis.fetch=oldFetch;}
 console.log('PASS fictional sales journey: compound questions, corrected dates, durable deferral, resumed intent, payment/arrival boundaries, medical escalation and independent presentation guards');
 const {buildAcquisitionOrchestration}=await import('../server/acquisition-orchestration.mjs');

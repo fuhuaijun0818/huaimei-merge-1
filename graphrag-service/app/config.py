@@ -97,7 +97,9 @@ class Settings:
             engine=os.getenv("HUAMEI_GRAPHRAG_ENGINE", "auto").strip().lower(),
             max_concurrency=_positive_int("HUAMEI_GRAPHRAG_MAX_CONCURRENCY", 128, 4),
             queue_timeout_seconds=_positive_float("HUAMEI_GRAPHRAG_QUEUE_TIMEOUT_SECONDS", 1.0),
-            request_timeout_seconds=_positive_float("HUAMEI_GRAPHRAG_REQUEST_TIMEOUT_SECONDS", 6.0),
+            # Keep this below the Node client budget so the service fails first
+            # and the caller can use its approved local fallback.
+            request_timeout_seconds=_positive_float("HUAMEI_GRAPHRAG_REQUEST_TIMEOUT_SECONDS", 12.0),
             cache_ttl_seconds=_positive_int("HUAMEI_GRAPHRAG_CACHE_TTL_SECONDS", 300, 1),
             cache_max_entries=_positive_int("HUAMEI_GRAPHRAG_CACHE_MAX_ENTRIES", 5000, 100),
             max_top_k=_positive_int("HUAMEI_GRAPHRAG_MAX_TOP_K", 12, 1),

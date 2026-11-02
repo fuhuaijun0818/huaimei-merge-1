@@ -92,7 +92,7 @@ function handoverResponse(envelope, openHandover, metadata = {}) {
       },
       handover:{ required:true, id:openHandover.id, task_id:openHandover.task_id, status:openHandover.status, to_team:openHandover.team, reason:openHandover.reason, assignee:openHandover.assignee, sla_due_at:openHandover.sla_due_at },
       delivery:{ suppress_ai:claimed, mode:claimed ? "human_only" : "handover_notice" },
-      profile_signals:{ projects:openHandover.projects || [], known_slots:openHandover.known_slots || {}, conversation_summary:openHandover.summary, turn_count:null, session_id:externalConversationId, intent:"human_handover" },
+      profile_signals:{ projects:openHandover.projects || [], known_slots:openHandover.known_slots || {}, conversation_summary:openHandover.summary, turn_count:null, session_id:externalConversationId, intent:appointmentProposal ? "appointment_request" : "human_handover" },
       orchestration:{ version:"1.0.0", action_proposal:appointmentProposal },
       lead_capture:{ should_prompt:false },
       guardrails:{ medical_diagnosis_allowed:false, suitability_judgement_allowed:false, llm_used:false, compliance_gate_version:"4.2.0", knowledge_version:null },
@@ -281,6 +281,11 @@ async function processAcquisitionEnvelopeWithPublication(envelope, metadata = {}
       graphrag_query_sha256:result.guardrails.graphrag_query_sha256 || null,
       graphrag_evidence_admitted:result.guardrails.graphrag_evidence_admitted || 0,
       graphrag_fallback_reason:result.guardrails.graphrag_fallback_reason || null,
+      evidence_rerank:result.guardrails.evidence_rerank || null,
+      evidence_references:result.guardrails.evidence_references || null,
+      semantic_similarity:result.guardrails.semantic_similarity || null,
+      context_budget:result.guardrails.context_budget || null,
+      uncertainties:result.guardrails.uncertainties || [],
       ...(result.guardrails.formal_load_taxonomy ? {
         formal_load_taxonomy:result.guardrails.formal_load_taxonomy
       } : {}),

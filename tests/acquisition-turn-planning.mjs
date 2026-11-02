@@ -29,7 +29,8 @@ globalThis.fetch=async(url,options)=>{
   if(body.messages[0].content.includes('统一理解与任务规划器')) {plannerCalls++;events.push('plan');if(selected instanceof Error)throw selected;return response(selected);}
   if(body.messages[0].content.includes('独立答复审核器'))return response({grounded:true,responsive:true,safe:true});
   const data=JSON.parse(body.messages[1].content);
-  return response({status:'completed',message:data.local_rule_draft.message,structured_data:{},recommended_actions:[],handover:{required:false}});
+  const labels=(data.documents||[]).map(item=>item.label);
+  return response({status:'completed',message:data.local_rule_draft.message,used_evidence:labels.length?[labels[0]]:[],uncertainties:[],structured_data:{},recommended_actions:[],handover:{required:false}});
 };
 let checks=0;
 try {
@@ -52,6 +53,16 @@ try {
     ['缓缓吧，最近真没空跑一趟',plan('conversation_followup','',{task:{willingness:'deferred',evidence:'缓缓吧'},next_step:'defer'})]
   ];
   for(const [message,p] of cases){selected=p;const before=plannerCalls;const r=await invokeAgentAsync('A-01',{message,context:{known_projects:['热玛吉'],recent_turns:[{role:'user',content:'我想了解热玛吉'}]}});assert.equal(plannerCalls,before+1);assert.equal(r.guardrails.turn_planning.used,true,JSON.stringify(r.guardrails.turn_planning));if(message==='一般原理'){assert.match(r.output.message,/热玛吉/);assert.doesNotMatch(r.output.message,/哪个项目|最想改善/);}checks++;}
+  selected=plan('price_verification','热玛吉预算');
+  const budgetFollowup=await invokeAgentAsync('A-01',{message:'预算',context:{known_projects:['热玛吉'],recent_turns:[{role:'user',content:'热玛吉的恢复时间'},{role:'assistant',content:'热玛吉属于非侵入性项目，恢复安排需医生面诊确认。'}]}});
+  assert.match(budgetFollowup.output.message,/预算|价格/);
+  assert.doesNotMatch(budgetFollowup.output.message,/热玛吉是一种基于射频技术的非侵入性皮肤紧致与提升疗程/);
+  checks++;
+  selected=plan('project_explanation','热玛吉恢复安排');
+  const recoveryFollowup=await invokeAgentAsync('A-01',{message:'热玛吉的恢复时间',context:{known_projects:['热玛吉']}});
+  assert.match(recoveryFollowup.output.message,/恢复/);
+  assert.doesNotMatch(recoveryFollowup.output.message,/热玛吉是一种基于射频技术的非侵入性皮肤紧致与提升疗程/);
+  checks++;
   selected=plan('project_explanation','热玛吉原理',{questions:[{intent:'project_explanation',query:'热玛吉原理'},{intent:'price_verification',query:'热玛吉费用'}]});
   const multi=await invokeAgentAsync('A-01',{message:'热玛吉的原理和费用呢',context:{}});
   assert.equal(multi.guardrails.turn_planning.used,true);assert.match(multi.output.message,/射频/);assert.match(multi.output.message,/价格|费用|报价/);checks++;

@@ -72,3 +72,31 @@ class RetrievalResponse(BaseModel):
     search_ms: float = 0
     timing_ms: float
     query_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+class SimilarityDocument(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=64)
+    text: str = Field(min_length=1, max_length=8000)
+
+
+class SimilarityRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    answer: str = Field(min_length=1, max_length=4000)
+    documents: list[SimilarityDocument] = Field(min_length=1, max_length=10)
+
+
+class ClauseSimilarity(BaseModel):
+    clause: str
+    max_score: float
+    best_document_id: str
+
+
+class SimilarityResponse(BaseModel):
+    model: str
+    dimensions: int
+    answer_similarity: float
+    min_clause_similarity: float
+    mean_clause_similarity: float
+    clauses: list[ClauseSimilarity]
+    cache_hit: bool = False

@@ -4,6 +4,23 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const outputRoot = join(root, "artifacts", "graphrag-baseline", "graphrag-baseline-20261019.2");
+const args = Object.fromEntries(process.argv.slice(2).map((value) => {
+  const match = value.match(/^--([^=]+)(?:=(.*))?$/);
+  return match ? [match[1], match[2] ?? true] : [value, true];
+}));
+const selectedIntents = new Set(String(args.intents || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean));
+const samplePerIntent = Math.min(20, Math.max(1, Number(args["sample-per-intent"]) || 3));
+const sweep = (name, fallback, minimum, maximum) => {
+  const values = String(args[name] || "")
+    .split(",")
+    .map((value) => Number(value.trim()))
+    .filter((value) => Number.isFinite(value))
+    .map((value) => Math.min(maximum, Math.max(minimum, Math.round(value))));
+  return values.length ? [...new Set(values)] : fallback;
+};
 const cases = (await readFile(join(outputRoot, "retrieval-cases.jsonl"), "utf8"))
   .split(/\r?\n/)
   .filter(Boolean)
@@ -13,7 +30,9 @@ const { getKnowledgeAdmissionStatus } = await import("../server/knowledge-releas
 const admission = getKnowledgeAdmissionStatus("huamei-shanghai");
 const releaseId = admission.active_release?.id;
 const indexVersion = admission.active_release?.manifest?.index_version || process.env.HUAMEI_GRAPHRAG_INDEX_VERSION;
-if (!releaseId || !indexVersion) throw new Error("Active release/index required");
+if (!releaseId || !indexVersion) {
+  throw new Error(`Active release/index required (mode=${admission.mode || "unknown"}); preview mode is not sufficient for tuning`);
+}
 
 const sampleByIntent = (limit = 3) => {
   const groups = new Map();
@@ -24,7 +43,11 @@ const sampleByIntent = (limit = 3) => {
   }
   return [...groups.values()].flat();
 };
-const sample = sampleByIntent(3);
+const sample = sampleByIntent(samplePerIntent)
+  .filter((testCase) => !selectedIntents.size || selectedIntents.has(testCase.intent));
+if (!sample.length) {
+  throw new Error(`没有符合条件的GraphRAG评测样本：${[...selectedIntents].join(",") || "all"}`);
+}
 const p95 = (values) => {
   if (!values.length) return null;
   const sorted = [...values].sort((left, right) => left - right);
@@ -102,7 +125,7 @@ const call = async (testCase, { topK, entities, relationships }) => {
 
 const raw = [];
 const topKSweep = [];
-const topKValues = [3, 5, 6, 8, 10];
+const topKValues = sweep("top-k-values", [3, 5, 6, 8, 10], 1, 12);
 for (const [index, testCase] of sample.entries()) {
   const result = await call(testCase, { topK:10, entities:10, relationships:10 });
   for (const topK of topKValues) {
@@ -132,7 +155,7 @@ for (const intent of Object.keys(topKByIntent)) {
   selectedTopK[intent] = choose(candidates).topK;
 }
 
-const entityValues = [5, 10, 15];
+const entityValues = sweep("entity-values", [5, 10, 15], 1, 30);
 const entitySweep = [];
 for (const [index, testCase] of sample.entries()) {
   const topK = selectedTopK[testCase.intent] || 6;
@@ -162,7 +185,7 @@ for (const intent of Object.keys(entityByIntent)) {
   selectedEntities[intent] = choose(candidates).entities;
 }
 
-const relationshipValues = [5, 10, 15];
+const relationshipValues = sweep("relationship-values", [5, 10, 15], 1, 30);
 const relationshipSweep = [];
 for (const [index, testCase] of sample.entries()) {
   const topK = selectedTopK[testCase.intent] || 6;
@@ -205,9 +228,11 @@ const report = {
   schema_version:"huamei.graphrag.topk-tuning.v1",
   generated_at:new Date().toISOString(),
   dataset_id:"graphrag-retrieval-baseline-20261019.2",
+  selected_intents:[...selectedIntents].sort(),
   release_id:releaseId,
   index_version:indexVersion,
   evidence_only:true,
+  sample_per_intent:samplePerIntent,
   sample_cases:sample.length,
   sample_by_intent:Object.fromEntries([...new Set(sample.map((item) => item.intent))].sort().map((intent) => [intent, sample.filter((item) => item.intent === intent).length])),
   search_space:{

@@ -5,21 +5,31 @@ import hashlib
 import hmac
 import json
 import logging
+import os
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
 import orjson
+import httpx
+import numpy as np
 from fastapi import FastAPI, Header, HTTPException, Request, Response, status
 
 from . import __version__
-from .cache import canonical_cache_query
+from .cache import AsyncTtlCache, canonical_cache_query
 from .redis_cache import create_cache
 from .config import Settings
 from .engine import create_engine, run_engine_search
 from .index_manifest import RequestBindingError
-from .models import RetrievalRequest, RetrievalResponse, RetrievalResult
+from .models import (
+    RetrievalRequest,
+    RetrievalResponse,
+    RetrievalResult,
+    SimilarityRequest,
+    SimilarityResponse,
+)
 from .query_privacy import approved_retrieval_terms, validate_retrieval_query_privacy
 
 
@@ -138,6 +148,14 @@ def cache_key(request: RetrievalRequest, index_version: str) -> str:
     return hashlib.sha256(canonical).hexdigest()
 
 
+def similarity_clauses(answer: str) -> list[str]:
+    return [
+        item.strip()
+        for item in re.split(r"[。！？!?；;\n]+", str(answer or ""))
+        if len(item.strip()) >= 4
+    ][:8]
+
+
 def create_app(overrides: Settings | None = None) -> FastAPI:
     settings = overrides or Settings.from_env()
     settings.validate_service_auth()
@@ -148,6 +166,10 @@ def create_app(overrides: Settings | None = None) -> FastAPI:
         app.state.engine = create_engine(settings)
         app.state.approved_retrieval_terms = approved_retrieval_terms(app.state.engine)
         app.state.cache = create_cache(settings)
+        app.state.similarity_cache = AsyncTtlCache[dict](
+            settings.cache_ttl_seconds,
+            settings.cache_max_entries,
+        )
         app.state.gate = asyncio.Semaphore(settings.max_concurrency)
         app.state.metrics = Metrics()
         logger.info("retrieval service ready engine=%s index=%s", app.state.engine.name, app.state.engine.version)
@@ -214,6 +236,105 @@ def create_app(overrides: Settings | None = None) -> FastAPI:
             content=request.app.state.metrics.prometheus(request.app.state.engine),
             media_type="text/plain; version=0.0.4; charset=utf-8",
         )
+
+    @app.post("/v1/semantic-similarity", response_model=SimilarityResponse)
+    async def semantic_similarity(
+        payload: SimilarityRequest,
+        request: Request,
+        x_service_key: str | None = Header(default=None),
+    ):
+        """Compare answer clauses with admitted evidence embeddings.
+
+        The service returns scores only. The acquisition caller owns policy
+        thresholds and the decision to fall back to approved deterministic copy.
+        """
+        authorize(x_service_key)
+        base_url = str(os.getenv("GRAPHRAG_API_BASE") or "").strip().rstrip("/")
+        api_key = str(os.getenv("GRAPHRAG_API_KEY") or "").strip()
+        embedding_model = str(os.getenv("GRAPHRAG_EMBEDDING_MODEL") or "").strip()
+        if not base_url or not api_key or not embedding_model:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "EMBEDDING_NOT_CONFIGURED"},
+            )
+        clauses = similarity_clauses(payload.answer)
+        if not clauses:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "SIMILARITY_ANSWER_HAS_NO_CLAUSES"},
+            )
+        texts = [payload.answer, *clauses, *[document.text for document in payload.documents]]
+        cache_digest = hashlib.sha256(orjson.dumps({
+            "model": embedding_model,
+            "texts": texts,
+        }, option=orjson.OPT_SORT_KEYS)).hexdigest()
+
+        async def execute() -> dict:
+            timeout_seconds = max(
+                1.0,
+                min(20.0, float(os.getenv("HUAMEI_EVIDENCE_SIMILARITY_TIMEOUT_SECONDS", "10"))),
+            )
+            async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+                response = await client.post(
+                    f"{base_url}/embeddings",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"model": embedding_model, "input": texts},
+                )
+            response.raise_for_status()
+            body = response.json()
+            rows = sorted(body.get("data") or [], key=lambda item: int(item.get("index", 0)))
+            if len(rows) != len(texts):
+                raise RuntimeError("EMBEDDING_RESPONSE_COUNT_MISMATCH")
+            vectors = np.asarray([item.get("embedding") for item in rows], dtype=np.float64)
+            if vectors.ndim != 2 or vectors.shape[0] != len(texts):
+                raise RuntimeError("EMBEDDING_RESPONSE_INVALID")
+            norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+            if np.any(norms <= 0):
+                raise RuntimeError("EMBEDDING_ZERO_VECTOR")
+            vectors = vectors / norms
+            document_start = 1 + len(clauses)
+            document_vectors = vectors[document_start:]
+            if document_vectors.shape[0] != len(payload.documents):
+                raise RuntimeError("EMBEDDING_DOCUMENT_COUNT_MISMATCH")
+            answer_scores = document_vectors @ vectors[0]
+            clause_rows = []
+            for offset, clause in enumerate(clauses):
+                scores = document_vectors @ vectors[offset + 1]
+                best_index = int(np.argmax(scores))
+                clause_rows.append({
+                    "clause": clause,
+                    "max_score": round(float(scores[best_index]), 6),
+                    "best_document_id": payload.documents[best_index].id,
+                })
+            clause_scores = [item["max_score"] for item in clause_rows]
+            return {
+                "model": str(body.get("model") or embedding_model),
+                "dimensions": int(vectors.shape[1]),
+                "answer_similarity": round(float(np.max(answer_scores)), 6),
+                "min_clause_similarity": round(float(min(clause_scores)), 6),
+                "mean_clause_similarity": round(float(sum(clause_scores) / len(clause_scores)), 6),
+                "clauses": clause_rows,
+            }
+
+        try:
+            result, cache_hit = await request.app.state.similarity_cache.get_or_create(
+                cache_digest,
+                execute,
+            )
+        except Exception as error:
+            logger.exception(
+                "semantic similarity failed request_id=%s error_type=%s",
+                request.state.request_id,
+                type(error).__name__,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "EMBEDDING_SIMILARITY_UNAVAILABLE"},
+            ) from error
+        return SimilarityResponse(**result, cache_hit=cache_hit)
 
     @app.post("/v1/retrieve", response_model=RetrievalResponse)
     async def retrieve(payload: RetrievalRequest, request: Request, x_service_key: str | None = Header(default=None)):

@@ -4,11 +4,23 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const outputRoot = join(root, "artifacts", "graphrag-baseline", "graphrag-baseline-20261019.2");
+const args = Object.fromEntries(process.argv.slice(2).map((value) => {
+  const match = value.match(/^--([^=]+)(?:=(.*))?$/);
+  return match ? [match[1], match[2] ?? true] : [value, true];
+}));
+const selectedIntents = new Set(String(args.intents || "")
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean));
 const cases = (await readFile(join(outputRoot, "retrieval-cases.jsonl"), "utf8"))
   .split(/\r?\n/)
   .filter(Boolean)
   .map((line) => JSON.parse(line))
-  .filter((item) => item.graphrag?.eligible);
+  .filter((item) => item.graphrag?.eligible)
+  .filter((item) => !selectedIntents.size || selectedIntents.has(item.intent));
+if (!cases.length) {
+  throw new Error(`没有符合条件的GraphRAG评测样本：${[...selectedIntents].join(",") || "all"}`);
+}
 const tuning = JSON.parse(process.env.HUAMEI_GRAPHRAG_TUNING_JSON || "{}");
 const { retrieveGraphRagKnowledge } = await import("../server/graphrag-client.mjs");
 const { getKnowledgeAdmissionStatus } = await import("../server/knowledge-release-policy.mjs");
@@ -80,6 +92,7 @@ const report = {
   schema_version:"huamei.graphrag.topk-tuning-validation.v1",
   generated_at:new Date().toISOString(),
   dataset_id:"graphrag-retrieval-baseline-20261019.2",
+  selected_intents:[...selectedIntents].sort(),
   evidence_only:true,
   cases:cases.length,
   selected:summary,

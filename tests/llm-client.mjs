@@ -2,9 +2,15 @@ import assert from "node:assert/strict";
 import {
   AGENT_DEFINITIONS, invokeAgentAsync, resetRunsForTest, validateModelMessageGrounding
 } from "../server/agent-runtime.mjs";
-import { buildMinimalModelContext, completeAgentWithLlm, getLlmStatus } from "../server/llm-client.mjs";
+import { buildMinimalModelContext, completeAgentWithLlm, getLlmStatus, readLlmConfig } from "../server/llm-client.mjs";
 
-const envKeys = ["HUAMEI_LLM_ENABLED", "HUAMEI_LLM_PROVIDER", "HUAMEI_LLM_BASE_URL", "HUAMEI_LLM_API_KEY", "HUAMEI_LLM_MODEL", "HUAMEI_LLM_TIMEOUT_MS", "HUAMEI_LLM_MAX_RETRIES"];
+const envKeys = [
+  "HUAMEI_LLM_ENABLED", "HUAMEI_LLM_PROVIDER", "HUAMEI_LLM_BASE_URL", "HUAMEI_LLM_API_KEY", "HUAMEI_LLM_MODEL",
+  "HUAMEI_LLM_TIMEOUT_MS", "HUAMEI_LLM_MAX_RETRIES",
+  "HUAMEI_LLM_PLANNING_MODEL", "HUAMEI_LLM_GENERATION_MODEL", "HUAMEI_LLM_REVIEW_MODEL", "HUAMEI_LLM_UNDERSTANDING_MODEL",
+  "HUAMEI_LLM_PLANNING_TEMPERATURE", "HUAMEI_LLM_GENERATION_TEMPERATURE", "HUAMEI_LLM_REVIEW_TEMPERATURE", "HUAMEI_LLM_UNDERSTANDING_TEMPERATURE",
+  "HUAMEI_LLM_PLANNING_MAX_TOKENS", "HUAMEI_LLM_GENERATION_MAX_TOKENS", "HUAMEI_LLM_REVIEW_MAX_TOKENS", "HUAMEI_LLM_UNDERSTANDING_MAX_TOKENS"
+];
 const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
 const originalFetch = globalThis.fetch;
 
@@ -17,6 +23,22 @@ Object.assign(process.env, {
   HUAMEI_LLM_TIMEOUT_MS: "3000",
   HUAMEI_LLM_MAX_RETRIES: "1"
 });
+
+const stageConfig = readLlmConfig({
+  ...process.env,
+  HUAMEI_LLM_PLANNING_MODEL: "test-planning-model",
+  HUAMEI_LLM_GENERATION_MODEL: "test-generation-model",
+  HUAMEI_LLM_REVIEW_MODEL: "test-review-model",
+  HUAMEI_LLM_UNDERSTANDING_MODEL: "test-understanding-model",
+  HUAMEI_LLM_GENERATION_TEMPERATURE: "0.35",
+  HUAMEI_LLM_GENERATION_MAX_TOKENS: "640"
+});
+assert.equal(stageConfig.stages.planning.model, "test-planning-model");
+assert.equal(stageConfig.stages.generation.model, "test-generation-model");
+assert.equal(stageConfig.stages.review.model, "test-review-model");
+assert.equal(stageConfig.stages.understanding.model, "test-understanding-model");
+assert.equal(stageConfig.stages.generation.temperature, 0.35);
+assert.equal(stageConfig.stages.generation.maxTokens, 640);
 
 const mockBody = {
   model: "test-chat-model",
@@ -442,6 +464,7 @@ try {
   const status = getLlmStatus();
   assert.equal(status.mode, "hybrid_llm_runtime");
   assert.equal(status.model, "test-chat-model");
+  assert.equal(status.models.generation, "test-chat-model");
 
   console.log("✓ OpenAI兼容模型请求、JSON校验与令牌统计通过");
   console.log("✓ 最小化上下文、敏感字段过滤与已批准引用通过");

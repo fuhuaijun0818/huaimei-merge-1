@@ -1,9 +1,9 @@
 import { canUseSemanticQuestion } from "./acquisition-semantic-policy.mjs";
 import { randomUUID } from "node:crypto";
-import { completeAgentWithLlm, getLlmStatus, planDialogueTurnWithLlm } from "./llm-client.mjs";
+import { completeAgentWithLlm, getLlmStatus, planDialogueTurnWithLlm, rerankEvidenceWithLlm } from "./llm-client.mjs";
 import { applyTurnPlanContext } from './acquisition-turn-plan.mjs';
 import { INTENT_ONTOLOGY } from './acquisition-intent.mjs';
-import { applyPresalesDialogue } from './acquisition-presales-dialogue.mjs';
+import { applyPresalesDialogue, extractVisitPreference } from './acquisition-presales-dialogue.mjs';
 import { retrieveGraphRagKnowledge } from "./graphrag-client.mjs";
 import { ACQUISITION_CONVERSATION_STYLE_VERSION, determineAcquisitionDialogueStage, evaluateAcquisitionConversationCopy, normalizeAcquisitionConversationCopy } from "./acquisition-conversation-style.mjs";
 import { analyzeAcquisitionEmotion, enrichAcquisitionResponseWithEmotion } from "./acquisition-emotion.mjs";
@@ -26,7 +26,7 @@ export const AGENT_DEFINITIONS = [
     id: "A-01", slug: "acquisition-consultant", name: "AI获客顾问·小美", version: "5.9.0",
     role: "项目科普与需求识别", stage: "售前", status: "running", execution_level: "L2_controlled",
     capabilities: ["project_explanation", "need_clarification", "lead_capture"],
-    forbidden: ["medical_diagnosis", "suitability_judgement", "effect_guarantee"], knowledge_version: "huamei-knowledge@v1+project-knowledge@3.2+intent-engine@3.3+choice-slots@1.0+conversation-style@2.3+emotion@1.0+answer-routing@1.1+orchestration@1.0"
+    forbidden: ["medical_diagnosis", "suitability_judgement", "effect_guarantee"], knowledge_version: "huamei-knowledge@v1+project-knowledge@3.2+intent-engine@3.4+choice-slots@1.0+conversation-style@2.3+emotion@1.0+answer-routing@1.3+orchestration@1.0"
   },
   {
     id: "A-02", slug: "appointment-specialist", name: "AI邀约专员·小美", version: "2.7.0",
@@ -162,7 +162,7 @@ const PROJECT_INTENT_ALIASES = {
   "假体隆鼻": ["假体隆鼻"],
   "玻尿酸填充": ["玻尿酸填充", "玻尿酸注射"],
   "光子嫩肤": ["光子嫩肤", "光子美肤"],
-  "抗初老/紧致除皱": ["抗初老", "紧致除皱", "面部抗衰", "面部抗老"],
+  "抗初老/紧致除皱": ["抗初老", "紧致除皱", "面部抗衰", "面部抗老", "超声炮", "超声刀"],
   "拉皮/微拉美面部提升": ["拉皮手术", "拉皮", "微拉美"],
   "泪沟填充": ["泪沟填充", "填泪沟"],
   "隆胸/胸部整形": ["胸部整形", "隆胸手术", "隆胸"],
@@ -251,9 +251,15 @@ const knowledgeIdentityTerms = (item) => [...new Set([
 // 显式项目识别只认项目名、品牌/型号与登记别名。此前把资料标题按分隔符切片，
 // 会让“痛感明显吗”这类追问因标题里的“明显”被误判成点名的项目提问，随后把
 // 图片 OCR 原文当成答复讲给客户。
+const explicitAliasParts = (value = "") => String(value || "")
+  .split(/[、,，/]/u)
+  .map((term) => term.trim().replace(/等$/u, ""))
+  .filter((term) => term.length >= 2 && !/^(?:国产|进口|美国进口|韩国进口|内切|外切)$/u.test(term));
+
 const explicitProjectTerms = (item) => [...new Set([
   item.project,
   item.brandOrModel,
+  ...explicitAliasParts(item.brandOrModel),
   ...(PROJECT_INTENT_ALIASES[item.project] || [])
 ].map((value) => String(value || "").trim()).filter((value) => value.length >= 2))];
 
@@ -734,13 +740,21 @@ const graphOutboundFacetAnchors = (query, entities) => {
   return [...new Set(facets.map(normalizeGraphText).filter((term) => term.length >= 2))];
 };
 
+// Keep each intent family inside its reviewed source tree before GraphRAG
+// evidence is admitted. Product brand/entity edges are especially broad: a
+// query such as "瑞可丽小金瓶" can otherwise pull sibling products and
+// policy records into the final context, lowering citation precision.
+const GRAPH_INTENT_PATH_PREFIXES = Object.freeze({
+  product_catalog_detail: ["明星产品/"],
+  product_attribute_verification: ["项目价格/", "6月份政策/"],
+  price_verification: ["项目价格/"],
+  policy_verification: ["6月份政策/", "荟员升级权益/"]
+});
+
 const graphIntentPathPrefixes = (intent = "", explicitPrefixes = []) => {
-  if (explicitPrefixes.length) return explicitPrefixes;
+  if (explicitPrefixes.length) return [...new Set(explicitPrefixes)];
   if (intent.startsWith("doctor_")) return ["医生介绍/"];
-  if (intent === "product_attribute_verification") return ["项目价格/", "6月份政策/"];
-  if (intent === "price_verification") return ["项目价格/"];
-  if (intent === "policy_verification") return ["6月份政策/", "荟员升级权益/"];
-  return [];
+  return GRAPH_INTENT_PATH_PREFIXES[intent] || [];
 };
 
 // Policy questions often name a month plus a business topic ("6月份皮肤套餐
@@ -904,6 +918,13 @@ export const filterGraphRagEvidenceForResponse = (evidence = [], localResponse, 
 const hybridHitId = (item = {}) => String(
   item.knowledge_id || item.record_id || item.item?.record_id || item.source_record_id || ""
 );
+const hybridEvidenceIds = (item = {}) => new Set([
+  item.knowledge_id,
+  item.record_id,
+  item.source_record_id,
+  item.evidence_source_record_id,
+  item.item?.record_id
+].map((value) => String(value || "").trim()).filter(Boolean));
 
 // Reciprocal-rank fusion keeps lexical and graph recall without trusting one
 // retriever's raw score scale. Citation admission and path/medical filtering
@@ -938,7 +959,7 @@ export const fuseHybridEvidence = (localHits = [], graphHits = [], { k = 60 } = 
     .map(([, item]) => ({ ...item.hit, hybrid_rrf_score:Number(item.score.toFixed(6)) }));
 };
 
-const attachGraphRagEvidence = (localResponse, graphResult, context, query = "") => {
+const attachGraphRagEvidence = async (localResponse, graphResult, context, query = "", rerankQuery = query) => {
   if (!graphResult.used || !graphResult.evidence.length) return localResponse;
   const knowledgeVersion = getHuameiKnowledgeStatus(context.tenant_id).version || "";
   const pathPrefixes = (localResponse.output.structured_data?.evidence_constraints?.path_prefixes || [])
@@ -984,9 +1005,19 @@ const attachGraphRagEvidence = (localResponse, graphResult, context, query = "")
     : [];
   const hybridEnabled = String(process.env.HUAMEI_HYBRID_RETRIEVAL_ENABLED || "true").toLowerCase() !== "false";
   const fusedHits = hybridEnabled ? fuseHybridEvidence(localHits, graphHits) : [...localHits, ...graphHits].slice(0, 10);
+  const rerank = await rerankEvidenceWithLlm({
+    query:rerankQuery,
+    candidates:fusedHits,
+    env:process.env
+  });
+  const selectedHits = rerank.used ? rerank.items : fusedHits;
+  const selectedIds = new Set(selectedHits.flatMap((item) => [...hybridEvidenceIds(item)]));
+  const selectedGraphCitations = selectedIds.size
+    ? graphCitations.filter((citation) => [...hybridEvidenceIds(citation)].some((id) => selectedIds.has(id)))
+    : graphCitations;
   localResponse.output.structured_data = {
     ...localResponse.output.structured_data,
-    knowledge_hits:fusedHits,
+    knowledge_hits:selectedHits,
     graphrag:{
       engine:graphResult.engine,
       index_version:graphResult.indexVersion,
@@ -997,10 +1028,11 @@ const attachGraphRagEvidence = (localResponse, graphResult, context, query = "")
       hybrid_retrieval:hybridEnabled,
       local_evidence_count:localHits.length,
       graph_evidence_count:graphHits.length,
-      fused_evidence_count:fusedHits.length
+      fused_evidence_count:fusedHits.length,
+      reranked_evidence_count:selectedHits.length
     }
   };
-  localResponse.output.citations = dedupeCitations([...(localResponse.output.citations || []), ...graphCitations]);
+  localResponse.output.citations = dedupeCitations([...(localResponse.output.citations || []), ...selectedGraphCitations]);
   localResponse.guardrails.graphrag_used = true;
   localResponse.guardrails.graphrag_engine = graphResult.engine;
   localResponse.guardrails.graphrag_index_version = graphResult.indexVersion;
@@ -1009,6 +1041,57 @@ const attachGraphRagEvidence = (localResponse, graphResult, context, query = "")
   localResponse.guardrails.hybrid_local_evidence = localHits.length;
   localResponse.guardrails.hybrid_graph_evidence = graphHits.length;
   localResponse.guardrails.hybrid_fused_evidence = fusedHits.length;
+  localResponse.guardrails.evidence_rerank = {
+    enabled:String(process.env.HUAMEI_EVIDENCE_RERANK_ENABLED || "false").toLowerCase() === "true",
+    used:rerank.used === true,
+    provider:rerank.provider || null,
+    model:rerank.model || null,
+    candidates:rerank.candidates ?? fusedHits.length,
+    selected:selectedHits.length,
+    latency_ms:rerank.latency_ms ?? null,
+    fallback_reason:rerank.reason || null
+  };
+  return localResponse;
+};
+
+// Apply the same second-stage reranker when GraphRAG is unavailable but the
+// deterministic/local route still produced multiple admitted evidence rows.
+const rerankLocalEvidence = async (localResponse, query) => {
+  if (localResponse?.guardrails?.evidence_rerank) return localResponse;
+  const hits = Array.isArray(localResponse?.output?.structured_data?.knowledge_hits)
+    ? localResponse.output.structured_data.knowledge_hits
+    : [];
+  const rerank = await rerankEvidenceWithLlm({ query, candidates:hits, env:process.env });
+  if (!rerank.used) {
+    localResponse.guardrails.evidence_rerank = {
+      enabled:String(process.env.HUAMEI_EVIDENCE_RERANK_ENABLED || "false").toLowerCase() === "true",
+      used:false,
+      provider:rerank.provider || null,
+      model:rerank.model || null,
+      candidates:hits.length,
+      selected:hits.length,
+      latency_ms:rerank.latency_ms ?? null,
+      fallback_reason:rerank.reason || null
+    };
+    return localResponse;
+  }
+  const selectedHits = rerank.items;
+  const selectedIds = new Set(selectedHits.flatMap((item) => [...hybridEvidenceIds(item)]));
+  localResponse.output.structured_data.knowledge_hits = selectedHits;
+  if (selectedIds.size) {
+    localResponse.output.citations = (localResponse.output.citations || [])
+      .filter((citation) => [...hybridEvidenceIds(citation)].some((id) => selectedIds.has(id)));
+  }
+  localResponse.guardrails.evidence_rerank = {
+    enabled:true,
+    used:true,
+    provider:rerank.provider,
+    model:rerank.model,
+    candidates:hits.length,
+    selected:selectedHits.length,
+    latency_ms:rerank.latency_ms,
+    fallback_reason:null
+  };
   return localResponse;
 };
 
@@ -1226,7 +1309,7 @@ function acquisitionAgent(input, context, intentAnalysis) {
     ? null
     : (entities.concerns || []).find((concern) => /(?:色素痣|黑痣|^痣$)/.test(concern));
   if (moleConcern) {
-    const sourceHit = retrieveHuameiKnowledge("点痣 CO2激光 色素痣 黑痣", {
+    const sourceHit = retrieveHuameiKnowledge("点痣", {
       audience:"public",
       limit:3,
       tenantId:context.tenant_id,
@@ -1351,12 +1434,16 @@ function acquisitionAgent(input, context, intentAnalysis) {
     const explicitRequest = intent === "appointment_request";
     const appointmentProjects = (entities.projects?.length ? entities.projects : context.known_projects).slice(0, 3);
     const projectText = appointmentProjects.length ? appointmentProjects.join("、") : "您关注项目";
+    const requestedVisitPreference = extractVisitPreference(input.message)
+      || context.known_slots?.time_preference
+      || context.presales_state?.visit_preference
+      || "";
     return {
       status:"completed",
       message:explicitRequest
-        ? `您可以在下方确认${projectText}的期望到院日期和时段。确认后系统会保存登记，顾问后续跟进；此登记不锁定指定医生或接诊名额。`
+        ? `${requestedVisitPreference ? `已收到您希望${requestedVisitPreference}到院了解${projectText}。` : ""}您可以在下方确认${projectText}的期望到院日期和时段。确认后系统会保存登记，顾问后续跟进；此登记不锁定指定医生或接诊名额。`
         : `可以登记您期望的到院时间，顾问后续跟进安排。${appointmentProjects.length ? `您关注的是${projectText}，${context.presales_state?.visit_preference ? '具体接诊时间还需要确认。' : '您更方便哪天到院？'}` : '您想咨询哪个项目或哪位医生？'}`,
-      structured_data:{ intent, projects:appointmentProjects, conversation_state:baseConversationState, next_questions:["您更方便哪一天、上午还是下午？"], knowledge_package:{ version:packageStatus.version, loaded:packageStatus.loaded } },
+      structured_data:{ intent, projects:appointmentProjects, time_preference:requestedVisitPreference, conversation_state:baseConversationState, next_questions:explicitRequest && requestedVisitPreference ? [] : ["您更方便哪一天、上午还是下午？"], knowledge_package:{ version:packageStatus.version, loaded:packageStatus.loaded } },
       recommended_actions:[{ type:"collect_appointment_preference", fields:["preferred_project", "preferred_date", "time_preference"] }, ...(explicitRequest ? [{ type:"offer_human_appointment" }] : [])],
       handover:{ required:false }, citations:[]
     };
@@ -1365,7 +1452,11 @@ function acquisitionAgent(input, context, intentAnalysis) {
   const resolvedChoice = intentAnalysis?.choice_resolution?.status === "selected"
     ? intentAnalysis.choice_resolution.selection
     : null;
-  const currentExplicitProjects = explicitProjectIntents(input.message);
+  const correctedProjectQuery = intentAnalysis?.entities?.project_correction?.matched_by === "explicit_project_correction"
+    ? (intentAnalysis.entities.project_mentions || []).map((item) => item.mention).join(" ")
+    : "";
+  const currentExplicitQuery = correctedProjectQuery || input.message;
+  const currentExplicitProjects = explicitProjectIntents(currentExplicitQuery);
   const switchedAwayFromBreast = currentExplicitProjects.some((item) => !/(?:胸|乳房)/.test(item.project));
   const breastType = normalizeBreastMethod(resolvedChoice?.breast_method)
     || selectedBreastProjectType(input.message)
@@ -1376,7 +1467,7 @@ function acquisitionAgent(input, context, intentAnalysis) {
   const correctingMethod = intentAnalysis?.choice_resolution?.matched_by === "explicit_correction";
   const projectRetrievalQuery = need.negated_concerns?.length && entities.concerns?.length ? entities.concerns.join(' ')
     : correctingMethod ? activeBreastProject
-    : currentExplicitProjects.length ? input.message
+    : currentExplicitProjects.length ? currentExplicitQuery
     : [input.message, ...(entities.projects || []), ...(entities.concerns || []), activeBreastProject].filter(Boolean).join(" ");
   const hits = retrieveProjectKnowledge(projectRetrievalQuery, need.negated_concerns?.length ? {...context,interests:[]} : context, 3);
   const rememberedProjects = [...new Set([
@@ -1384,7 +1475,25 @@ function acquisitionAgent(input, context, intentAnalysis) {
     ...context.known_projects,
     activeBreastProject
   ].filter(Boolean))];
-  const knowledgeQuery = [projectRetrievalQuery, ...hits.map(({ item }) => item.project), ...rememberedProjects.slice(0, 5)].join(" ");
+  const evidenceSubject = [
+    ...currentExplicitProjects.map((item) => item.alias),
+    ...(currentExplicitProjects.length ? [] : entities.projects || []),
+    ...(currentExplicitProjects.length || entities.projects?.length ? [] : rememberedProjects.slice(0, 2))
+  ].filter(Boolean).join(" ");
+  const businessEvidenceQuery = intent === "price_verification"
+    ? `${evidenceSubject} 价格`.trim()
+    : intent === "policy_verification"
+      ? `${evidenceSubject} 活动 政策`.trim()
+      : intent === "product_attribute_verification"
+        ? input.message
+        : intent === "directory_discovery"
+          ? `${entities.quoted_terms?.join(" ") || evidenceSubject || "资料"} 目录`.trim()
+      : "";
+  const knowledgeQuery = businessEvidenceQuery || [
+    projectRetrievalQuery,
+    ...hits.map(({ item }) => item.project),
+    ...(currentExplicitProjects.length ? [] : rememberedProjects.slice(0, 5))
+  ].join(" ");
 
   const principleFollowup = entities.requested_facet === 'principle' || ['project_explanation','conversation_followup'].includes(intent) && /一般原理|作用原理|什么原理|的原理|怎么起作用/.test(input.message);
   if(principleFollowup && !breastType && hits.length) {
@@ -1608,11 +1717,7 @@ function acquisitionAgent(input, context, intentAnalysis) {
     const attributeResponse = buildProductAttributeResponse(input.message, huameiHits);
     if (attributeResponse) return resultFromKnowledgeResponse(attributeResponse);
   }
-  const responseEvidenceQuery = intent === "price_verification"
-    ? `${input.message} 价格 报价 费用 当前核验`
-    : intent === "policy_verification"
-      ? `${input.message} 活动 政策 优惠 当前核验`
-      : input.message;
+  const responseEvidenceQuery = businessEvidenceQuery || input.message;
   const serviceSubject = /地址|怎么走|位置|路线|院区/.test(input.message) ? '到院地址和路线' : /停车/.test(input.message) ? '停车安排' : /营业|几点|开门/.test(input.message) ? '营业时间' : /电话/.test(input.message) ? '院方联系电话' : '';
   const serviceUnknown = serviceSubject ? `${serviceSubject}需要按院方当前信息核实，我这里暂时没有可确认的资料。` : '您想了解地址、停车、营业时间还是联系电话？';
   const huameiResponse = buildPublicKnowledgeResponse(responseEvidenceQuery, huameiHits);
@@ -1637,6 +1742,39 @@ function acquisitionAgent(input, context, intentAnalysis) {
     return resultFromKnowledgeResponse(huameiResponse);
   }
 
+  // A short price/budget follow-up should not repeat a project introduction
+  // that was already supplied on a previous turn. When no current price
+  // record is available, answer the actual ask and mark the amount as pending
+  // verification instead of falling back to a generic project summary.
+  const priceOnlyFollowup = hits[0]?.item
+    && /(?:预算|价格|报价|费用|收费|多少钱)/.test(input.message)
+    && !/(?:原理|作用|是什么|怎么做|介绍|区别|活动|优惠|政策|套餐)/.test(input.message);
+  if (priceOnlyFollowup && !huameiResponse) {
+    const project = hits[0].item.project;
+    const question = context.known_slots.budget
+      ? "按这个预算，我可以继续帮您比较公开资料，不把历史价格当作当前报价。"
+      : "您方便说一个大致的预算范围吗？不方便也可以跳过。";
+    return {
+      status:"completed",
+      message:`${project}的预算和当前价格需要按院方信息核验，历史图片不能直接当作报价。${question}`,
+      structured_data:{
+        intent:"price_verification",
+        project,
+        projects:[project],
+        knowledge_hits:[],
+        conversation_state:baseConversationState,
+        next_questions:context.known_slots.budget ? [] : ["预算有大致范围吗？不方便回答也可以跳过。"],
+        knowledge_package:{ version:packageStatus.version, loaded:packageStatus.loaded }
+      },
+      recommended_actions:[
+        { type:"update_interest", project },
+        { type:"request_human_source_verification" }
+      ],
+      handover:{ required:false },
+      citations:[]
+    };
+  }
+
   if (intent === "service_information") return {
     status:"completed",
     message:serviceUnknown,
@@ -1645,6 +1783,18 @@ function acquisitionAgent(input, context, intentAnalysis) {
   };
 
   if (!hits.length && huameiResponse) return resultFromKnowledgeResponse({ ...huameiResponse, intent });
+  if (!hits.length && ["price_verification", "policy_verification"].includes(intent)) {
+    const projects = entities.projects?.length ? entities.projects : context.known_projects || [];
+    const subject = projects.length ? projects.join("、") : "该项目";
+    return {
+      status:"completed",
+      message:`目前没有检索到${subject}可直接确认的当前价格或活动，不能把历史资料当作当前报价。需要人工顾问核实包含项、有效期和限制条件后再回复。`,
+      structured_data:{ intent, projects, conversation_state:baseConversationState, next_questions:[], knowledge_package:{ version:packageStatus.version, loaded:packageStatus.loaded } },
+      recommended_actions:[{ type:"request_human_source_verification", fields:["current_price", "included_items", "validity", "restrictions"] }],
+      handover:{ required:false },
+      citations:[]
+    };
+  }
   // 只有“本轮同样是需要澄清”时才升级；拒绝联系、人工请求等确定性轮次照常承接。
   if (!hits.length && Number(context.clarification_streak) >= 1 && !isCustomerDirectedTurn(input.message)
     && (intent === "need_clarification" || intentAnalysis?.clarification_required === true)) {
@@ -1670,10 +1820,45 @@ function acquisitionAgent(input, context, intentAnalysis) {
     general_information: safeProjectSummary(item)
   }));
   const primary = hits[0].item;
-  const normalizedMessage = String(input.message).toLowerCase();
+  const normalizedMessage = String(currentExplicitQuery).toLowerCase();
   const explicitHits = hits.filter(({ item, matchType }) => matchType === "explicit" || explicitProjectTerms(item).some((term) => normalizedMessage.includes(term.toLowerCase())));
   const exactProject = explicitHits.length > 0;
-  const comparisonLabel = (item) => currentExplicitProjects.find((match) => match.recordId === item.id)?.alias || item.project;
+  const recoveryFacetFollowup = /(?:恢复期?|多久恢复|休息多久|能上班|能工作|消肿|复诊|术后注意)/.test(input.message)
+    && !breastType
+    && (exactProject || context.known_projects.includes(primary.project));
+  if (recoveryFacetFollowup) {
+    const question = "您更关心多久能恢复日常活动，还是复诊安排？";
+    return {
+      status:"completed",
+      message:`${primary.project}的恢复安排与具体方案和个体反应有关，一般会关注护理、复诊和循序恢复日常活动。具体节奏需医生面诊及医嘱确认。${question}`,
+      structured_data:{
+        intent:"project_explanation",
+        project:primary.project,
+        projects:[primary.project],
+        requested_facet:"recovery",
+        knowledge_hits:[knowledgeHits[0]],
+        conversation_state:baseConversationState,
+        next_questions:[question],
+        knowledge_package:{ version:packageStatus.version, loaded:packageStatus.loaded }
+      },
+      recommended_actions:[{ type:"update_interest", project:primary.project }],
+      handover:{ required:false },
+      citations:[citation(primary.project, primary)].filter(Boolean)
+    };
+  }
+  const comparisonMatch = (item) => currentExplicitProjects.find(
+    (match) => match.recordId === item.id || match.project === item.project
+  );
+  const comparisonLabel = (item) => {
+    const match = comparisonMatch(item);
+    return match?.alias && item.project.includes("/") ? match.alias : item.project;
+  };
+  const explicitProjectLabel = currentExplicitProjects.length === 1 ? currentExplicitProjects[0].alias : "";
+  const explicitProjectIntro = explicitProjectLabel
+    && primary.project.includes("/")
+    && explicitProjectLabel !== primary.project
+    ? `您提到的是${explicitProjectLabel}，属于${primary.project}方向。`
+    : "";
   const breastProjectRequest = intent === "project_explanation"
     && !breastType
     && /(?:丰胸|隆胸|胸部整形|乳房整形)/.test(input.message)
@@ -1699,7 +1884,7 @@ function acquisitionAgent(input, context, intentAnalysis) {
     : explicitHits.length >= 2
     ? `先按资料比较${explicitHits.map(({ item }) => comparisonLabel(item)).join("和")}：${explicitHits.map(({ item }) => `${comparisonLabel(item)}：${shortProjectSummary(item)}`).join("；")}。具体包含范围、材料和恢复安排仍需面诊核实。`
     : exactProject
-      ? `${customerProjectSummary(primary)} 具体方案由医生面诊确认。`
+      ? `${explicitProjectIntro}${customerProjectSummary(primary)} 具体方案由医生面诊确认。`
       // 客户没说明主诉时不能回“当前改善问题”这类占位词；先承接再给方向。
       : `${entities.concerns?.length ? `明白，您主要在意的是${entities.concerns.join("、")}。` : "好的。"}可以先看这些方向：${hits.map(({ item }) => `${item.project}（${(item.efficacyLabels || []).slice(0, 3).join("、") || "一般项目介绍"}）`).join("；")}。具体选择再由医生面诊确认。`;
   if (PRICE_OR_POLICY_INTENT.test(input.message)) {
@@ -2537,7 +2722,7 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
         }
         const evidenceFilterStartedAt = performance.now();
         if (graphResult.used) {
-          attachGraphRagEvidence(localResponse, graphResult, context, input.message);
+          await attachGraphRagEvidence(localResponse, graphResult, context, input.message, graphQuery);
         } else {
           localResponse.guardrails.graphrag_used = false;
           localResponse.guardrails.graphrag_fallback_reason = graphResult.reason;
@@ -2553,6 +2738,10 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
     localResponse.guardrails.graphrag_fallback_reason = answerRouting.route === "enterprise_knowledge_graph"
       ? `not_selected_${answerRouting.retrieval_strategy || "unknown"}`
       : "answer_routing_no_enterprise_evidence";
+  }
+
+  if (agent.id === "A-01" && !localResponse.guardrails.evidence_rerank) {
+    await rerankLocalEvidence(localResponse, input.message);
   }
 
   if (agent.id === "A-01" && localIntent === "doctor_project_verification") {
@@ -2582,7 +2771,12 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
   }
 
   try {
-    const completion = await completeAgentWithLlm({ agent, input, context, localResult: localResponse.output });
+    const completion = await completeAgentWithLlm({
+      agent,
+      input,
+      context,
+      localResult:{ ...localResponse.output, evidence_rerank:localResponse.guardrails.evidence_rerank || null }
+    });
     if (!completion.used) {
       localResponse.guardrails.llm_used = false;
       localResponse.guardrails.llm_skip_reason = completion.reason;
@@ -2590,6 +2784,11 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
     }
     latencyBreakdown.generation_ms = Number(completion.usage?.generation_latency_ms) || 0;
     latencyBreakdown.review_ms = Number(completion.usage?.review_latency_ms) || 0;
+    const usedEvidenceIds = new Set((completion.evidenceValidation?.used_ids || []).filter(Boolean));
+    if (usedEvidenceIds.size) {
+      localResponse.output.citations = (localResponse.output.citations || [])
+        .filter((citation) => [...hybridEvidenceIds(citation)].some((id) => usedEvidenceIds.has(id)));
+    }
     const { result, postRisk, copyStyleIssues, grounding, modelOutputRejected } = mergeModelResult(agent, input, context, localResponse, completion.result, completion.naturalValidation);
     localResponse.status = result.status;
     localResponse.output = {
@@ -2608,6 +2807,10 @@ export async function invokeAgentAsync(agentId, payload, metadata = {}) {
       : completion.naturalValidation ? "validated_natural_dialogue" : answerRouting.model_generation_mode === "generic_education" ? "model_general_education" : "grounded_model_copy";
     localResponse.guardrails.copy_style_issues = copyStyleIssues;
     localResponse.guardrails.postcheck_decision = postRisk.decision;
+    localResponse.guardrails.evidence_references = completion.evidenceValidation || null;
+    localResponse.guardrails.semantic_similarity = completion.semanticSimilarity || null;
+    localResponse.guardrails.context_budget = completion.contextUsage || null;
+    localResponse.guardrails.uncertainties = completion.result.uncertainties || [];
     localResponse.usage = {
       ...completion.usage,
       input_characters: input.message.length,

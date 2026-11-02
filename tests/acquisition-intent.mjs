@@ -8,7 +8,7 @@ const knowledge = loadHuameiKnowledge();
 assert.equal(knowledge.loaded, true);
 const catalog = buildAcquisitionEntityCatalog(knowledge.records);
 const status = getIntentEngineStatus(knowledge.records);
-assert.equal(status.version, "3.3.0");
+assert.equal(status.version, "3.4.0");
 assert.equal(status.intents, 26);
 assert.ok(status.doctor_entities >= 30);
 assert.ok(status.project_aliases >= 100);
