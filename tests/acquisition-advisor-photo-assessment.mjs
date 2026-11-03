@@ -51,6 +51,9 @@ assert.ok(detailed.score > flat.score, "有清晰纹理和足够尺寸的图片�
 assert.ok(detailed.dimensions.clarity > flat.dimensions.clarity, "清晰度应区分平色与细节图像");
 assert.ok(detailed.score > lowResolution.score, "高分辨率应提高照片自检分");
 assert.ok(detailed.suggestions.length >= 1 && detailed.suggestions.length <= 3);
+assert.ok(Number.isFinite(detailed.dimensions.exposure));
+assert.ok(Number.isFinite(detailed.dimensions.contrast));
+assert.ok(Number.isFinite(detailed.measurements.average_edge));
 assert.match(detailed.disclaimer, /不判断外貌、皮肤问题或项目适用性/);
 assert.doesNotMatch(JSON.stringify(detailed), /颜值|吸引力|魅力|诊断结论/);
 
@@ -74,10 +77,22 @@ assert.match(sendSource, /scoreSentPhotoAttachments\(messageKey, attachmentConte
 assert.match(sendSource, /photoAssessmentStatus:item\.photoAssessment\?\.available\s*\? "complete"\s*:\s*String\(item\.mime_type \|\| ""\)\.startsWith\("image\/"\) \? "scoring"/, "已发送图片在计算期间显示评分中状态");
 assert.match(sendSource, /sourceFile:item\.sourceFile/, "发送后的本地评分必须保留待评分文件");
 assert.doesNotMatch(appSource, /PhotoScoreDetails attachments=\{pendingAttachments\}/, "待发送区不得提前展示评分");
-assert.match(appSource, /图片已发送，正在分析清晰度、光线和分辨率/, "评分中状态必须明确说明发生在发送后");
-assert.match(appSource, /照片自检/);
+assert.match(appSource, /正在分析清晰度、曝光、明暗层次和有效分辨率/, "评分中状态必须明确说明发生在发送后");
+assert.match(appSource, /role:"photo-report"/, "发送图片后必须追加独立的完整报告消息");
+assert.match(appSource, /photoAssessmentStatus:"scoring"/, "报告消息必须先进入评分中状态");
+assert.match(appSource, /你的照片质量指标/);
+assert.match(appSource, /清晰度指数/);
+assert.match(appSource, /平均曝光/);
+assert.match(appSource, /明暗层次/);
+assert.match(appSource, /有效分辨率/);
+assert.match(appSource, /data-photo-report-id/);
+assert.doesNotMatch(appSource, /PhotoScoreDetails/, "旧的小评分卡不得继续作为发送后结果");
 assert.match(appSource, /photoAssessment:item\.photoAssessment/, "重试发送必须保留照片自检结果");
-assert.match(appSource, /PhotoScoreDetails attachments=\{message\.attachments/, "已发送消息必须保留自检结果");
+const reportSource = appSource.slice(
+  appSource.indexOf("function PhotoAssessmentReport"),
+  appSource.indexOf("function Composer")
+);
+assert.doesNotMatch(reportSource, /面部比例|颜值|吸引力|适合做|治疗效果/, "照片报告不得输出外貌比例或医疗适用性判断");
 
 assert.match(PHOTO_ASSESSMENT_DISCLAIMER, /本地完成/);
 assert.match(PHOTO_ASSESSMENT_DISCLAIMER, /不交给视觉模型/);

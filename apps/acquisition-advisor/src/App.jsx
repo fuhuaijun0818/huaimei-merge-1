@@ -201,59 +201,96 @@ function PhotoScoreBadge({ assessment, status = "", compact = false }) {
   );
 }
 
-function PhotoScoreDetails({ attachments = [], compact = false }) {
+function PhotoAssessmentReport({ message }) {
+  const attachments = message.attachments || [];
   const scored = attachments.filter((item) => item.photoAssessment?.available);
-  const latest = scored.at(-1)?.photoAssessment;
-  const scoring = attachments.some((item) => item.photoAssessmentStatus === "scoring");
-  const failed = attachments.some((item) => item.photoAssessmentStatus === "failed");
-  if (!latest && !scoring && !failed) return null;
-  if (!latest) {
-    return (
-      <section className={`photo-score-details is-pending ${compact ? "is-compact" : ""}`} aria-label="照片自检状态" aria-live="polite">
-        <div className={`photo-score-ring is-loading ${failed ? "is-failed" : ""}`}>
-          <span className="photo-score-spinner" aria-hidden="true">{failed ? "!" : ""}</span>
-        </div>
-        <div className="photo-score-body">
-          <div className="photo-score-heading">
-            <div><strong>照片自检</strong><span>{failed ? "暂不可用" : "评分中"}</span></div>
-          </div>
-          <p>{failed ? "图片已发送，但未能完成本地评分，不影响继续咨询" : "图片已发送，正在分析清晰度、光线和分辨率"}</p>
-        </div>
-      </section>
-    );
-  }
-  const dimensions = [
-    ["清晰度", latest.dimensions?.clarity],
-    ["光线", latest.dimensions?.lighting],
-    ["分辨率", latest.dimensions?.resolution]
-  ];
+  const latestItem = scored.at(-1);
+  const latest = latestItem?.photoAssessment;
+  const status = message.photoAssessmentStatus || (latest ? "complete" : "scoring");
+  const selectedImage = latestItem?.previewUrl
+    ? latestItem
+    : attachments.find((item) => item.previewUrl);
+  const metrics = latest ? [
+    { label:"清晰度指数", value:(latest.measurements?.average_edge ?? 0).toFixed(2), score:latest.dimensions?.clarity },
+    { label:"平均曝光", value:(latest.measurements?.average_brightness ?? 0).toFixed(1), score:latest.dimensions?.exposure },
+    { label:"明暗层次", value:(latest.measurements?.contrast_spread ?? 0).toFixed(1), score:latest.dimensions?.contrast },
+    { label:"有效分辨率", value:`${latest.source?.width || 0} × ${latest.source?.height || 0}`, score:latest.dimensions?.resolution }
+  ] : [];
   return (
-    <section className={`photo-score-details ${compact ? "is-compact" : ""}`} aria-label="照片自检结果">
-      <div
-        className={`photo-score-ring ${photoScoreTone(latest)}`}
-        style={{ "--photo-score-progress":`${Math.max(0, Math.min(100, latest.score))}%` }}
-        aria-label={`照片自检 ${latest.score} 分`}
-      >
-        <span><strong>{latest.score}</strong><small>分</small></span>
-      </div>
-      <div className="photo-score-body">
-        <div className="photo-score-heading">
-          <div><strong>照片自检</strong><span>{latest.label}</span></div>
-          {scored.length > 1 && <small>当前展示最后一张图片</small>}
-        </div>
-        <div className="photo-score-metrics">
-          {dimensions.map(([label, value]) => (
-            <div className="photo-score-metric" key={label}>
-              <span>{label}</span>
-              <i><b style={{ width:`${Math.max(0, Math.min(100, Number(value) || 0))}%` }} /></i>
-              <em>{Math.max(0, Math.min(100, Math.round(Number(value) || 0)))}</em>
+    <article className="photo-report-message" data-photo-report-id={message.id} aria-live="polite">
+      <section className="photo-report-card" aria-label="照片质量自检报告">
+        <header className="photo-report-header">
+          <div>
+            <span className="photo-report-kicker">照片质量 · 发送后结果</span>
+            <h2>不止一个分数，<br /><em>而是一套照片质量报告</em></h2>
+            <p>只检查照片是否适合作为咨询参考，不代表外貌、皮肤状况或医疗判断。</p>
+          </div>
+          {latest && (
+            <div className="photo-report-overall">
+              <span>综合</span>
+              <strong>{latest.score}</strong>
+              <small>/100</small>
+              <em>{latest.label}</em>
             </div>
+          )}
+        </header>
+        <div className="photo-report-switcher" aria-label="已发送图片">
+          {attachments.filter((item) => item.previewUrl).map((item, index) => (
+            <span className={item.upload_id === selectedImage?.upload_id ? "is-active" : ""} key={item.upload_id}>
+              <img src={item.previewUrl} alt="" />
+              <i>照片 {index + 1}</i>
+              <b>{item.photoAssessment?.score ?? "···"}</b>
+            </span>
           ))}
         </div>
-        <p>{latest.suggestions?.[0]}</p>
-      </div>
-      {!compact && <span className="photo-score-privacy">{latest.disclaimer}</span>}
-    </section>
+        <div className="photo-report-grid">
+          <figure className="photo-report-preview">
+            {selectedImage?.previewUrl
+              ? <img src={selectedImage.previewUrl} alt={selectedImage.file_name || "已发送的照片"} />
+              : <span>图片预览不可用</span>}
+            <i className="photo-report-corner top-left" />
+            <i className="photo-report-corner top-right" />
+            <i className="photo-report-corner bottom-left" />
+            <i className="photo-report-corner bottom-right" />
+            {status === "scoring" && <span className="photo-report-scanline" aria-hidden="true" />}
+            <figcaption>已发送原图 · 本地分析</figcaption>
+          </figure>
+          <div className="photo-report-results">
+            {latest ? (
+              <>
+                <div className="photo-report-section-title">
+                  <strong>你的照片质量指标</strong>
+                  <span>越高越适合作为咨询参考</span>
+                </div>
+                <div className="photo-report-list">
+                  {metrics.map((metric) => {
+                    const score = Math.max(0, Math.min(100, Number(metric.score) || 0));
+                    return (
+                      <div className="photo-report-row" key={metric.label}>
+                        <div><strong>{metric.label}</strong><span>{metric.value}</span></div>
+                        <i className="photo-report-meter" style={{ "--report-score":`${score}%` }}><b /></i>
+                        <em>{score.toFixed(1)}</em>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="photo-report-advice">
+                  <span>优化建议</span>
+                  <strong>{latest.suggestions?.[0]}</strong>
+                </div>
+                <p className="photo-report-disclaimer">{latest.disclaimer}</p>
+              </>
+            ) : (
+              <div className={`photo-report-loading ${status === "failed" ? "is-failed" : ""}`}>
+                <span className="photo-report-spinner" aria-hidden="true">{status === "failed" ? "!" : ""}</span>
+                <strong>{status === "failed" ? "照片评分暂不可用" : "图片已发送，正在生成报告"}</strong>
+                <p>{status === "failed" ? "本次未能读取图片像素，不影响您继续咨询。" : "正在分析清晰度、曝光、明暗层次和有效分辨率。"}</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+    </article>
   );
 }
 
@@ -622,7 +659,6 @@ function ChatMessage({ message, showLeadCapture, leadState, appointmentState, on
         </div>
       )}
       <span className="user-message-text">{message.content}</span>
-      <PhotoScoreDetails attachments={message.attachments || []} compact />
       {message.attachment && (
         <em className="attachment-state">
           附件已在本地保存（{Math.max(1, Math.round(message.attachment.size / 1024))} KB）· 仅客户侧可见
@@ -638,6 +674,7 @@ function ChatMessage({ message, showLeadCapture, leadState, appointmentState, on
       )}
     </div>
   );
+  if (message.role === "photo-report") return <PhotoAssessmentReport message={message} />;
   // 历史回读里的人工顾问回复（B 的会话留档）：与 AI 气泡分开显示，
   // 客户能一眼看出哪一条是人发的。
   if (message.role === "staff") return (
@@ -708,6 +745,10 @@ export function App() {
   // 附件缩略图使用浏览器本地 object URL；发送、移除或离开页面时统一释放。
   const attachmentUrlsRef = useRef(new Set());
   const chatStarted = messages.length > 0 || isLoading || Boolean(appointmentState.intake);
+  const latestPhotoReport = useMemo(
+    () => [...messages].reverse().find((message) => message.role === "photo-report"),
+    [messages]
+  );
 
   const statusText = useMemo(() => isLoading ? "正在为您整理相关项目信息…" : "", [isLoading]);
 
@@ -764,6 +805,15 @@ export function App() {
   useEffect(() => {
     if (atBottomRef.current) stickToBottom();
   }, [isLoading]);
+
+  useEffect(() => {
+    if (latestPhotoReport?.photoAssessmentStatus !== "complete") return;
+    const reports = document.querySelectorAll(".photo-report-message");
+    const latest = reports[reports.length - 1];
+    if (!latest) return;
+    latest.scrollIntoView({ block:"start", behavior:"smooth" });
+    atBottomRef.current = false;
+  }, [latestPhotoReport?.id, latestPhotoReport?.photoAssessmentStatus]);
 
   const resetConversation = async () => {
     const epoch = ++sessionEpochRef.current;
@@ -1362,15 +1412,20 @@ export function App() {
       }
     }));
     const byUploadId = new Map(scored.map((item) => [item.upload_id, item]));
-    setMessages((current) => current.map((message) => message.clientMessageId !== messageKey
-      ? message
-      : {
-          ...message,
-          attachments:(message.attachments || []).map((item) => {
-            const assessment = byUploadId.get(item.upload_id);
-            return assessment ? { ...item, ...assessment } : item;
-          })
-        }));
+    const reportStatus = scored.every((item) => item.photoAssessmentStatus === "complete") ? "complete" : "failed";
+    setMessages((current) => current.map((message) => {
+      const isCustomerTurn = message.clientMessageId === messageKey;
+      const isPhotoReport = message.role === "photo-report" && message.parentClientMessageId === messageKey;
+      if (!isCustomerTurn && !isPhotoReport) return message;
+      return {
+        ...message,
+        ...(isPhotoReport ? { photoAssessmentStatus:reportStatus } : {}),
+        attachments:(message.attachments || []).map((item) => {
+          const assessment = byUploadId.get(item.upload_id);
+          return assessment ? { ...item, ...assessment } : item;
+        })
+      };
+    }));
   };
 
   const sendQuestion = async ({ question, clientMessageId, retryOfId, attachments: retryAttachments = [] }) => {
@@ -1382,6 +1437,18 @@ export function App() {
       file_name:item.file_name,
       matched_asset:item.matched_asset || null
     }));
+    const messageAttachments = attachmentContexts.map((item) => ({
+      upload_id:item.upload_id,
+      file_name:item.file_name,
+      matched_asset:item.matched_asset || null,
+      photoAssessment:item.photoAssessment || null,
+      photoAssessmentStatus:item.photoAssessment?.available
+        ? "complete"
+        : String(item.mime_type || "").startsWith("image/") ? "scoring" : null,
+      previewUrl:item.previewUrl || "",
+      sourceFile:item.sourceFile || null
+    }));
+    const hasPhotoAttachments = messageAttachments.some((item) => String(item.photoAssessmentStatus || "").length > 0);
     if (!retryOfId) setPendingAttachments([]);
     questionInFlightRef.current = true;
     inputRef.current?.focus({ preventScroll:true });
@@ -1389,27 +1456,30 @@ export function App() {
       ? current.map((item) => item.id === retryOfId ? { ...item, status:"sending", error:"" } : item)
       // 本地消息 id 与服务端 message_id 用同一个标识：历史轮询回来时是替换
       // 这条乐观消息，而不是再追加一遍。
-      : [...current, {
-          id:messageKey,
-          clientMessageId:messageKey,
-          role:"user",
-          content:question,
-          attachments:attachmentContexts.map((item) => ({
-            upload_id:item.upload_id,
-            file_name:item.file_name,
-            matched_asset:item.matched_asset || null,
-            photoAssessment:item.photoAssessment || null,
-            photoAssessmentStatus:item.photoAssessment?.available
-              ? "complete"
-              : String(item.mime_type || "").startsWith("image/") ? "scoring" : null,
-            previewUrl:item.previewUrl || "",
-            sourceFile:item.sourceFile || null
-          })),
-          at:new Date().toISOString(),
-          status:"sending",
-          error:"",
-          optimistic:true
-        }]);
+      : [
+          ...current,
+          {
+            id:messageKey,
+            clientMessageId:messageKey,
+            role:"user",
+            content:question,
+            attachments:messageAttachments,
+            at:new Date().toISOString(),
+            status:"sending",
+            error:"",
+            optimistic:true
+          },
+          ...(hasPhotoAttachments ? [{
+            id:`photo-report-${messageKey}`,
+            parentClientMessageId:messageKey,
+            role:"photo-report",
+            source:"system",
+            content:"",
+            attachments:messageAttachments.map((item) => ({ ...item })),
+            photoAssessmentStatus:"scoring",
+            at:new Date().toISOString()
+          }] : [])
+        ]);
     // 图片先作为已发送消息出现，再异步生成本地评分，不回写任何评分数据到服务端。
     void scoreSentPhotoAttachments(messageKey, attachmentContexts);
     if (!retryOfId) setInput("");

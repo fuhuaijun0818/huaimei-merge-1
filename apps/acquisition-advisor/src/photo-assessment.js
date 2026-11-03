@@ -103,8 +103,16 @@ export function assessPhotoPixels({
     tone:scoreTone(score),
     dimensions:{
       clarity:clarityScore,
+      exposure:brightnessScore,
+      contrast:contrastScore,
       lighting:lightingScore,
       resolution:dimensionsScore
+    },
+    measurements:{
+      average_edge:Math.round(averageEdge * 100) / 100,
+      average_brightness:Math.round(mean * 10) / 10,
+      contrast_spread:Math.round(standardDeviation * 10) / 10,
+      clipped_ratio:Math.round(clippedRatio * 1000) / 1000
     },
     source:{
       width:Math.max(0, Math.round(Number(sourceWidth) || 0)),
