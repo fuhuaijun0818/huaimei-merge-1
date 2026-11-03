@@ -755,7 +755,12 @@ export async function handleApiRequest(request, response) {
       } else if (url.pathname === "/api/admin/hr/offboarding") {
         data = await createOffboardingWorkflow({ tenantId:principal.tenantId, actor:principal.subject, payload });
       } else if (url.pathname === "/api/admin/hr/reports/generate") {
-        data = await generateHrReport({ tenantId:principal.tenantId, actor:principal.subject, period:payload.period });
+        data = await generateHrReport({
+          tenantId:principal.tenantId,
+          actor:principal.subject,
+          period:payload.period,
+          accountId:payload.account_id
+        });
       } else {
         data = await completeHrTask({
           tenantId:principal.tenantId,
