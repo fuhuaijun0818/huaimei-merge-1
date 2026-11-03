@@ -72,6 +72,9 @@ const sendSource = appSource.slice(
 );
 assert.ok(uploadSource, "必须能定位上传处理逻辑");
 assert.ok(sendSource, "必须能定位消息发送逻辑");
+assert.match(appSource, /const canSend = Boolean\(value\.trim\(\) \|\| pendingAttachments\.length\) && !disabled;/, "仅有待发送图片时发送按钮必须可用");
+assert.match(appSource, /pendingAttachments\.some\(\(item\) => String\(item\.mime_type \|\| ""\)\.startsWith\("image\/"\)\)\s*\? "发送了一张照片"/, "纯图片发送必须生成安全的默认消息文本");
+assert.ok(appSource.includes("(!value.trim() && !pendingAttachments.length) || disabled"), "回车发送也必须允许纯图片消息");
 assert.doesNotMatch(uploadSource, /analyzePhotoFile/, "上传阶段不得提前评分");
 assert.match(sendSource, /scoreSentPhotoAttachments\(messageKey, attachmentContexts\)/, "发送消息后才触发照片评分");
 assert.match(sendSource, /photoAssessmentStatus:item\.photoAssessment\?\.available\s*\? "complete"\s*:\s*String\(item\.mime_type \|\| ""\)\.startsWith\("image\/"\) \? "scoring"/, "已发送图片在计算期间显示评分中状态");

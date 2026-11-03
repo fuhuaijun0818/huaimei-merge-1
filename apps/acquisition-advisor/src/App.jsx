@@ -296,7 +296,7 @@ function PhotoAssessmentReport({ message }) {
 
 function Composer({ value, onChange, onSubmit, disabled, restoringSession, inputRef, onStop, waiting, uploadCapability, onUpload, uploadError, onRetryUpload, pendingAttachments = [], onRemoveAttachment }) {
   const filePickerRef = useRef(null);
-  const canSend = value.trim() && !disabled;
+  const canSend = Boolean(value.trim() || pendingAttachments.length) && !disabled;
   return (
     <div className="composer-area">
       <form className="composer" onSubmit={onSubmit}>
@@ -354,12 +354,12 @@ function Composer({ value, onChange, onSubmit, disabled, restoringSession, input
                 // Shift+Enter 在输入框内换行，回车才发送。
                 if (event.shiftKey) return;
                 event.preventDefault();
-                if (!value.trim() || disabled) return;
+                if ((!value.trim() && !pendingAttachments.length) || disabled) return;
                 onSubmit({ preventDefault() {} });
               }}
               maxLength={1000}
               onChange={(event) => onChange(event.target.value)}
-              placeholder="描述您的关注点，例如：脸部松弛、肤色暗沉…"
+              placeholder="描述您的关注点，也可以直接发送图片…"
               value={value}
             />
             <button className="send-button" type="submit" disabled={!canSend} aria-label="发送咨询">
@@ -1167,7 +1167,9 @@ export function App() {
   const submitQuestion = async (event) => {
     event?.preventDefault?.();
     if (isLoading || restoringSession || questionInFlightRef.current) return;
-    const question = input.trim();
+    const question = input.trim() || (pendingAttachments.some((item) => String(item.mime_type || "").startsWith("image/"))
+      ? "发送了一张照片"
+      : pendingAttachments.length ? "发送了一份资料" : "");
     if (!question) return;
     await sendQuestion({ question });
   };
