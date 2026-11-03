@@ -1,0 +1,66 @@
+{
+  "role": "A",
+  "task_id": "photo-quality-score-001",
+  "summary": "为前台顾问上传的人脸/人像照片增加浏览器本地“照片自检分”。图片上传成功后即时展示总分、清晰度、光线和分辨率分项、优化建议与隐私边界；评分徽标同时显示在缩略图上，用户连同问题发送后，徽标和简版评分仍保留在消息中。评分不判断外貌吸引力、不推断敏感属性、不做照片诊断或项目适用性判断，也不把图片交给视觉模型。",
+  "acceptance_steps": [
+    "打开 http://127.0.0.1:4173/advisor/，通过输入区“+”上传一张 jpg/png/webp 图片。",
+    "预期：缩略图右下角显示分数徽标；输入框内显示照片自检总分、清晰度/光线/分辨率分项和一条优化建议；仅上传不生成聊天消息。",
+    "输入任意咨询问题并发送，预期：用户消息中的图片继续显示分数徽标，并保留简版三项评分。",
+    "在 390×844 手机视口重复检查，预期：84px 缩略图、评分卡和输入框完整可见，无横向溢出。",
+    "预期边界：页面明确说明仅评估清晰度、光线和分辨率，不判断外貌、皮肤问题或项目适用性，不交给视觉模型。"
+  ],
+  "tests": [
+    {
+      "command": "node tests/acquisition-advisor-photo-assessment.mjs",
+      "status": "pass",
+      "evidence": "平坦图、细节图、低分辨率图、无效像素输入及界面接入契约均通过；细节图分数高于平坦图，高分辨率分数高于低分辨率图。"
+    },
+    {
+      "command": "node tests/acquisition-advisor-otp-ui.mjs",
+      "status": "pass",
+      "evidence": "现有附件同容器布局、移除、发送和重试上下文契约继续通过。"
+    },
+    {
+      "command": "npm --prefix apps/acquisition-advisor run build",
+      "status": "pass",
+      "evidence": "Vite 生产构建成功，30 个模块完成转换，并生成 Sites 所需的 dist/client 与 dist/server 文件。"
+    },
+    {
+      "command": "Chrome CDP 真实本机应用 4173：上传用户提供的图片",
+      "status": "pass",
+      "evidence": "桌面视口实际显示照片自检 56 分、清晰度 42、光线 35、分辨率 100；仅上传时用户消息数为 0，输入容器无横向溢出。"
+    },
+    {
+      "command": "Chrome CDP 真实本机应用 4173：390×844 手机视口",
+      "status": "pass",
+      "evidence": "缩略图为 84×84，评分卡宽 252px、输入容器宽 366px，输入框和合规提示完整可见且无横向溢出。"
+    },
+    {
+      "command": "Chrome CDP 真实本机应用 4173：上传后随问题发送",
+      "status": "pass",
+      "evidence": "发送后用户消息保留 56 分徽标、56 分评分环和三项指标，待发送区清空，手机消息无横向溢出。"
+    },
+    {
+      "command": "npm run team:test:mock",
+      "status": "pass",
+      "evidence": "独立 Mock 契约 54 项全部通过；该测试验证 Mock 后端契约，不覆盖本功能在真实 4173 页面中的本地像素评分，本功能真实页面验收已单独记录。"
+    },
+    {
+      "command": "npm run team:verify",
+      "status": "pass",
+      "evidence": "team-baseline 20 项套件全部通过。"
+    }
+  ],
+  "shared_changes": [],
+  "api_changes": [],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [],
+  "known_limitations": [
+    "评分仅反映图片采集质量，不代表颜值、吸引力、皮肤状况或医疗判断，也不能作为项目适用性依据。",
+    "清晰度、光线和分辨率使用确定性的本地像素启发式算法；不同压缩、裁切和拍摄环境会影响结果。",
+    "评分结果只保留在当前浏览器消息状态中，不新增服务端字段；刷新页面后的历史消息仍遵循现有附件元数据恢复能力。",
+    "一张图片上传后即时显示评分，多张图片时评分卡展示最后一张图片的自检结果；每张缩略图仍各自显示分数徽标。"
+  ],
+  "rollback": "回退 apps/acquisition-advisor/src/photo-assessment.js、App.jsx 中的评分组件与上传/发送映射、styles.css 中的评分样式、AGENTS.md 的评分边界说明和本任务测试；不涉及接口、迁移或依赖回退。"
+}

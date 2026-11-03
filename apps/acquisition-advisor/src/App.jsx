@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { analyzePhotoFile } from "./photo-assessment.js";
 
 const QUICK_QUESTIONS = [
   "脸部松弛，想了解抗初老项目",
@@ -178,6 +179,61 @@ function FeedbackIcon({ type }) {
   );
 }
 
+function photoScoreTone(assessment) {
+  return assessment?.tone || "low";
+}
+
+function PhotoScoreBadge({ assessment, compact = false }) {
+  if (!assessment?.available) return null;
+  return (
+    <span
+      className={`photo-score-badge ${photoScoreTone(assessment)} ${compact ? "is-compact" : ""}`}
+      title={`照片自检 ${assessment.score} 分：${assessment.label}`}
+    >
+      {assessment.score}
+    </span>
+  );
+}
+
+function PhotoScoreDetails({ attachments = [], compact = false }) {
+  const scored = attachments.filter((item) => item.photoAssessment?.available);
+  const latest = scored.at(-1)?.photoAssessment;
+  if (!latest) return null;
+  const dimensions = [
+    ["清晰度", latest.dimensions?.clarity],
+    ["光线", latest.dimensions?.lighting],
+    ["分辨率", latest.dimensions?.resolution]
+  ];
+  return (
+    <section className={`photo-score-details ${compact ? "is-compact" : ""}`} aria-label="照片自检结果">
+      <div
+        className={`photo-score-ring ${photoScoreTone(latest)}`}
+        style={{ "--photo-score-progress":`${Math.max(0, Math.min(100, latest.score))}%` }}
+        aria-label={`照片自检 ${latest.score} 分`}
+      >
+        <span><strong>{latest.score}</strong><small>分</small></span>
+      </div>
+      <div className="photo-score-body">
+        <div className="photo-score-heading">
+          <div><strong>照片自检</strong><span>{latest.label}</span></div>
+          {scored.length > 1 && <small>当前展示最后一张图片</small>}
+        </div>
+        <div className="photo-score-metrics">
+          {dimensions.map(([label, value]) => (
+            <div className="photo-score-metric" key={label}>
+              <span>{label}</span>
+              <i><b style={{ width:`${Math.max(0, Math.min(100, Number(value) || 0))}%` }} /></i>
+              <em>{Math.max(0, Math.min(100, Math.round(Number(value) || 0)))}</em>
+            </div>
+          ))}
+        </div>
+        <p>{latest.suggestions?.[0]}</p>
+      </div>
+      {!compact && <span className="photo-score-privacy">{latest.disclaimer}</span>}
+    </section>
+  );
+}
+
 function Composer({ value, onChange, onSubmit, disabled, restoringSession, inputRef, onStop, waiting, uploadCapability, onUpload, uploadError, onRetryUpload, pendingAttachments = [], onRemoveAttachment }) {
   const filePickerRef = useRef(null);
   const canSend = value.trim() && !disabled;
@@ -196,22 +252,26 @@ function Composer({ value, onChange, onSubmit, disabled, restoringSession, input
         )}
         <div className={`composer-box ${pendingAttachments.length ? "has-attachments" : ""}`}>
           {pendingAttachments.length > 0 && (
-            <div className="composer-attachments" aria-label="待发送附件">
-              {pendingAttachments.map((item) => (
-                <div className="composer-attachment" key={item.upload_id}>
-                  {item.previewUrl
-                    ? <img src={item.previewUrl} alt={item.file_name || "待发送图片"} />
-                    : <span className="composer-attachment-file">PDF</span>}
-                  <button
-                    type="button"
-                    className="composer-attachment-remove"
-                    aria-label={`移除附件 ${item.file_name || ""}`}
-                    onClick={() => onRemoveAttachment?.(item.upload_id)}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
+            <div className="composer-media">
+              <div className="composer-attachments" aria-label="待发送附件">
+                {pendingAttachments.map((item) => (
+                  <div className="composer-attachment" key={item.upload_id}>
+                    {item.previewUrl
+                      ? <img src={item.previewUrl} alt={item.file_name || "待发送图片"} />
+                      : <span className="composer-attachment-file">PDF</span>}
+                    <PhotoScoreBadge assessment={item.photoAssessment} />
+                    <button
+                      type="button"
+                      className="composer-attachment-remove"
+                      aria-label={`移除附件 ${item.file_name || ""}`}
+                      onClick={() => onRemoveAttachment?.(item.upload_id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <PhotoScoreDetails attachments={pendingAttachments} />
             </div>
           )}
           <div className="composer-row">
@@ -531,11 +591,17 @@ function ChatMessage({ message, showLeadCapture, leadState, appointmentState, on
       {message.attachments?.length > 0 && (
         <div className="message-attachments" aria-label="已发送附件">
           {message.attachments.map((item) => item.previewUrl
-            ? <img key={item.upload_id} src={item.previewUrl} alt={item.file_name || "已发送图片"} />
+            ? (
+              <span className="message-attachment-image" key={item.upload_id}>
+                <img src={item.previewUrl} alt={item.file_name || "已发送图片"} />
+                <PhotoScoreBadge assessment={item.photoAssessment} compact />
+              </span>
+            )
             : <span key={item.upload_id} className="message-attachment-file">{item.file_name || "PDF"}</span>)}
         </div>
       )}
       <span className="user-message-text">{message.content}</span>
+      <PhotoScoreDetails attachments={message.attachments || []} compact />
       {message.attachment && (
         <em className="attachment-state">
           附件已在本地保存（{Math.max(1, Math.round(message.attachment.size / 1024))} KB）· 仅客户侧可见
@@ -1216,6 +1282,9 @@ export function App() {
       reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
       reader.readAsDataURL(file);
     });
+    const photoAssessmentPromise = file.type.startsWith("image/")
+      ? analyzePhotoFile(file).catch(() => null)
+      : Promise.resolve(null);
     try {
       const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-upload"), {
         method:"POST",
@@ -1238,6 +1307,7 @@ export function App() {
         : "";
       const duplicate = pendingAttachments.find((item) => item.upload_id === body.upload_id);
       if (duplicate) releaseAttachmentPreview(duplicate.previewUrl);
+      const photoAssessment = await photoAssessmentPromise;
       // 上传成功只进入输入框待发送区，等客户连同问题一起发送后再生成对话消息。
       setPendingAttachments((current) => [
         ...current.filter((item) => item.upload_id !== body.upload_id),
@@ -1247,6 +1317,7 @@ export function App() {
           mime_type: file.type,
           size: file.size,
           previewUrl,
+          photoAssessment,
           matched_asset: body.matched_asset || null
         }
       ]);
@@ -1280,6 +1351,7 @@ export function App() {
             upload_id:item.upload_id,
             file_name:item.file_name,
             matched_asset:item.matched_asset || null,
+            photoAssessment:item.photoAssessment || null,
             previewUrl:item.previewUrl || ""
           })),
           at:new Date().toISOString(),

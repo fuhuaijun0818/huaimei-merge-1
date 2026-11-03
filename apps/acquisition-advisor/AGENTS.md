@@ -25,6 +25,8 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 - Composer attachments: uploaded images stay inside the same rounded composer as removable thumbnails above the text field; uploading alone never creates a chat message. The thumbnails move into the sent user bubble with the question, and up to three attachments are allowed to match the chat API limit.
 
+- Face-image scoring: score only objective photo quality locally in the browser (clarity, lighting and resolution). Never rank attractiveness, infer sensitive traits, diagnose from the photo, judge treatment suitability, or send a customer photo to a vision provider for scoring.
+
 - Public session recovery: an invalid or expired visitor credential must silently start a new anonymous conversation and reload the upload capability; never surface a 401 credential error on the welcome screen, and never leave the attach button hidden because of a stale credential.
 
 - Reply reconciliation: a server-history reply and its local short presentation segments are the same assistant turn. During polling, replace the canonical row with the segments; never flash or retain both representations.
