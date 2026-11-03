@@ -15,7 +15,8 @@ const tabs = [
   ["employees", "员工"],
   ["onboarding", "入职流程"],
   ["offboarding", "离职流程"],
-  ["reports", "日报 / 周报 / 月报"]
+  ["resume", "简历筛选助手"],
+  ["reports", "报告生成助手"]
 ];
 const periodLabels = { daily:"日报", weekly:"周报", monthly:"月报" };
 const statusTone = (status) => /完成|在职|正常/.test(String(status || "")) ? "success"
@@ -157,15 +158,32 @@ const reportsPage = () => {
   const accounts = reportAccounts();
   const selectedAccount = activeReportAccount();
   const reports = (ui.data?.reports || []).filter((report) => report.account_id === selectedAccount);
+  const workLogs = (ui.data?.workLogs || []).filter((item) => item.account_id === selectedAccount).slice(0, 8);
+  const feishu = ui.data?.integrations?.feishu_report || { configured:false, mode:"not_configured" };
   const accountBar = `<div class="hr-report-account-bar"><label><span>报告账号</span><select id="hr-report-account">${accounts.map((employee) => `<option value="${escapeHtml(employee.account_id)}" ${employee.account_id === selectedAccount ? "selected" : ""}>${escapeHtml(employee.name)} · ${escapeHtml(employee.account_id)}</option>`).join("")}</select></label><span>${accounts.length} 个账号，每个账号独立保存日报、周报、月报</span><button class="btn" data-action="hr-generate-all-reports">${icon("refresh",14)}更新全部账号</button></div>`;
   const generator = `<div class="hr-report-actions">${Object.entries(periodLabels).map(([period, label]) => `<button class="btn" data-action="hr-generate-report" data-id="${period}" data-account-id="${escapeHtml(selectedAccount)}">更新本账号${label}</button>`).join("")}</div>`;
+  const worklog = selectedAccount ? `<section class="hr-worklog-card"><header><div><span>报告生成助手 · 负责人：孟夕然</span><h3>今天的文字 / 语音工作记录</h3></div>${feishu.configured ? badge("飞书报告已配置", "success") : badge("飞书报告未配置", "warning")}</header><textarea id="hr-worklog-content" maxlength="4000" placeholder="例如：完成 3 位候选人初筛，推进入职 1 人，处理员工咨询 2 项…"></textarea><footer><span id="hr-worklog-status">文字输入或使用浏览器语音转写</span><button class="btn" type="button" data-action="hr-voice-worklog">${icon("message",14)}语音输入</button><button class="btn primary" type="button" data-action="hr-save-worklog" data-account-id="${escapeHtml(selectedAccount)}">保存工作记录</button></footer>${workLogs.length ? `<div class="hr-worklog-history">${workLogs.map((item) => `<div><span>${escapeHtml(item.work_date)} · ${item.source === "voice" ? "语音" : "文字"}</span><strong>${escapeHtml(item.content)}</strong></div>`).join("")}</div>` : ""}</section>` : "";
   if (!accounts.length) return `${accountBar}<section class="card">${empty("还没有带登录账号的员工", "完成入职时登记登录账号后，系统会自动为每个账号建立日报、周报和月报。")}</section>`;
-  if (!reports.length) return `${accountBar}${generator}<section class="card">${empty("该账号暂无报告", "刷新人事数据后，系统会为当前账号自动汇总本期日报、周报和月报。")}</section>`;
-  return `${accountBar}${generator}<div class="stack">${reports.slice(0, 30).map((report) => `<article class="card hr-report">
-    <header><div><span>${escapeHtml(report.period_label)} · ${escapeHtml(report.account_id)}</span><h3>${escapeHtml(report.employee_name || report.account_id)} · ${formatDate(report.range_start, false)} 至 ${formatDate(report.range_end, false)}</h3></div>${badge(`生成于 ${formatDate(report.generated_at)}`, "outline")}</header>
-    <div class="hr-report-metrics">${Object.entries(report.metrics || {}).map(([name, value]) => `<div><strong>${Number(value) || 0}</strong><span>${escapeHtml(({ active_employees:"在职员工", onboarded:"完成入职", departed:"完成离职", open_onboarding:"在办入职", open_offboarding:"在办离职", completed_tasks:"本期完成任务", overdue_tasks:"逾期任务" })[name] || name)}</span></div>`).join("")}</div>
+  if (!reports.length) return `${accountBar}${worklog}${generator}<section class="card">${empty("该账号暂无报告", "刷新人事数据后，系统会为当前账号自动汇总本期日报、周报和月报。")}</section>`;
+  return `${accountBar}${worklog}${generator}<div class="stack">${reports.slice(0, 30).map((report) => `<article class="card hr-report">
+    <header><div><span>${escapeHtml(report.period_label)} · ${escapeHtml(report.account_id)}</span><h3>${escapeHtml(report.employee_name || report.account_id)} · ${formatDate(report.range_start, false)} 至 ${formatDate(report.range_end, false)}</h3></div><div class="hr-report-badges">${badge(`生成于 ${formatDate(report.generated_at)}`, "outline")}${badge(report.feishu_delivery?.status === "delivered" ? "飞书已送达" : report.feishu_delivery?.status === "failed" ? "飞书送达失败" : report.feishu_delivery?.status === "not_configured" ? "飞书未配置" : "飞书待发送", report.feishu_delivery?.status === "delivered" ? "success" : report.feishu_delivery?.status === "failed" ? "danger" : "warning")}</div></header>
+    <div class="hr-report-metrics">${Object.entries(report.metrics || {}).map(([name, value]) => `<div><strong>${Number(value) || 0}</strong><span>${escapeHtml(({ active_employees:"在职员工", onboarded:"完成入职", departed:"完成离职", open_onboarding:"在办入职", open_offboarding:"在办离职", completed_tasks:"本期完成任务", overdue_tasks:"逾期任务", work_logs:"工作记录" })[name] || name)}</span></div>`).join("")}</div>
     <div class="hr-report-sections">${(report.sections || []).map((section) => `<section><h4>${escapeHtml(section.title)}</h4><ul>${(section.items || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>`).join("")}</div>
     <p class="caption">${escapeHtml(report.automation_note)}</p>
+  </article>`).join("")}</div>`;
+};
+
+const resumePage = () => {
+  const screenings = ui.data?.resumeScreenings || [];
+  const header = `<div class="hr-owner-strip"><span>简历筛选助手</span><strong>负责人：李江龙</strong><small>只基于JD和简历文本做辅助匹配，不自动淘汰，不读取年龄、性别、婚育、民族或照片等敏感信息。</small></div>`;
+  const actions = `<div class="hr-report-actions"><button class="btn primary" data-action="hr-new-resume-screen">${icon("plus",14)}新建简历筛选</button></div>`;
+  if (!screenings.length) return `${header}${actions}<section class="card">${empty("还没有简历筛选记录", "输入岗位JD和简历文本后，系统会给出匹配关键词、缺口和建议复核分数。")}</section>`;
+  return `${header}${actions}<div class="hr-resume-grid">${screenings.map((item) => `<article class="card hr-resume-card">
+    <header><div><span>${escapeHtml(item.job_title)}</span><h3>${escapeHtml(item.candidate_label)}</h3></div><strong>${item.score}<small>/100</small></strong></header>
+    ${badge(item.verdict, item.score >= 80 ? "success" : item.score >= 60 ? "warning" : "outline")}
+    <div class="hr-resume-terms"><div><span>匹配项</span>${item.matched_terms.length ? item.matched_terms.map((term) => badge(term, "success")).join("") : "<em>暂无</em>"}</div><div><span>待核实</span>${item.missing_terms.length ? item.missing_terms.map((term) => badge(term, "outline")).join("") : "<em>无</em>"}</div></div>
+    <p>${escapeHtml(item.note)}</p>
+    <footer>${escapeHtml(item.owner)} · ${formatDate(item.created_at)} · 不自动淘汰</footer>
   </article>`).join("")}</div>`;
 };
 
@@ -181,10 +199,11 @@ export function renderHrPage() {
         employees:employeesPage,
         onboarding:() => workflowsPage("onboarding"),
         offboarding:() => workflowsPage("offboarding"),
+        resume:resumePage,
         reports:reportsPage
       }[ui.tab] || dashboard)();
   const actions = `<button class="btn" data-action="hr-refresh">${icon("refresh",15)}刷新</button><button class="btn" data-action="hr-new-offboarding">${icon("route",15)}发起离职</button><button class="btn primary" data-action="hr-new-onboarding">${icon("plus",15)}发起入职</button>`;
-  return `<div class="page hr-page">${pageHead("经营治理", "人事管理", `独立人事工作台 · ${metrics.active} 名在职员工 · ${metrics.onboarding} 个在办入职 · ${metrics.offboarding} 个在办离职`, actions)}
+  return `<div class="page hr-page">${pageHead("经营治理 · 人事方向：叶苏、李凯朝", "人事管理", `独立人事工作台 · ${metrics.active} 名在职员工 · ${metrics.onboarding} 个在办入职 · ${metrics.offboarding} 个在办离职`, actions)}
     <nav class="module-subnav hr-tabs" aria-label="人事管理二级导航">${tabs.map(([id, label]) => `<button class="${ui.tab === id ? "active" : ""}" data-action="hr-tab" data-id="${id}" ${ui.tab === id ? 'aria-current="page"' : ""}>${label}</button>`).join("")}</nav>
     <div class="hr-body">${content}</div>
   </div>`;
@@ -244,6 +263,92 @@ const showCompleteTaskModal = (workflowId, taskId) => {
   });
 };
 
+const showResumeScreeningModal = () => {
+  openModal({
+    title:"简历筛选助手",
+    desc:"负责人：李江龙。根据JD和简历文本判断关键词覆盖及经验匹配，结果只用于人工初筛，不自动淘汰候选人。",
+    wide:true,
+    body:`<form id="hr-resume-form" class="form-grid">
+      ${formField("岗位名称","job_title","",{required:true})}
+      ${formField("候选人标识（建议使用编号）","candidate_label","",{required:true})}
+      ${formField("岗位JD","job_description","",{type:"textarea",full:true,required:true})}
+      ${formField("简历文本","resume_text","",{type:"textarea",full:true,required:true})}
+      <div class="form-group full"><div class="guardrail">${icon("shield",14)}不读取或推断年龄、性别、婚育、民族、照片等敏感信息；系统不会自动拒绝候选人。</div></div>
+    </form>`,
+    footer:`<button class="btn" data-action="modal-close">取消</button><button class="btn primary" data-action="hr-submit-form" data-id="hr-resume-form">开始匹配评分</button>`
+  });
+};
+
+let activeRecognition = null;
+const startVoiceWorkLog = () => {
+  const field = document.querySelector("#hr-worklog-content");
+  const status = document.querySelector("#hr-worklog-status");
+  if (!field) return toast("请先切换到报告生成助手", "warning");
+  const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!Recognition) {
+    const message = "当前浏览器不支持语音转写，请使用文字输入";
+    if (status) status.textContent = message;
+    return toast(message, "warning");
+  }
+  if (activeRecognition) {
+    activeRecognition.stop();
+    activeRecognition = null;
+  }
+  const recognition = new Recognition();
+  activeRecognition = recognition;
+  recognition.lang = "zh-CN";
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  const base = String(field.value || "").trim();
+  recognition.onstart = () => {
+    if (status) status.textContent = "正在听取语音，请直接说出今日工作…";
+    field.dataset.source = "voice";
+  };
+  recognition.onresult = (event) => {
+    let finalText = "";
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      if (event.results[index].isFinal) finalText += event.results[index][0].transcript;
+    }
+    if (finalText) field.value = [base, finalText.trim()].filter(Boolean).join("\n");
+    if (status) status.textContent = finalText ? "语音已转写，核对后可保存" : "正在识别…";
+  };
+  recognition.onerror = (event) => {
+    if (status) status.textContent = `语音识别失败：${event.error || "unknown"}；可改用文字`;
+    activeRecognition = null;
+  };
+  recognition.onend = () => {
+    if (activeRecognition === recognition) activeRecognition = null;
+    if (status && field.dataset.source === "voice" && field.value.trim()) status.textContent = "语音转写完成，核对后可保存";
+  };
+  recognition.start();
+};
+
+const saveHrWorkLog = async (target) => {
+  const accountId = target.dataset.accountId || activeReportAccount();
+  const field = document.querySelector("#hr-worklog-content");
+  const content = String(field?.value || "").trim();
+  const status = document.querySelector("#hr-worklog-status");
+  if (!accountId) return toast("请先选择报告账号", "warning");
+  if (!content) return toast("请输入工作记录", "warning");
+  target.disabled = true;
+  try {
+    await request("/api/admin/hr/work-logs", {
+      method:"POST",
+      headers:{ "Idempotency-Key":key("hr-worklog") },
+      body:JSON.stringify({ account_id:accountId, content, source:field.dataset.source === "voice" ? "voice" : "text" })
+    });
+    await hydrateHr({ force:true });
+    ui.tab = "reports";
+    refreshHrContent();
+    toast("工作记录已保存，日报、周报和月报将自动汇总", "success");
+  } catch (error) {
+    if (status) status.textContent = error.message;
+    toast(error.message, "danger");
+  } finally {
+    target.disabled = false;
+  }
+};
+
 const handleHrAction = async (action, id, target) => {
   if (action === "hr-tab") {
     ui.tab = id;
@@ -256,7 +361,10 @@ const handleHrAction = async (action, id, target) => {
   }
   if (action === "hr-new-onboarding") return showOnboardingModal();
   if (action === "hr-new-offboarding") return showOffboardingModal();
+  if (action === "hr-new-resume-screen") return showResumeScreeningModal();
   if (action === "hr-complete-task") return showCompleteTaskModal(id, target.dataset.taskId || "");
+  if (action === "hr-voice-worklog") return startVoiceWorkLog();
+  if (action === "hr-save-worklog") return saveHrWorkLog(target);
   if (action === "hr-submit-form") {
     const form = document.getElementById(id);
     if (!form) return toast("表单已失效，请重新打开", "warning");
@@ -318,7 +426,7 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("submit", async (event) => {
   const form = event.target;
-  if (!["hr-onboarding-form", "hr-offboarding-form", "hr-complete-task-form"].includes(form.id)) return;
+  if (!["hr-onboarding-form", "hr-offboarding-form", "hr-complete-task-form", "hr-resume-form"].includes(form.id)) return;
   form.dataset.hrSubmitSeen = "true";
   event.preventDefault();
   event.stopImmediatePropagation();
@@ -350,6 +458,17 @@ document.addEventListener("submit", async (event) => {
       ui.tab = "offboarding";
       refreshHrContent();
       toast("离职流程已创建，交接任务已生成", "success");
+    } else if (form.id === "hr-resume-form") {
+      await request("/api/admin/hr/resume-screenings", {
+        method:"POST",
+        headers:{ "Idempotency-Key":key("hr-resume") },
+        body:JSON.stringify(data)
+      });
+      closeModal();
+      await hydrateHr({ force:true });
+      ui.tab = "resume";
+      refreshHrContent();
+      toast("简历匹配评分已生成，请结合岗位要求人工复核", "success");
     } else {
       await request(`/api/admin/hr/workflows/${encodeURIComponent(form.dataset.workflowId)}/tasks/${encodeURIComponent(form.dataset.taskId)}/complete`, {
         method:"POST",

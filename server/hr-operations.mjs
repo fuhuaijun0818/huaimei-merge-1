@@ -1,6 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { deliverFeishuReport, getFeishuReportStatus } from "./feishu-report-client.mjs";
 
 const DEFAULT_STORE_FILE = resolve(process.cwd(), ".local-data", "hr", "operations.json");
 const STORE_FILE = String(process.env.HUAMEI_HR_STORE_FILE || "").trim();
@@ -27,6 +28,14 @@ const emptyTenant = () => ({
   employees: [],
   workflows: [],
   reports: [],
+  resumeScreenings: [],
+  workLogs: [],
+  reportSchedule: {
+    enabled:true,
+    timezone:"Asia/Shanghai",
+    last_run_at:null,
+    last_error:""
+  },
   events: [],
   revision: 0
 });
@@ -75,9 +84,10 @@ const tenantState = (state, tenantId) => {
   const key = text(tenantId, 120) || "default";
   state.tenants[key] ||= emptyTenant();
   const tenant = state.tenants[key];
-  for (const field of ["employees", "workflows", "reports", "events"]) {
+  for (const field of ["employees", "workflows", "reports", "resumeScreenings", "workLogs", "events"]) {
     if (!Array.isArray(tenant[field])) tenant[field] = [];
   }
+  tenant.reportSchedule ||= { enabled:true, timezone:"Asia/Shanghai", last_run_at:null, last_error:"" };
   const usedAccounts = new Set();
   for (const employee of tenant.employees) {
     let accountId = text(employee.account_id, 100);
@@ -207,6 +217,9 @@ export async function getHrOverview({ tenantId, actor = "system" } = {}) {
   return withState(async (state) => {
     const tenant = reconcileTenant(tenantState(state, tenantId));
     ensureAccountReports(tenant, actor);
+    tenant.integrations = {
+      feishu_report:getFeishuReportStatus()
+    };
     tenant.revision += 1;
     return clone(tenant);
   });
@@ -332,6 +345,108 @@ export async function completeHrTask({ tenantId, actor, workflowId, taskId, note
   });
 }
 
+const RESUME_SKILL_TERMS = Object.freeze([
+  "人力", "招聘", "培训", "绩效", "薪酬", "员工关系", "劳动法", "Excel", "Word", "PPT",
+  "飞书", "钉钉", "企业微信", "AI", "大模型", "数据分析", "项目管理", "沟通", "汇报",
+  "Python", "SQL", "Java", "JavaScript", "React", "Node.js", "运营", "内容", "医疗", "医美",
+  "客服", "销售", "CRM", "SaaS", "英语", "本科", "硕士", "博士"
+]);
+const HR_RESUME_NOTE = "评分只基于岗位要求和简历文本中的可匹配信息，供人工初筛参考；不得用于自动淘汰，不读取或推断年龄、性别、婚育、民族、照片等敏感信息。";
+
+const normalizedResumeText = (value) => String(value || "").normalize("NFKC").replace(/\r/g, "").toLowerCase();
+const extractResumeTerms = (jd) => {
+  const normalized = normalizedResumeText(jd);
+  const vocabulary = RESUME_SKILL_TERMS.filter((term) => normalized.includes(term.toLowerCase()));
+  const fragments = String(jd || "").normalize("NFKC")
+    .split(/[\n,，。；;、/|｜（）()【】\[\]：:]+/u)
+    .map((item) => text(item, 40))
+    .filter((item) => item.length >= 2 && item.length <= 24)
+    .filter((item) => !/^(岗位职责|任职要求|工作内容|职位描述|优先|加分项|要求|职责)$/u.test(item));
+  return [...new Set([...vocabulary, ...fragments])].slice(0, 16);
+};
+
+export async function screenResume({ tenantId, actor, payload = {} } = {}) {
+  return withState(async (state) => {
+    const tenant = reconcileTenant(tenantState(state, tenantId));
+    const jd = text(payload.job_description, 20_000);
+    const resume = text(payload.resume_text, 50_000);
+    const candidateLabel = text(payload.candidate_label, 80) || "未命名候选人";
+    if (jd.length < 20 || resume.length < 20) {
+      throw Object.assign(new Error("岗位要求和简历文本均不能少于20个字符"), { code:"HR_RESUME_INPUT_TOO_SHORT", status:400 });
+    }
+    const terms = extractResumeTerms(jd);
+    const normalizedResume = normalizedResumeText(resume);
+    const matched = terms.filter((term) => normalizedResume.includes(term.toLowerCase())).slice(0, 20);
+    const missing = terms.filter((term) => !normalizedResume.includes(term.toLowerCase())).slice(0, 20);
+    const requiredYears = Number((jd.match(/(\d+)\s*年(?:以上)?(?:相关)?经验/u) || [])[1] || 0);
+    const resumeYears = Math.max(0, ...(resume.match(/(\d+)\s*年/gu) || []).map((item) => Number(item.replace(/\D/g, "")) || 0));
+    const coverage = terms.length ? matched.length / terms.length : 0.5;
+    const experienceFit = requiredYears ? Math.min(1, resumeYears / requiredYears) : 0.7;
+    const score = Math.max(0, Math.min(100, Math.round(35 + coverage * 55 + experienceFit * 10)));
+    const verdict = score >= 80 ? "高匹配" : score >= 60 ? "可进入人工复核" : "匹配度较低";
+    const screening = {
+      id:uid("hrresume"),
+      candidate_label:candidateLabel,
+      job_title:text(payload.job_title, 120) || "未命名岗位",
+      score,
+      verdict,
+      matched_terms:matched,
+      missing_terms:missing,
+      required_years:requiredYears || null,
+      resume_years:resumeYears || null,
+      resume_sha256:createHash("sha256").update(resume).digest("hex"),
+      owner:"李江龙",
+      created_by:text(actor, 120) || "system",
+      created_at:nowIso(),
+      note:HR_RESUME_NOTE,
+      auto_reject:false
+    };
+    tenant.resumeScreenings.unshift(screening);
+    tenant.resumeScreenings = tenant.resumeScreenings.slice(0, 1000);
+    appendEvent(tenant, {
+      type:"resume.screened",
+      actor,
+      detail:`简历筛选：${candidateLabel} · ${score}分 · ${verdict}`
+    });
+    tenant.revision += 1;
+    return clone(screening);
+  });
+}
+
+export async function createHrWorkLog({ tenantId, actor, payload = {} } = {}) {
+  return withState(async (state) => {
+    const tenant = reconcileTenant(tenantState(state, tenantId));
+    const accountId = text(payload.account_id, 100);
+    const content = text(payload.content, 4000);
+    const source = ["text", "voice"].includes(payload.source) ? payload.source : "text";
+    const employee = tenant.employees.find((item) => item.account_id.toLowerCase() === accountId.toLowerCase());
+    if (!employee) throw Object.assign(new Error("未找到对应的人事账号"), { code:"HR_ACCOUNT_NOT_FOUND", status:404 });
+    if (!content) throw Object.assign(new Error("工作记录不能为空"), { code:"HR_WORK_LOG_EMPTY", status:400 });
+    const workDate = dateOnly(payload.work_date) || dayIso();
+    const log = {
+      id:uid("hrworklog"),
+      account_id:employee.account_id,
+      employee_id:employee.id,
+      employee_name:employee.name,
+      work_date:workDate,
+      source,
+      content,
+      created_by:text(actor, 120) || "system",
+      created_at:nowIso()
+    };
+    tenant.workLogs.unshift(log);
+    tenant.workLogs = tenant.workLogs.slice(0, 10_000);
+    appendEvent(tenant, {
+      type:"work_log.created",
+      employee,
+      actor,
+      detail:`${source === "voice" ? "语音" : "文字"}工作记录已保存（${employee.account_id}）`
+    });
+    tenant.revision += 1;
+    return clone(log);
+  });
+}
+
 const reportRange = (period, now = new Date()) => {
   const end = now;
   const start = new Date(now);
@@ -362,6 +477,10 @@ const buildAccountReport = (tenant, employee, period, { actor = "system", now = 
     const at = Date.parse(item.at || "");
     return item.employee_id === employee.id && Number.isFinite(at) && at >= startMs && at <= endMs;
   });
+  const workLogs = tenant.workLogs.filter((item) => {
+    const at = Date.parse(item.created_at || "");
+    return item.account_id === employee.account_id && Number.isFinite(at) && at >= startMs && at <= endMs;
+  });
   const activatedAt = Date.parse(employee.activated_at || "");
   const departedAt = Date.parse(employee.departed_at || "");
   const openWorkflows = employeeWorkflows.filter((item) => item.status !== "completed");
@@ -383,6 +502,13 @@ const buildAccountReport = (tenant, employee, period, { actor = "system", now = 
     range_end:end.toISOString(),
     generated_at:nowIso(),
     generated_by:text(actor, 120) || "system",
+    generation_mode:"automatic",
+    schedule:{
+      period:normalizedPeriod,
+      timezone:"Asia/Shanghai",
+      refresh:"页面访问与后台定时任务自动更新当前周期"
+    },
+    feishu_delivery:{ status:"not_attempted" },
     metrics:{
       active_employees:employee.status === "在职" ? 1 : 0,
       onboarded:Number.isFinite(activatedAt) && activatedAt >= startMs && activatedAt <= endMs ? 1 : 0,
@@ -390,7 +516,8 @@ const buildAccountReport = (tenant, employee, period, { actor = "system", now = 
       open_onboarding:openWorkflows.filter((item) => item.type === "onboarding").length,
       open_offboarding:openWorkflows.filter((item) => item.type === "offboarding").length,
       completed_tasks:eventCount("workflow.task_completed"),
-      overdue_tasks:overdue.length
+      overdue_tasks:overdue.length,
+      work_logs:workLogs.length
     },
     sections:[
       {
@@ -413,6 +540,13 @@ const buildAccountReport = (tenant, employee, period, { actor = "system", now = 
         ]
       },
       {
+        key:"work_logs",
+        title:"工作记录摘要",
+        items:workLogs.length
+          ? workLogs.slice(0, 12).map((item) => `${item.work_date} · ${item.source === "voice" ? "语音" : "文字"}：${item.content.slice(0, 180)}`)
+          : ["本期暂无文字或语音工作记录"]
+      },
+      {
         key:"risk",
         title:"风险与待办",
         items:overdue.length
@@ -420,7 +554,7 @@ const buildAccountReport = (tenant, employee, period, { actor = "system", now = 
           : ["当前没有逾期人事任务"]
       }
     ],
-    automation_note:"本报告按员工账号独立生成；流程任务、状态和统计由系统自动汇总，外部账号开通、权限停用、财务结算等动作必须在完成凭据登记后才计入完成。"
+    automation_note:"本报告按员工账号独立生成，并由后台定时任务更新当前日/周/月周期；外部账号开通、权限停用、财务结算等动作必须在完成凭据登记后才计入完成。飞书交付状态以实际接口回执为准。"
   };
   const rangeKey = start.toISOString().slice(0, 10);
   const existing = tenant.reports.find((item) => item.account_id === employee.account_id
@@ -428,6 +562,7 @@ const buildAccountReport = (tenant, employee, period, { actor = "system", now = 
     && String(item.range_start || "").slice(0, 10) === rangeKey);
   if (existing) {
     report.id = existing.id || `hrreport_${Buffer.from(`${employee.account_id}:${normalizedPeriod}:${rangeKey}`).toString("base64url").slice(0, 32)}`;
+    report.feishu_delivery = existing.feishu_delivery || { status:"not_attempted" };
     Object.assign(existing, report);
     return clone(existing);
   }
@@ -461,6 +596,11 @@ export async function generateHrReport({ tenantId, actor, period = "daily", acco
     }
     const reports = employees.map((employee) => buildAccountReport(tenant, employee, normalizedPeriod, { actor }));
     for (const report of reports) {
+      report.feishu_delivery = await deliverFeishuReport(report);
+      const stored = tenant.reports.find((item) => item.id === report.id);
+      if (stored) stored.feishu_delivery = report.feishu_delivery;
+    }
+    for (const report of reports) {
       appendEvent(tenant, {
         type:"report.generated",
         employee:employees.find((item) => item.id === report.employee_id),
@@ -471,4 +611,35 @@ export async function generateHrReport({ tenantId, actor, period = "daily", acco
     tenant.revision += 1;
     return reports.length === 1 ? reports[0] : { reports, account_count:reports.length };
   });
+}
+
+let reportSchedulerTimer = null;
+
+export function startHrReportScheduler({ intervalMs = 60 * 60 * 1000 } = {}) {
+  if (reportSchedulerTimer || String(process.env.HUAMEI_HR_REPORT_SCHEDULER_ENABLED || "true").toLowerCase() === "false") {
+    return Boolean(reportSchedulerTimer);
+  }
+  const refreshInterval = Math.max(60_000, Number(process.env.HUAMEI_HR_REPORT_REFRESH_MS) || intervalMs);
+  const tick = async () => {
+    try {
+      await withState(async (state) => {
+        for (const [tenantId, tenant] of Object.entries(state.tenants || {})) {
+          const current = reconcileTenant(tenantState(state, tenantId));
+          ensureAccountReports(current, "system_scheduler");
+          current.reportSchedule.last_run_at = nowIso();
+          current.reportSchedule.last_error = "";
+        }
+      });
+    } catch (error) {
+      await withState(async (state) => {
+        for (const tenant of Object.values(state.tenants || {})) {
+          tenant.reportSchedule ||= { enabled:true, timezone:"Asia/Shanghai", last_run_at:null, last_error:"" };
+          tenant.reportSchedule.last_error = String(error.code || error.message || "HR_REPORT_SCHEDULE_FAILED").slice(0, 200);
+        }
+      }).catch(() => {});
+    }
+  };
+  reportSchedulerTimer = setInterval(tick, refreshInterval);
+  reportSchedulerTimer.unref?.();
+  return true;
 }

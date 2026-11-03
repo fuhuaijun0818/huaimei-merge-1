@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 
 process.env.HUAMEI_HR_STORE_FILE = ":memory:";
 const hr = await import("../server/hr-operations.mjs");
+const feishuReports = await import("../server/feishu-report-client.mjs");
 
 const today = new Date().toISOString().slice(0, 10);
 const tenantId = "tenant-hr-test";
@@ -112,6 +113,34 @@ const secondOnboarding = await hr.createOnboardingWorkflow({
 });
 assert.equal(secondOnboarding.employee.account_id, "employee.two@example.test");
 
+const resumeScreening = await hr.screenResume({
+  tenantId,
+  actor,
+  payload:{
+    job_title:"人事运营专员",
+    candidate_label:"候选人-测试-001",
+    job_description:"岗位职责：负责招聘、员工关系、绩效和Excel数据分析，要求3年以上相关经验。任职要求：沟通能力强，熟悉飞书和人力资源流程。",
+    resume_text:"本人有5年人事运营经验，负责招聘、员工关系、绩效考核和Excel数据分析，熟悉飞书协同与人力资源流程，沟通能力良好。"
+  }
+});
+assert.ok(resumeScreening.score >= 60);
+assert.equal(resumeScreening.auto_reject, false);
+assert.ok(resumeScreening.matched_terms.includes("招聘"));
+assert.equal(typeof resumeScreening.resume_sha256, "string");
+assert.doesNotMatch(JSON.stringify(resumeScreening), /本人有5年人事运营经验/);
+
+const workLog = await hr.createHrWorkLog({
+  tenantId,
+  actor,
+  payload:{
+    account_id:"employee.one@example.test",
+    source:"voice",
+    content:"完成两位候选人初筛，并跟进一名员工入职材料。"
+  }
+});
+assert.equal(workLog.source, "voice");
+assert.equal(workLog.account_id, "employee.one@example.test");
+
 for (const period of ["daily", "weekly", "monthly"]) {
   const report = await hr.generateHrReport({ tenantId, actor, period, accountId:"employee.one@example.test" });
   assert.equal(report.period, period);
@@ -119,6 +148,8 @@ for (const period of ["daily", "weekly", "monthly"]) {
   assert.ok(report.sections.length >= 3);
   assert.ok(Number.isFinite(report.metrics.onboarded));
   assert.match(report.automation_note, /外部账号|完成凭据/);
+  assert.ok(report.sections.some((section) => section.key === "work_logs"));
+  assert.equal(report.feishu_delivery.status, "not_configured");
 }
 const allReports = await hr.generateHrReport({ tenantId, actor, period:"daily" });
 assert.equal(allReports.account_count, 2);
@@ -134,11 +165,37 @@ for (const accountId of ["employee.one@example.test", "employee.two@example.test
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");
 const navSource = await readFile(new URL("../src/ui.js", import.meta.url), "utf8");
 const apiSource = await readFile(new URL("../server/api-router.mjs", import.meta.url), "utf8");
+const hrUiSource = await readFile(new URL("../src/modules/hr/index.js", import.meta.url), "utf8");
 assert.match(navSource, /\["hr", "users", "人事管理"\]/);
 assert.match(appSource, /renderHrPage/);
 assert.match(appSource, /hr: renderHrPage/);
 assert.match(apiSource, /\/api\/admin\/hr\/onboarding/);
 assert.match(apiSource, /\/api\/admin\/hr\/offboarding/);
+assert.match(apiSource, /\/api\/admin\/hr\/resume-screenings/);
+assert.match(apiSource, /\/api\/admin\/hr\/work-logs/);
 assert.match(apiSource, /reports\/generate/);
+assert.match(hrUiSource, /简历筛选助手/);
+assert.match(hrUiSource, /负责人：李江龙/);
+assert.match(hrUiSource, /报告生成助手 · 负责人：孟夕然/);
+assert.match(hrUiSource, /语音输入/);
+assert.match(hrUiSource, /飞书报告/);
+assert.equal(feishuReports.getFeishuReportStatus({}).configured, false);
+let sentPayload = null;
+const delivered = await feishuReports.deliverFeishuReport({
+  employee_name:"测试员工",
+  account_id:"test@example.test",
+  period_label:"日报",
+  range_start:new Date().toISOString(),
+  range_end:new Date().toISOString(),
+  sections:[{ title:"流程执行", items:["完成 1 项任务"] }]
+}, {
+  env:{ HUAMEI_FEISHU_REPORT_WEBHOOK:"https://example.test/feishu/report" },
+  fetchImpl:async (_url, options) => {
+    sentPayload = JSON.parse(options.body);
+    return { ok:true, status:200, json:async () => ({ code:0, data:{ message_id:"om_test" } }) };
+  }
+});
+assert.equal(delivered.status, "delivered");
+assert.match(sentPayload.content.post.zh_cn.title, /测试员工 日报/);
 
 console.log("hr-operations: passed");
