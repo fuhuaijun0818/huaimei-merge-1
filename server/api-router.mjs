@@ -66,6 +66,13 @@ import {
   getManagementDomainOverlay,
   replaceManagementDomainOverlay
 } from "./management-domain-store.mjs";
+import {
+  completeHrTask,
+  createOffboardingWorkflow,
+  createOnboardingWorkflow,
+  generateHrReport,
+  getHrOverview
+} from "./hr-operations.mjs";
 
 export const DEMO_API_KEY = "hm_local_demo_key_2026";
 const API_KEY = process.env.HUAMEI_API_KEY || DEMO_API_KEY;
@@ -686,6 +693,83 @@ export async function handleApiRequest(request, response) {
 
   if (request.method === "GET" && url.pathname === "/api/v1/openapi.json") {
     sendJson(request, response, requestId, 200, createOpenApiDocument(`${url.protocol}//${url.host}`));
+    return true;
+  }
+
+  if (url.pathname.startsWith("/api/admin/hr")) {
+    const method = request.method;
+    const taskMatch = url.pathname.match(/^\/api\/admin\/hr\/workflows\/(hr(?:onb|off)_[a-f0-9-]+)\/tasks\/(hrtask_[a-f0-9-]+)\/complete$/i);
+    const supported = (method === "GET" && url.pathname === "/api/admin/hr")
+      || (method === "POST" && url.pathname === "/api/admin/hr/onboarding")
+      || (method === "POST" && url.pathname === "/api/admin/hr/offboarding")
+      || (method === "POST" && url.pathname === "/api/admin/hr/reports/generate")
+      || (method === "POST" && taskMatch);
+    if (!supported) {
+      sendError(request, response, requestId, 404, "API_NOT_FOUND", "未找到指定人事管理端点");
+      return true;
+    }
+    let principal;
+    try {
+      principal = await authorizeManagementRequest(request, {
+        requiredCapabilities:[PHASE_ONE_CAPABILITIES.platformManage],
+        tenantId:PUBLIC_TENANT_ID,
+        tenantField:"token.tenant_ids"
+      });
+      await recordManagementAccess({
+        principal,
+        requestId,
+        request,
+        action:`management.hr.${taskMatch ? "task_complete" : url.pathname.split("/").at(-1)}`,
+        resourceType:"hr_operations",
+        resourceId:taskMatch?.[1] || principal.tenantId
+      });
+    } catch (error) {
+      sendManagementAuthorizationError(request, response, requestId, error);
+      return true;
+    }
+    if (method === "GET") {
+      try {
+        const data = await getHrOverview({ tenantId:principal.tenantId, actor:principal.subject });
+        sendJson(request, response, requestId, 200, { data, request_id:requestId });
+      } catch (error) {
+        sendError(request, response, requestId, Number(error.status) || 500, error.code || "HR_OVERVIEW_FAILED", error.message || "人事数据读取失败");
+      }
+      return true;
+    }
+    const idempotencyKey = String(request.headers["idempotency-key"] || "").trim();
+    if (idempotencyKey.length < 8 || idempotencyKey.length > 128) {
+      sendError(request, response, requestId, 400, "IDEMPOTENCY_KEY_REQUIRED", "人事写操作必须提供8–128字符的Idempotency-Key");
+      return true;
+    }
+    let payload;
+    try {
+      payload = await readJsonBody(request);
+    } catch (error) {
+      sendError(request, response, requestId, error.code === "BODY_TOO_LARGE" ? 413 : 400, error.code || "INVALID_JSON", "请求体不是有效JSON");
+      return true;
+    }
+    try {
+      let data;
+      if (url.pathname === "/api/admin/hr/onboarding") {
+        data = await createOnboardingWorkflow({ tenantId:principal.tenantId, actor:principal.subject, payload });
+      } else if (url.pathname === "/api/admin/hr/offboarding") {
+        data = await createOffboardingWorkflow({ tenantId:principal.tenantId, actor:principal.subject, payload });
+      } else if (url.pathname === "/api/admin/hr/reports/generate") {
+        data = await generateHrReport({ tenantId:principal.tenantId, actor:principal.subject, period:payload.period });
+      } else {
+        data = await completeHrTask({
+          tenantId:principal.tenantId,
+          actor:principal.subject,
+          workflowId:taskMatch[1],
+          taskId:taskMatch[2],
+          note:payload.note,
+          externalReference:payload.external_reference
+        });
+      }
+      sendJson(request, response, requestId, 201, { data, request_id:requestId });
+    } catch (error) {
+      sendError(request, response, requestId, Number(error.status) || 400, error.code || "HR_OPERATION_FAILED", error.message || "人事操作失败", error.details || []);
+    }
     return true;
   }
 

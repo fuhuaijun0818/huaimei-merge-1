@@ -1,0 +1,121 @@
+{
+  "role": "A",
+  "task_id": "hr-operations-001",
+  "summary": "新增独立人事管理模块，包含员工档案、自动入职流程、自动离职流程、任务状态推进以及日报/周报/月报。发起入职或离职后系统自动生成六项准备或交接任务；已存在任务按截止日期自动标记逾期，全部完成且到达入职/最后工作日后自动变更员工状态。账号开通、权限停用、财务结算等外部动作必须登记外部完成凭据，系统不会伪造外部执行成功。",
+  "acceptance_steps": [
+    "使用管理员身份登录后进入“经营治理 → 人事管理”，可看到员工、入职流程、离职流程和报告四个标签页。",
+    "发起入职并填写姓名、部门、岗位、入职日期和负责人；预期自动生成资料、合同、账号、资产、带教和首日确认六项任务。",
+    "完成全部入职任务并登记外部账号开通凭据；到达入职日期后，员工状态自动变为“在职”，流程变为“已入职”。",
+    "对在职员工发起离职，预期自动生成离职确认、工作交接、资产回收、账号停用、财务结算和离职面谈六项任务。",
+    "外部账号停用任务未填写核验凭据时不得完成；填写凭据并完成全部任务且到达最后工作日后，员工状态自动变为“已离职”。",
+    "在报告页分别生成日报、周报和月报；报告只汇总当前人事数据和事件，不使用虚构指标。"
+  ],
+  "tests": [
+    {
+      "command": "node tests/hr-operations.mjs",
+      "status": "pass",
+      "evidence": "入职/离职各生成6项任务；重复流程被拒绝；外部动作缺凭据被拒绝；全部任务完成后员工状态分别为在职和已离职；日报、周报、月报均成功生成。"
+    },
+    {
+      "command": "Chrome CDP 真实本机隔离应用 4176",
+      "status": "pass",
+      "evidence": "真实登录后进入人事页面，完成创建入职、UI任务完成、外部凭据核验、创建离职、完成离职流程；入职状态completed/employee_status在职，离职状态completed/employee_status已离职，日报周报月报均显示。"
+    },
+    {
+      "command": "npm run team:verify",
+      "status": "pass",
+      "evidence": "team-baseline 21项套件全部通过，新增hr-operations通过。"
+    },
+    {
+      "command": "npm run team:test:mock",
+      "status": "pass",
+      "evidence": "独立Mock契约54项全部通过；Mock不替代人事真实应用验收，本功能真实应用验收已单独记录。"
+    },
+    {
+      "command": "node --check server/hr-operations.mjs && node --check src/modules/hr/index.js && node --check server/api-router.mjs && node --check src/app.js",
+      "status": "pass",
+      "evidence": "服务端、人事模块、共享路由和主应用语法检查通过。"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "server/api-router.mjs",
+      "owner": "shared",
+      "change": "注册管理员人事读取、入职、离职、任务完成和报告生成API"
+    },
+    {
+      "path": "src/app.js",
+      "owner": "shared",
+      "change": "接入人事管理路由和管理员访问控制"
+    },
+    {
+      "path": "src/ui.js",
+      "owner": "shared",
+      "change": "经营治理导航新增人事管理入口"
+    },
+    {
+      "path": "index.html",
+      "owner": "shared",
+      "change": "加载独立人事模块样式"
+    },
+    {
+      "path": "package.json",
+      "owner": "shared",
+      "change": "新增test:hr-operations脚本"
+    },
+    {
+      "path": "scripts/team-verify.mjs",
+      "owner": "shared",
+      "change": "团队回归加入hr-operations"
+    },
+    {
+      "path": ".env.example",
+      "owner": "shared",
+      "change": "声明HUAMEI_HR_STORE_FILE"
+    },
+    {
+      "path": "handoff/ownership.json",
+      "owner": "shared",
+      "change": "申报人事模块新路径归属为共享评审"
+    }
+  ],
+  "api_changes": [
+    {
+      "interface": "GET /api/admin/hr",
+      "change": "新增人事总览、员工、流程、事件和报告读取",
+      "breaking": false
+    },
+    {
+      "interface": "POST /api/admin/hr/onboarding",
+      "change": "新增入职流程并自动生成任务",
+      "breaking": false
+    },
+    {
+      "interface": "POST /api/admin/hr/offboarding",
+      "change": "新增离职流程并自动生成任务",
+      "breaking": false
+    },
+    {
+      "interface": "POST /api/admin/hr/workflows/:id/tasks/:taskId/complete",
+      "change": "完成任务并推进流程；外部动作必须提交external_reference",
+      "breaking": false
+    },
+    {
+      "interface": "POST /api/admin/hr/reports/generate",
+      "change": "生成daily/weekly/monthly人事报告",
+      "breaking": false
+    }
+  ],
+  "migrations": [],
+  "dependency_changes": [],
+  "environment_variable_names": [
+    "HUAMEI_HR_STORE_FILE"
+  ],
+  "known_limitations": [
+    "当前为本地JSON人事存储，生产需要迁移到带租户隔离、行级权限、备份和加密的正式数据库。",
+    "未接入企业SSO、邮箱、企业微信、门禁、考勤、薪酬、财务或资产系统；外部动作只允登记人工核验凭据，不伪造外部完成。",
+    "日报、周报和月报按需生成并保存，不自动发送到邮箱或企业IM。",
+    "模块只管理人事流程和报告，不计算工资、个税、考勤工时或劳动法结论。"
+  ],
+  "rollback": "回退server/hr-operations.mjs、src/modules/hr/、tests/hr-operations.mjs以及api-router、app、ui、index.html、package.json、team-verify、ownership和env示例中的接入项；HUAMEI_HR_STORE_FILE指向的本地数据文件不改动业务客户数据。"
+}

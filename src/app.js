@@ -9,6 +9,7 @@ import { summarizePublicationRollback } from "./modules/knowledge/publication-ro
 import { indexStatusLabel, summarizeDocumentPublicationStatus, PUBLICATION_STATUS_LEGEND } from "./modules/knowledge/publication-status.js";
 import { MESSAGE_TEMPLATE_CATEGORIES, MESSAGE_TEMPLATE_VARIABLES, renderTemplatePreview, normalizeTemplateCategory, extractTemplateVariables, templateVersionLabel } from "./modules/knowledge/message-template.js";
 import { setIdentityCapabilities } from "./modules/administration/identity-capabilities.js";
+import { renderHrPage } from "./modules/hr/index.js";
 import { sanitizeDisplayData, store } from "./store.js";
 import {
   claimManagementAppointmentIntake,
@@ -342,7 +343,7 @@ const qualitySubrouteAllowlist = Object.freeze({
 const canOpenRouteInCurrentRole = route => {
  const key=roleCatalogEntry(currentPhaseOneRole())?.key;
  if(key==='superadministrator')return true;
- return key==="presales"?presalesRouteAllowlist.has(route):key==="administrator"?["workbench","administration","integrations"].includes(route):key==="quality"?qualityRouteAllowlist.has(route):["content","publisher"].includes(key)?["workbench","knowledge"].includes(route):false;
+ return key==="presales"?presalesRouteAllowlist.has(route):key==="administrator"?["workbench","administration","integrations","hr"].includes(route):key==="quality"?qualityRouteAllowlist.has(route):["content","publisher"].includes(key)?["workbench","knowledge"].includes(route):false;
 };
 const presalesSubrouteAllowlist = Object.freeze({
   workbench: new Set([undefined, "overview", "takeovers"]),
@@ -2382,7 +2383,7 @@ function currentPage() {
   if(businessRole==='superadministrator'&&routeInfo().route==='knowledge')return productionKnowledgeGovernancePage();
   if(businessRole==="administrator"){
     const route=routeInfo().route;
-    return route==='administration'?managedAccountsPage():route==='integrations'?systemIntegrationsPage():roleWorkbenchPage();
+    return route==='administration'?managedAccountsPage():route==='integrations'?systemIntegrationsPage():route==='hr'?renderHrPage():roleWorkbenchPage();
   }
   // 质量与运营人员的岗位范围是“授权科室脱敏数据”，会话模块内只开放脱敏的
   // Bad Case 库；其余页面回到本岗位工作台（A-027 AC4）。
@@ -2445,6 +2446,7 @@ function currentPage() {
     knowledge: knowledgePage,
     catalog: () => renderSubpage("catalog", "overview"),
     analytics: analyticsPage,
+    hr: renderHrPage,
     integrations: integrationsPage,
     administration: () => renderSubpage("administration", "overview")
   }[route] || workbenchPage)();
