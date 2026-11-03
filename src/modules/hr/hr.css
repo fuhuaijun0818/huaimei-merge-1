@@ -1,0 +1,68 @@
+.hr-page .page-head { align-items:flex-start; }
+.hr-tabs { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:18px; padding:5px; border:1px solid #eadbda; border-radius:13px; background:#f8f1f0; }
+.hr-tabs button { min-height:34px; padding:7px 13px; border:0; border-radius:9px; color:#806d6f; background:transparent; font-size:12px; cursor:pointer; }
+.hr-tabs button:hover { color:#6e3440; background:#fff; }
+.hr-tabs button.active { color:#6f1f34; background:#fff; box-shadow:0 2px 8px rgba(95,50,57,.08); font-weight:650; }
+.hr-body { display:grid; gap:16px; }
+.hr-metrics { margin-bottom:0; }
+.hr-dashboard-grid { grid-template-columns:minmax(0,1.2fr) minmax(320px,.8fr); }
+.hr-risk-row { display:grid; grid-template-columns:30px minmax(0,1fr) auto; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid #f0e5e3; }
+.hr-risk-row:last-child { border-bottom:0; }
+.hr-risk-row > span { width:29px; height:29px; display:grid; place-items:center; border-radius:9px; color:#a34d4f; background:#fff0ee; }
+.hr-risk-row strong { display:block; color:#4e3b3e; font-size:12px; }
+.hr-event-list { display:grid; }
+.hr-event-list > div { display:grid; grid-template-columns:108px minmax(0,1fr); gap:7px; padding:9px 0; border-bottom:1px solid #f1e7e5; }
+.hr-event-list > div:last-child { border-bottom:0; }
+.hr-event-list span,.hr-event-list small { color:#9a8788; font-size:10px; }
+.hr-event-list strong { color:#574446; font-size:11px; font-weight:500; }
+.hr-event-list small { grid-column:2; }
+.hr-workflow-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; }
+.hr-workflow-card { min-width:0; padding:17px; border:1px solid #e8d9d6; border-radius:17px; background:#fffdfc; box-shadow:0 4px 16px rgba(83,50,56,.045); }
+.hr-workflow-card > header { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.hr-workflow-card > header span { color:#a27b7f; font-size:9px; letter-spacing:.1em; }
+.hr-workflow-card h3 { margin:4px 0 0; color:#49373a; font-size:18px; }
+.hr-workflow-meta { display:flex; justify-content:space-between; gap:10px; margin-top:10px; color:#8d797b; font-size:10px; }
+.hr-workflow-meta strong { color:#684b50; font-weight:600; }
+.hr-progress { height:5px; margin:9px 0 13px; overflow:hidden; border-radius:999px; background:#f0e4e2; }
+.hr-progress span { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,#c67578,#de9a9c); }
+.hr-task-list { display:grid; gap:7px; }
+.hr-task { display:grid; grid-template-columns:28px minmax(0,1fr) auto; align-items:center; gap:9px; min-height:48px; padding:7px 8px; border:1px solid #efe4e2; border-radius:10px; background:#fff; }
+.hr-task.is-complete { background:#f6faf7; border-color:#dfece4; }
+.hr-task-icon { width:27px; height:27px; display:grid; place-items:center; border-radius:8px; color:#a27477; background:#faefed; }
+.hr-task.is-complete .hr-task-icon { color:#347257; background:#e7f3eb; }
+.hr-task strong { display:block; color:#584548; font-size:11px; font-weight:550; }
+.hr-task small { display:block; margin-top:3px; color:#9a8889; font-size:9px; }
+.hr-workflow-card > footer { margin-top:12px; padding-top:10px; border-top:1px solid #f0e5e3; color:#947f81; font-size:9px; }
+.hr-report-actions { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
+.hr-report { padding:0; overflow:hidden; }
+.hr-report > header { display:flex; justify-content:space-between; gap:14px; padding:16px 18px; border-bottom:1px solid #efe3e1; background:linear-gradient(135deg,#fffaf9,#fbf4f2); }
+.hr-report > header span { color:#9b777c; font-size:9px; letter-spacing:.1em; }
+.hr-report h3 { margin:4px 0 0; color:#4d383b; font-size:16px; }
+.hr-report-metrics { display:grid; grid-template-columns:repeat(7,minmax(80px,1fr)); gap:1px; background:#ede1df; }
+.hr-report-metrics > div { display:grid; gap:4px; padding:13px 12px; background:#fffdfc; }
+.hr-report-metrics strong { color:#6b3440; font-family:Georgia,serif; font-size:24px; font-weight:400; }
+.hr-report-metrics span { color:#8e797b; font-size:9px; }
+.hr-report-sections { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; padding:15px 18px 8px; }
+.hr-report-sections section { padding:11px; border:1px solid #eee2e0; border-radius:10px; background:#fff; }
+.hr-report-sections h4 { margin:0 0 7px; color:#65494d; font-size:11px; }
+.hr-report-sections ul { margin:0; padding-left:16px; color:#7e6c6e; font-size:10px; line-height:1.65; }
+.hr-report > .caption { display:block; padding:0 18px 15px; color:#967f82; font-size:9px; }
+
+@media (max-width: 900px) {
+  .hr-workflow-grid { grid-template-columns:1fr; }
+  .hr-report-metrics { grid-template-columns:repeat(4,minmax(80px,1fr)); }
+  .hr-report-sections { grid-template-columns:1fr; }
+}
+
+@media (max-width: 640px) {
+  .hr-dashboard-grid { grid-template-columns:1fr; }
+  .hr-tabs { flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; }
+  .hr-tabs::-webkit-scrollbar { display:none; }
+  .hr-tabs button { flex:none; }
+  .hr-workflow-card { padding:13px; border-radius:14px; }
+  .hr-task { grid-template-columns:26px minmax(0,1fr); }
+  .hr-task > .btn,.hr-task > .badge { grid-column:2; justify-self:start; }
+  .hr-report > header { flex-direction:column; }
+  .hr-report-metrics { grid-template-columns:repeat(2,minmax(80px,1fr)); }
+  .hr-report-sections { padding:12px; }
+}
