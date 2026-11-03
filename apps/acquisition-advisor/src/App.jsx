@@ -1250,11 +1250,14 @@ export function App() {
   const submitQuestion = async (event) => {
     event?.preventDefault?.();
     if (isLoading || restoringSession || questionInFlightRef.current) return;
-    const question = input.trim() || (pendingAttachments.some((item) => String(item.mime_type || "").startsWith("image/"))
+    const typedQuestion = input.trim();
+    const hasImageAttachment = pendingAttachments.some((item) => String(item.mime_type || "").startsWith("image/"));
+    const skipAiReply = !typedQuestion && hasImageAttachment;
+    const question = typedQuestion || (hasImageAttachment
       ? "发送了一张照片"
       : pendingAttachments.length ? "发送了一份资料" : "");
     if (!question) return;
-    await sendQuestion({ question });
+    await sendQuestion({ question, skipAiReply });
   };
 
   // 客户端消息标识随消息一起发给服务端，并用同一个标识做幂等键：重试不会
@@ -1513,7 +1516,7 @@ export function App() {
     }));
   };
 
-  const sendQuestion = async ({ question, clientMessageId, retryOfId, attachments: retryAttachments = [] }) => {
+  const sendQuestion = async ({ question, clientMessageId, retryOfId, attachments: retryAttachments = [], skipAiReply = false }) => {
     const messageKey = clientMessageId || globalThis.crypto?.randomUUID?.() || `web-msg-${Date.now()}`;
     // 发送前附件还挂在输入框里；发送后缩略图随用户消息保留，重试时仍使用同一批附件。
     const attachmentContexts = retryOfId ? retryAttachments : pendingAttachments;
@@ -1535,7 +1538,7 @@ export function App() {
     }));
     const hasPhotoAttachments = messageAttachments.some((item) => String(item.photoAssessmentStatus || "").length > 0);
     if (!retryOfId) setPendingAttachments([]);
-    questionInFlightRef.current = true;
+    questionInFlightRef.current = !skipAiReply;
     inputRef.current?.focus({ preventScroll:true });
     setMessages((current) => retryOfId
       ? current.map((item) => item.id === retryOfId ? { ...item, status:"sending", error:"" } : item)
@@ -1550,9 +1553,9 @@ export function App() {
             content:question,
             attachments:messageAttachments,
             at:new Date().toISOString(),
-            status:"sending",
+            status:skipAiReply ? "confirmed" : "sending",
             error:"",
-            optimistic:true
+            optimistic:!skipAiReply
           },
           ...(hasPhotoAttachments ? [{
             id:`photo-report-${messageKey}`,
@@ -1569,6 +1572,8 @@ export function App() {
     void scoreSentPhotoAttachments(messageKey, attachmentContexts);
     if (!retryOfId) setInput("");
     setError("");
+    // 纯图片发送只生成本地照片报告；自评才是下一轮真正的咨询问题。
+    if (skipAiReply) return;
     setIsLoading(true);
     const controller = new AbortController();
     activeRequestRef.current = controller;
