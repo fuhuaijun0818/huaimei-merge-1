@@ -68,10 +68,13 @@ import {
 } from "./management-domain-store.mjs";
 import {
   completeHrTask,
+  createHrWorkLog,
   createOffboardingWorkflow,
   createOnboardingWorkflow,
   generateHrReport,
-  getHrOverview
+  getHrOverview,
+  screenResume,
+  startHrReportScheduler
 } from "./hr-operations.mjs";
 
 export const DEMO_API_KEY = "hm_local_demo_key_2026";
@@ -140,6 +143,7 @@ const readinessFailure = (report) => {
 };
 
 export async function initializeApiRuntime() {
+  startHrReportScheduler();
   if (!productionRuntime) return startupReadiness;
   productionReadiness.assert({ production:true });
   const report = await productionReadiness.health();
@@ -702,6 +706,8 @@ export async function handleApiRequest(request, response) {
     const supported = (method === "GET" && url.pathname === "/api/admin/hr")
       || (method === "POST" && url.pathname === "/api/admin/hr/onboarding")
       || (method === "POST" && url.pathname === "/api/admin/hr/offboarding")
+      || (method === "POST" && url.pathname === "/api/admin/hr/resume-screenings")
+      || (method === "POST" && url.pathname === "/api/admin/hr/work-logs")
       || (method === "POST" && url.pathname === "/api/admin/hr/reports/generate")
       || (method === "POST" && taskMatch);
     if (!supported) {
@@ -754,6 +760,10 @@ export async function handleApiRequest(request, response) {
         data = await createOnboardingWorkflow({ tenantId:principal.tenantId, actor:principal.subject, payload });
       } else if (url.pathname === "/api/admin/hr/offboarding") {
         data = await createOffboardingWorkflow({ tenantId:principal.tenantId, actor:principal.subject, payload });
+      } else if (url.pathname === "/api/admin/hr/resume-screenings") {
+        data = await screenResume({ tenantId:principal.tenantId, actor:principal.subject, payload });
+      } else if (url.pathname === "/api/admin/hr/work-logs") {
+        data = await createHrWorkLog({ tenantId:principal.tenantId, actor:principal.subject, payload });
       } else if (url.pathname === "/api/admin/hr/reports/generate") {
         data = await generateHrReport({
           tenantId:principal.tenantId,

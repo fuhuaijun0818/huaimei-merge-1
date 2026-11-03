@@ -1,7 +1,7 @@
 {
   "role": "A",
   "task_id": "hr-operations-001",
-  "summary": "新增独立人事管理模块，包含员工档案、自动入职流程、自动离职流程、任务状态推进以及按员工账号隔离的日报/周报/月报。每个员工完成入职时必须绑定独立登录账号；系统会为每个账号自动建立并持续更新当前日报、周报和月报，报告页可按账号切换查看。发起入职或离职后系统自动生成六项准备或交接任务；全部完成且到达入职/最后工作日后自动变更员工状态。账号开通、权限停用、财务结算等外部动作必须登记外部完成凭据，系统不会伪造外部执行成功。",
+  "summary": "新增独立人事管理模块，按图片要求提供人事方向负责人信息、简历筛选助手和报告生成助手。简历筛选根据JD与简历文本计算关键词覆盖、经验匹配和建议复核分数，不自动淘汰且不使用敏感属性。报告生成助手支持文字输入和浏览器语音转写工作记录，后台定时更新每个员工账号独立的日报、周报、月报，并提供服务端飞书自定义机器人Webhook适配；未配置飞书时明确显示未配置。模块同时包含员工档案、自动入职、自动离职和任务状态推进。",
   "acceptance_steps": [
     "使用管理员身份登录后进入“经营治理 → 人事管理”，可看到员工、入职流程、离职流程和报告四个标签页。",
     "发起入职并填写姓名、独立登录账号、部门、岗位、入职日期和负责人；预期自动生成资料、合同、账号、资产、带教和首日确认六项任务，并为该账号自动建立日报、周报、月报。",
@@ -9,18 +9,21 @@
     "对在职员工发起离职，预期自动生成离职确认、工作交接、资产回收、账号停用、财务结算和离职面谈六项任务。",
     "外部账号停用任务未填写核验凭据时不得完成；填写凭据并完成全部任务且到达最后工作日后，员工状态自动变为“已离职”。",
     "在报告页切换不同员工账号；预期每个账号分别显示自己的日报、周报和月报，数据互不混合。",
-    "分别更新当前账号和全部账号的三类报告；报告只汇总对应账号的数据和事件，不使用虚构指标。"
+    "分别更新当前账号和全部账号的三类报告；报告只汇总对应账号的数据和事件，不使用虚构指标。",
+    "进入“简历筛选助手”，输入岗位JD和简历文本；预期显示匹配项、缺口、经验匹配说明、0–100建议复核分和“不自动淘汰”标识。",
+    "进入“报告生成助手”，保存文字工作记录；在支持Web Speech API的浏览器中可使用语音转写后保存。预期该记录进入对应账号的日报、周报、月报摘要。",
+    "配置HUAMEI_FEISHU_REPORT_WEBHOOK后更新报告；预期服务端尝试投递并记录真实回执。未配置时报告明确显示“飞书未配置”，不伪造已发送。"
   ],
   "tests": [
     {
       "command": "node tests/hr-operations.mjs",
       "status": "pass",
-      "evidence": "入职/离职各生成6项任务；重复流程被拒绝；外部动作缺凭据被拒绝；全部任务完成后员工状态分别为在职和已离职；两个不同登录账号均自动拥有日报、周报、月报，单账号报告只包含对应account_id。"
+      "evidence": "入职/离职各生成6项任务；简历筛选产出分数、匹配/缺失关键词且auto_reject=false；语音来源工作记录按账号保存并进入报告；两个不同登录账号均自动拥有日报、周报、月报，单账号报告只包含对应account_id；飞书未配置和模拟成功投递路径均通过。"
     },
     {
       "command": "Chrome CDP 真实本机隔离应用 4176",
       "status": "pass",
-      "evidence": "真实登录后进入人事页面，完成创建入职、UI任务完成、外部凭据核验、创建离职、完成离职流程；随后创建第二个独立账号。报告页显示两个账号选项，切换后第一个账号的月报/周报/日报均标记account-one，第二个账号的月报/周报/日报均标记account-two，数据和界面状态互不混合。"
+      "evidence": "真实登录后完成简历筛选助手评分、文字工作记录保存、创建入职/离职及外部凭据核验，随后创建第二个独立账号。报告页显示两个账号选项，切换后各自只显示本账号的月报/周报/日报；报告生成助手显示语音输入、保存工作记录及飞书未配置状态。"
     },
     {
       "command": "npm run team:verify",
@@ -42,7 +45,12 @@
     {
       "path": "server/api-router.mjs",
       "owner": "shared",
-      "change": "注册管理员人事读取、入职、离职、任务完成和报告生成API"
+      "change": "注册管理员人事读取、入职、离职、任务完成、简历筛选、工作记录、报告生成API并启动报告定时器"
+    },
+    {
+      "path": "server/feishu-report-client.mjs",
+      "owner": "shared",
+      "change": "新增飞书报告Webhook状态和投递适配器，凭据仅服务端读取"
     },
     {
       "path": "src/app.js",
@@ -72,7 +80,7 @@
     {
       "path": ".env.example",
       "owner": "shared",
-      "change": "声明HUAMEI_HR_STORE_FILE"
+      "change": "声明HUAMEI_HR_STORE_FILE、飞书Webhook和报告定时刷新配置"
     },
     {
       "path": "handoff/ownership.json",
@@ -102,6 +110,16 @@
       "breaking": false
     },
     {
+      "interface": "POST /api/admin/hr/resume-screenings",
+      "change": "根据JD和简历文本生成辅助匹配分，不保存简历全文且不自动淘汰",
+      "breaking": false
+    },
+    {
+      "interface": "POST /api/admin/hr/work-logs",
+      "change": "保存文字或语音转写的账号工作记录",
+      "breaking": false
+    },
+    {
       "interface": "POST /api/admin/hr/reports/generate",
       "change": "按account_id更新单个员工账号的daily/weekly/monthly报告；不传account_id时更新全部账号",
       "breaking": false
@@ -110,12 +128,18 @@
   "migrations": [],
   "dependency_changes": [],
   "environment_variable_names": [
-    "HUAMEI_HR_STORE_FILE"
+    "HUAMEI_HR_STORE_FILE",
+    "HUAMEI_FEISHU_REPORT_WEBHOOK",
+    "HUAMEI_FEISHU_REPORT_TIMEOUT_MS",
+    "HUAMEI_HR_REPORT_SCHEDULER_ENABLED",
+    "HUAMEI_HR_REPORT_REFRESH_MS"
   ],
   "known_limitations": [
     "当前为本地JSON人事存储，生产需要迁移到带租户隔离、行级权限、备份和加密的正式数据库。",
     "未接入企业SSO、邮箱、企业微信、门禁、考勤、薪酬、财务或资产系统；外部动作只允登记人工核验凭据，不伪造外部完成。",
-    "每个员工账号自动拥有当前日报、周报和月报，并按账号隔离查看；报告按需更新并保存，不自动发送到邮箱或企业IM。",
+    "每个员工账号自动拥有当前日报、周报和月报，并按账号隔离查看；后台每小时刷新当前周期报告，页面访问也会立即校准。",
+    "飞书适配器使用自定义机器人Webhook；未配置Webhook时只保存报告并显示未配置，不声称已发送。具体飞书汇报表/审批单字段映射需由拥有企业管理员权限的负责人配置。",
+    "语音输入依赖浏览器Web Speech API；不支持该API的浏览器会提示改用文字输入，语音音频本身不会上传到本系统。",
     "模块只管理人事流程和报告，不计算工资、个税、考勤工时或劳动法结论。"
   ],
   "rollback": "回退server/hr-operations.mjs、src/modules/hr/、tests/hr-operations.mjs以及api-router、app、ui、index.html、package.json、team-verify、ownership和env示例中的接入项；HUAMEI_HR_STORE_FILE指向的本地数据文件不改动业务客户数据。"
