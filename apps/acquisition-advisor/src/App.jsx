@@ -1,5 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { analyzePhotoFile } from "./photo-assessment.js";
+import {
+  buildSelfAssessmentQuestion,
+  SELF_ASSESSMENT_AREAS,
+  SELF_ASSESSMENT_DISCLOSURE,
+  SELF_ASSESSMENT_SCALE
+} from "./photo-self-assessment.js";
 
 const QUICK_QUESTIONS = [
   "脸部松弛，想了解抗初老项目",
@@ -201,7 +207,76 @@ function PhotoScoreBadge({ assessment, status = "", compact = false }) {
   );
 }
 
-function PhotoAssessmentReport({ message }) {
+function SelfAssessmentPanel({ assistantBusy = false, onSubmit }) {
+  const [ratings, setRatings] = useState({});
+  const [note, setNote] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+  const selectedCount = Object.values(ratings).filter((value) => Number(value) > 0).length;
+  const updateRating = (key, value) => {
+    setRatings((current) => ({ ...current, [key]:current[key] === value ? 0 : value }));
+    setSubmitted(false);
+  };
+  const submit = async (event) => {
+    event.preventDefault();
+    const question = buildSelfAssessmentQuestion(ratings, note);
+    if (!question) return;
+    await onSubmit?.(question);
+    setSubmitted(true);
+  };
+  return (
+    <section className="photo-self-assessment" aria-label="个人关注自评">
+      <header>
+        <span>本人自评 · 可选</span>
+        <h3>你更关注哪些方面？</h3>
+        <p>{SELF_ASSESSMENT_DISCLOSURE}</p>
+      </header>
+      <form onSubmit={submit}>
+        <div className="photo-self-assessment-list">
+          {SELF_ASSESSMENT_AREAS.map((area) => (
+            <div className="photo-self-assessment-row" data-self-assessment-key={area.key} key={area.key}>
+              <div>
+                <strong>{area.label}</strong>
+                <span>{area.hint}</span>
+              </div>
+              <div className="photo-self-assessment-scale" role="group" aria-label={`${area.label}关注程度`}>
+                {SELF_ASSESSMENT_SCALE.map((scale) => (
+                  <button
+                    type="button"
+                    className={ratings[area.key] === scale.value ? "is-selected" : ""}
+                    aria-pressed={ratings[area.key] === scale.value}
+                    aria-label={`${area.label}：${scale.label}，${scale.value}分`}
+                    data-self-rating={scale.value}
+                    onClick={() => updateRating(area.key, scale.value)}
+                    key={scale.value}
+                  >
+                    {scale.value}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+        <label className="photo-self-assessment-note">
+          <span>补充说明（选填）</span>
+          <textarea
+            maxLength={300}
+            value={note}
+            onChange={(event) => { setNote(event.target.value); setSubmitted(false); }}
+            placeholder="例如：更想了解自然风格、恢复期或一般区别…"
+          />
+        </label>
+        <footer>
+          <span>{submitted ? "自评已加入本次咨询" : assistantBusy ? "选择后将排到当前回复之后发送" : selectedCount ? `已选择 ${selectedCount} 项关注` : "请至少选择一项关注程度"}</span>
+          <button type="submit" disabled={!selectedCount || submitted}>
+            {submitted ? "已加入，等待小美回复" : "带着自评继续咨询"}
+          </button>
+        </footer>
+      </form>
+    </section>
+  );
+}
+
+function PhotoAssessmentReport({ message, assistantBusy, onSelfAssessmentSubmit }) {
   const attachments = message.attachments || [];
   const scored = attachments.filter((item) => item.photoAssessment?.available);
   const latestItem = scored.at(-1);
@@ -289,6 +364,7 @@ function PhotoAssessmentReport({ message }) {
             )}
           </div>
         </div>
+        {latest && <SelfAssessmentPanel assistantBusy={assistantBusy} onSubmit={onSelfAssessmentSubmit} />}
       </section>
     </article>
   );
@@ -643,7 +719,7 @@ function ConversationFeedback({ feedback, onFeedback }) {
   );
 }
 
-function ChatMessage({ message, showLeadCapture, leadState, appointmentState, onLeadSubmit, onAppointmentSubmit, feedback, onFeedback, onPreview, onRetry }) {
+function ChatMessage({ message, showLeadCapture, leadState, appointmentState, onLeadSubmit, onAppointmentSubmit, feedback, onFeedback, onPreview, onRetry, assistantBusy, onPhotoSelfAssessmentSubmit }) {
   if (message.role === "user") return (
     <div className={`user-message ${message.status ? `is-${message.status}` : ""}`}>
       {message.attachments?.length > 0 && (
@@ -674,7 +750,13 @@ function ChatMessage({ message, showLeadCapture, leadState, appointmentState, on
       )}
     </div>
   );
-  if (message.role === "photo-report") return <PhotoAssessmentReport message={message} />;
+  if (message.role === "photo-report") return (
+    <PhotoAssessmentReport
+      message={message}
+      assistantBusy={assistantBusy}
+      onSelfAssessmentSubmit={onPhotoSelfAssessmentSubmit}
+    />
+  );
   // 历史回读里的人工顾问回复（B 的会话留档）：与 AI 气泡分开显示，
   // 客户能一眼看出哪一条是人发的。
   if (message.role === "staff") return (
@@ -729,6 +811,7 @@ export function App() {
   const sessionEpochRef = useRef(0);
   const activeRequestRef = useRef(null);
   const stoppedByUserRef = useRef(false);
+  const pendingSelfAssessmentRef = useRef("");
   const scrollerRef = useRef(null);
   const atBottomRef = useRef(true);
   const seenMessageKeysRef = useRef(new Set());
@@ -1543,6 +1626,21 @@ export function App() {
     }
   };
 
+  const submitPhotoSelfAssessment = async (question) => {
+    if (isLoading || questionInFlightRef.current) {
+      pendingSelfAssessmentRef.current = question;
+      return;
+    }
+    await sendQuestion({ question });
+  };
+
+  useEffect(() => {
+    if (isLoading || questionInFlightRef.current || !pendingSelfAssessmentRef.current) return;
+    const question = pendingSelfAssessmentRef.current;
+    pendingSelfAssessmentRef.current = "";
+    void sendQuestion({ question });
+  }, [isLoading]);
+
   // 停止等待只结束这一轮回复，不代表撤销已保存的联系方式或已提交的到院登记。
   const stopWaiting = () => {
     stoppedByUserRef.current = true;
@@ -1598,7 +1696,7 @@ export function App() {
         >
           {messages.map((message) => {
             const feedbackKey = message.groupId || message.id;
-            return <ChatMessage key={message.id} message={message} showLeadCapture={message.id === leadPromptMessageId && !leadState.result} leadState={leadState} appointmentState={appointmentState} onLeadSubmit={submitLead} onAppointmentSubmit={submitAppointment} feedback={feedbackByReply[feedbackKey]} onFeedback={(rating) => submitFeedback(message, rating)} onPreview={setKnowledgePreview} onRetry={retryQuestion} />;
+            return <ChatMessage key={message.id} message={message} showLeadCapture={message.id === leadPromptMessageId && !leadState.result} leadState={leadState} appointmentState={appointmentState} onLeadSubmit={submitLead} onAppointmentSubmit={submitAppointment} feedback={feedbackByReply[feedbackKey]} onFeedback={(rating) => submitFeedback(message, rating)} onPreview={setKnowledgePreview} onRetry={retryQuestion} assistantBusy={isLoading} onPhotoSelfAssessmentSubmit={submitPhotoSelfAssessment} />;
           })}
           {leadState.result && <LeadCaptureCard result={leadState.result} status={leadState.status} error="" prompt={{}} onSubmit={submitLead} />}
           {appointmentState.proposal && !appointmentState.intake && <AppointmentActionCard proposal={appointmentState.proposal} profileSignals={appointmentState.profileSignals} leadCaptured={Boolean(leadState.result)} state={appointmentState} onSubmit={submitAppointment} allowSubjectEntry />}

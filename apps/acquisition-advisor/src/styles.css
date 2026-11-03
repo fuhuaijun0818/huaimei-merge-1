@@ -290,6 +290,28 @@ button { -webkit-tap-highlight-color: transparent; }
 .photo-report-loading.is-failed strong { color:#e7b3b3; }
 .photo-report-spinner { width:36px; height:36px; display:grid; place-items:center; border:2px solid rgba(118,223,214,.18); border-top-color:#77e1d8; border-radius:50%; color:#e7b3b3; font-size:15px; animation:photo-report-spin 1s linear infinite; }
 .photo-report-loading.is-failed .photo-report-spinner { animation:none; border-color:rgba(211,119,119,.45); }
+.photo-self-assessment { position:relative; z-index:1; margin:0 22px 18px; padding:16px 16px 14px; border:1px solid rgba(141,210,207,.2); border-radius:12px; background:rgba(7,26,37,.76); }
+.photo-self-assessment header > span { color:#73ded4; font-size:9px; letter-spacing:.12em; }
+.photo-self-assessment h3 { margin:5px 0 5px; color:#f1fafb; font-size:16px; font-weight:500; }
+.photo-self-assessment header p { margin:0; color:#7f9ca5; font-size:9px; line-height:1.55; }
+.photo-self-assessment form { margin-top:13px; }
+.photo-self-assessment-list { display:grid; gap:7px; }
+.photo-self-assessment-row { display:grid; grid-template-columns:minmax(220px,1fr) auto; align-items:center; gap:14px; min-height:39px; padding:6px 8px 6px 10px; border:1px solid rgba(137,198,198,.12); border-radius:8px; background:rgba(9,31,43,.72); }
+.photo-self-assessment-row > div:first-child { min-width:0; display:flex; align-items:baseline; gap:9px; }
+.photo-self-assessment-row strong { flex:none; color:#dcebed; font-size:11px; font-weight:500; }
+.photo-self-assessment-row > div:first-child span { overflow:hidden; color:#6e8b95; font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
+.photo-self-assessment-scale { display:flex; gap:5px; }
+.photo-self-assessment-scale button { width:28px; height:28px; padding:0; border:1px solid rgba(145,207,204,.24); border-radius:7px; color:#8ca7ae; background:rgba(13,40,54,.85); font-size:10px; cursor:pointer; transition:border-color .16s ease, color .16s ease, background .16s ease; }
+.photo-self-assessment-scale button:hover { border-color:#70d8d0; color:#dffdfa; }
+.photo-self-assessment-scale button.is-selected { border-color:#77e1d8; color:#08232f; background:#77e1d8; font-weight:700; }
+.photo-self-assessment-note { display:grid; gap:6px; margin-top:10px; color:#93adb4; font-size:9px; }
+.photo-self-assessment-note textarea { width:100%; min-height:52px; max-height:110px; resize:vertical; padding:9px 10px; border:1px solid rgba(141,204,201,.18); border-radius:8px; outline:none; color:#e5f2f3; background:rgba(7,24,34,.82); font:inherit; line-height:1.55; }
+.photo-self-assessment-note textarea::placeholder { color:#657f88; }
+.photo-self-assessment-note textarea:focus { border-color:#72d9d1; box-shadow:0 0 0 3px rgba(114,217,209,.08); }
+.photo-self-assessment footer { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:11px; }
+.photo-self-assessment footer > span { color:#78939c; font-size:9px; }
+.photo-self-assessment footer button { min-height:34px; padding:7px 14px; border:1px solid #79e0d7; border-radius:8px; color:#092631; background:#79e0d7; font-size:10px; font-weight:600; cursor:pointer; }
+.photo-self-assessment footer button:disabled { opacity:.42; cursor:not-allowed; }
 @keyframes photo-report-spin { to { transform:rotate(360deg); } }
 @keyframes photo-report-scan { 0%,100% { transform:translateY(0); opacity:.45; } 50% { transform:translateY(245px); opacity:1; } }
 
@@ -481,6 +503,13 @@ button { -webkit-tap-highlight-color: transparent; }
   .photo-report-list { gap:12px; padding:14px 0; }
   .photo-report-row { grid-template-columns:minmax(104px,1fr) minmax(68px,1fr) 34px; gap:8px; }
   .photo-report-loading { min-height:220px; }
+  .photo-self-assessment { margin:0 14px 14px; padding:13px 12px 12px; }
+  .photo-self-assessment-row { grid-template-columns:1fr; gap:7px; }
+  .photo-self-assessment-row > div:first-child { justify-content:space-between; }
+  .photo-self-assessment-scale { justify-content:space-between; }
+  .photo-self-assessment-scale button { width:34px; height:32px; }
+  .photo-self-assessment footer { align-items:flex-start; flex-direction:column; }
+  .photo-self-assessment footer button { width:100%; }
   .composer input { height: 44px; padding: 12px 16px; font-size: 12px; }
   .send-button { width: 40px; height: 40px; padding: 11px; }
   .compliance-note { margin-top: 12px; font-size: 10px; line-height: 15px; white-space: nowrap; transform: none; }

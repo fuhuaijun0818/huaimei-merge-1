@@ -5,6 +5,11 @@ import {
   PHOTO_ASSESSMENT_DISCLAIMER,
   PHOTO_ASSESSMENT_METHOD_VERSION
 } from "../apps/acquisition-advisor/src/photo-assessment.js";
+import {
+  buildSelfAssessmentQuestion,
+  SELF_ASSESSMENT_AREAS,
+  SELF_ASSESSMENT_DISCLOSURE
+} from "../apps/acquisition-advisor/src/photo-self-assessment.js";
 
 const imageData = (width, height, pixelAt) => {
   const data = new Uint8ClampedArray(width * height * 4);
@@ -91,6 +96,9 @@ assert.match(appSource, /有效分辨率/);
 assert.match(appSource, /data-photo-report-id/);
 assert.doesNotMatch(appSource, /PhotoScoreDetails/, "旧的小评分卡不得继续作为发送后结果");
 assert.match(appSource, /photoAssessment:item\.photoAssessment/, "重试发送必须保留照片自检结果");
+assert.match(appSource, /pendingSelfAssessmentRef\.current = question/, "当前回复未结束时自评必须排队而不是丢失");
+assert.match(appSource, /onPhotoSelfAssessmentSubmit=\{submitPhotoSelfAssessment\}/, "报告必须接入个人关注自评提交");
+assert.match(appSource, /我的个人关注自评|buildSelfAssessmentQuestion/, "自评必须以用户主动表达生成咨询上下文");
 const reportSource = appSource.slice(
   appSource.indexOf("function PhotoAssessmentReport"),
   appSource.indexOf("function Composer")
@@ -99,5 +107,23 @@ assert.doesNotMatch(reportSource, /面部比例|颜值|吸引力|适合做|治�
 
 assert.match(PHOTO_ASSESSMENT_DISCLAIMER, /本地完成/);
 assert.match(PHOTO_ASSESSMENT_DISCLAIMER, /不交给视觉模型/);
+
+assert.deepEqual(
+  SELF_ASSESSMENT_AREAS.map((area) => area.label),
+  ["眼部", "耳部", "鼻部", "口唇", "轮廓与对称", "肤色与光暗"]
+);
+const selfAssessmentQuestion = buildSelfAssessmentQuestion(
+  { eyes:4, nose:5, symmetry:3 },
+  "更希望先了解一般区别"
+);
+assert.match(selfAssessmentQuestion, /这是我的个人关注自评/);
+assert.match(selfAssessmentQuestion, /眼部：比较关注（4\/5）/);
+assert.match(selfAssessmentQuestion, /鼻部：很关注（5\/5）/);
+assert.match(selfAssessmentQuestion, /轮廓与对称：一般（3\/5）/);
+assert.doesNotMatch(selfAssessmentQuestion, /耳部|口唇|肤色与光暗/);
+assert.match(selfAssessmentQuestion, /补充说明：更希望先了解一般区别/);
+assert.match(selfAssessmentQuestion, /是否适合及具体方案，请引导我到院面诊确认/);
+assert.equal(buildSelfAssessmentQuestion({}, ""), "");
+assert.match(SELF_ASSESSMENT_DISCLOSURE, /不是根据照片推断五官、对称、肤色或皮肤状态/);
 
 console.log("acquisition-advisor-photo-assessment: passed");

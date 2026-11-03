@@ -27,6 +27,8 @@ Build app UI in `src/`. Keep `.openai/hosting.json`, `worker/index.js`, `scripts
 
 - Face-image scoring: uploading alone never scores or creates a message, but a pending image must enable the send button even when the text field is empty. After the visitor sends the image with or without a typed question, show a scoring state and then a full report with the sent preview plus objective photo-quality metrics calculated locally in the browser (clarity, exposure, tonal range and resolution). Never present facial proportions, rank attractiveness, infer sensitive traits, diagnose from the photo, judge treatment suitability, or send a customer photo to a vision provider for scoring.
 
+- Face self-assessment: eye, ear, nose, mouth, contour/symmetry and skin-tone concerns may only be captured as the visitor's self-reported attention level. Clearly label them as user input rather than photo inference, never calculate them from the image, and turn the selections into the next consultation question. Queue the follow-up while another reply is in flight rather than disabling or dropping it.
+
 - Public session recovery: an invalid or expired visitor credential must silently start a new anonymous conversation and reload the upload capability; never surface a 401 credential error on the welcome screen, and never leave the attach button hidden because of a stale credential.
 
 - Reply reconciliation: a server-history reply and its local short presentation segments are the same assistant turn. During polling, replace the canonical row with the segments; never flash or retain both representations.
