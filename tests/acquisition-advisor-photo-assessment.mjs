@@ -59,10 +59,24 @@ assert.equal(unavailable.available, false);
 assert.match(unavailable.message, /无法读取/);
 
 const appSource = await readFile(new URL("../apps/acquisition-advisor/src/App.jsx", import.meta.url), "utf8");
-assert.match(appSource, /analyzePhotoFile\(file\)/, "上传图片后必须在本地触发照片自检");
+const uploadSource = appSource.slice(
+  appSource.indexOf("const submitUpload"),
+  appSource.indexOf("const scoreSentPhotoAttachments")
+);
+const sendSource = appSource.slice(
+  appSource.indexOf("const sendQuestion"),
+  appSource.indexOf("const retryQuestion", appSource.indexOf("const sendQuestion"))
+);
+assert.ok(uploadSource, "必须能定位上传处理逻辑");
+assert.ok(sendSource, "必须能定位消息发送逻辑");
+assert.doesNotMatch(uploadSource, /analyzePhotoFile/, "上传阶段不得提前评分");
+assert.match(sendSource, /scoreSentPhotoAttachments\(messageKey, attachmentContexts\)/, "发送消息后才触发照片评分");
+assert.match(sendSource, /photoAssessmentStatus:item\.photoAssessment\?\.available\s*\? "complete"\s*:\s*String\(item\.mime_type \|\| ""\)\.startsWith\("image\/"\) \? "scoring"/, "已发送图片在计算期间显示评分中状态");
+assert.match(sendSource, /sourceFile:item\.sourceFile/, "发送后的本地评分必须保留待评分文件");
+assert.doesNotMatch(appSource, /PhotoScoreDetails attachments=\{pendingAttachments\}/, "待发送区不得提前展示评分");
+assert.match(appSource, /图片已发送，正在分析清晰度、光线和分辨率/, "评分中状态必须明确说明发生在发送后");
 assert.match(appSource, /照片自检/);
 assert.match(appSource, /photoAssessment:item\.photoAssessment/, "重试发送必须保留照片自检结果");
-assert.match(appSource, /PhotoScoreDetails attachments=\{pendingAttachments\}/, "待发送区必须展示自检结果");
 assert.match(appSource, /PhotoScoreDetails attachments=\{message\.attachments/, "已发送消息必须保留自检结果");
 
 assert.match(PHOTO_ASSESSMENT_DISCLAIMER, /本地完成/);

@@ -183,7 +183,13 @@ function photoScoreTone(assessment) {
   return assessment?.tone || "low";
 }
 
-function PhotoScoreBadge({ assessment, compact = false }) {
+function PhotoScoreBadge({ assessment, status = "", compact = false }) {
+  if (status === "scoring") {
+    return <span className={`photo-score-badge is-scoring ${compact ? "is-compact" : ""}`} aria-label="照片评分中">···</span>;
+  }
+  if (status === "failed") {
+    return <span className={`photo-score-badge is-failed ${compact ? "is-compact" : ""}`} title="照片评分暂不可用">!</span>;
+  }
   if (!assessment?.available) return null;
   return (
     <span
@@ -198,7 +204,24 @@ function PhotoScoreBadge({ assessment, compact = false }) {
 function PhotoScoreDetails({ attachments = [], compact = false }) {
   const scored = attachments.filter((item) => item.photoAssessment?.available);
   const latest = scored.at(-1)?.photoAssessment;
-  if (!latest) return null;
+  const scoring = attachments.some((item) => item.photoAssessmentStatus === "scoring");
+  const failed = attachments.some((item) => item.photoAssessmentStatus === "failed");
+  if (!latest && !scoring && !failed) return null;
+  if (!latest) {
+    return (
+      <section className={`photo-score-details is-pending ${compact ? "is-compact" : ""}`} aria-label="照片自检状态" aria-live="polite">
+        <div className={`photo-score-ring is-loading ${failed ? "is-failed" : ""}`}>
+          <span className="photo-score-spinner" aria-hidden="true">{failed ? "!" : ""}</span>
+        </div>
+        <div className="photo-score-body">
+          <div className="photo-score-heading">
+            <div><strong>照片自检</strong><span>{failed ? "暂不可用" : "评分中"}</span></div>
+          </div>
+          <p>{failed ? "图片已发送，但未能完成本地评分，不影响继续咨询" : "图片已发送，正在分析清晰度、光线和分辨率"}</p>
+        </div>
+      </section>
+    );
+  }
   const dimensions = [
     ["清晰度", latest.dimensions?.clarity],
     ["光线", latest.dimensions?.lighting],
@@ -259,7 +282,6 @@ function Composer({ value, onChange, onSubmit, disabled, restoringSession, input
                     {item.previewUrl
                       ? <img src={item.previewUrl} alt={item.file_name || "待发送图片"} />
                       : <span className="composer-attachment-file">PDF</span>}
-                    <PhotoScoreBadge assessment={item.photoAssessment} />
                     <button
                       type="button"
                       className="composer-attachment-remove"
@@ -271,7 +293,6 @@ function Composer({ value, onChange, onSubmit, disabled, restoringSession, input
                   </div>
                 ))}
               </div>
-              <PhotoScoreDetails attachments={pendingAttachments} />
             </div>
           )}
           <div className="composer-row">
@@ -594,7 +615,7 @@ function ChatMessage({ message, showLeadCapture, leadState, appointmentState, on
             ? (
               <span className="message-attachment-image" key={item.upload_id}>
                 <img src={item.previewUrl} alt={item.file_name || "已发送图片"} />
-                <PhotoScoreBadge assessment={item.photoAssessment} compact />
+                <PhotoScoreBadge assessment={item.photoAssessment} status={item.photoAssessmentStatus} compact />
               </span>
             )
             : <span key={item.upload_id} className="message-attachment-file">{item.file_name || "PDF"}</span>)}
@@ -1282,9 +1303,6 @@ export function App() {
       reader.onload = () => resolve(String(reader.result || "").split(",")[1] || "");
       reader.readAsDataURL(file);
     });
-    const photoAssessmentPromise = file.type.startsWith("image/")
-      ? analyzePhotoFile(file).catch(() => null)
-      : Promise.resolve(null);
     try {
       const response = await fetch(joinBaseUrl(API_BASE_URL, "/api/public/acquisition-upload"), {
         method:"POST",
@@ -1307,7 +1325,6 @@ export function App() {
         : "";
       const duplicate = pendingAttachments.find((item) => item.upload_id === body.upload_id);
       if (duplicate) releaseAttachmentPreview(duplicate.previewUrl);
-      const photoAssessment = await photoAssessmentPromise;
       // 上传成功只进入输入框待发送区，等客户连同问题一起发送后再生成对话消息。
       setPendingAttachments((current) => [
         ...current.filter((item) => item.upload_id !== body.upload_id),
@@ -1317,13 +1334,43 @@ export function App() {
           mime_type: file.type,
           size: file.size,
           previewUrl,
-          photoAssessment,
+          // 评分只在用户真正发送这轮消息时触发；File 仅保留在当前浏览器内存。
+          sourceFile: file,
           matched_asset: body.matched_asset || null
         }
       ]);
     } catch (error) {
       setUploadError(error.message);
     }
+  };
+
+  const scoreSentPhotoAttachments = async (messageKey, attachmentContexts) => {
+    const images = attachmentContexts.filter((item) => String(item.mime_type || "").startsWith("image/")
+      && item.sourceFile
+      && !item.photoAssessment?.available);
+    if (!images.length) return;
+    const scored = await Promise.all(images.map(async (item) => {
+      try {
+        const photoAssessment = await analyzePhotoFile(item.sourceFile);
+        return {
+          upload_id:item.upload_id,
+          photoAssessment,
+          photoAssessmentStatus:photoAssessment?.available ? "complete" : "failed"
+        };
+      } catch {
+        return { upload_id:item.upload_id, photoAssessment:null, photoAssessmentStatus:"failed" };
+      }
+    }));
+    const byUploadId = new Map(scored.map((item) => [item.upload_id, item]));
+    setMessages((current) => current.map((message) => message.clientMessageId !== messageKey
+      ? message
+      : {
+          ...message,
+          attachments:(message.attachments || []).map((item) => {
+            const assessment = byUploadId.get(item.upload_id);
+            return assessment ? { ...item, ...assessment } : item;
+          })
+        }));
   };
 
   const sendQuestion = async ({ question, clientMessageId, retryOfId, attachments: retryAttachments = [] }) => {
@@ -1352,13 +1399,19 @@ export function App() {
             file_name:item.file_name,
             matched_asset:item.matched_asset || null,
             photoAssessment:item.photoAssessment || null,
-            previewUrl:item.previewUrl || ""
+            photoAssessmentStatus:item.photoAssessment?.available
+              ? "complete"
+              : String(item.mime_type || "").startsWith("image/") ? "scoring" : null,
+            previewUrl:item.previewUrl || "",
+            sourceFile:item.sourceFile || null
           })),
           at:new Date().toISOString(),
           status:"sending",
           error:"",
           optimistic:true
         }]);
+    // 图片先作为已发送消息出现，再异步生成本地评分，不回写任何评分数据到服务端。
+    void scoreSentPhotoAttachments(messageKey, attachmentContexts);
     if (!retryOfId) setInput("");
     setError("");
     setIsLoading(true);
