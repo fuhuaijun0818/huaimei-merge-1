@@ -6,6 +6,7 @@ const ui = {
   loading:false,
   error:"",
   tab:"overview",
+  reportAccount:"",
   data:null
 };
 
@@ -21,6 +22,19 @@ const statusTone = (status) => /完成|在职|正常/.test(String(status || ""))
   : /逾期|风险/.test(String(status || "")) ? "danger"
     : /待|准备|交接|进行/.test(String(status || "")) ? "warning" : "outline";
 const key = (prefix) => `${prefix}-${crypto.randomUUID()}`.slice(0, 128);
+const reportAccounts = () => {
+  const seen = new Set();
+  return (ui.data?.employees || []).filter((employee) => {
+    const accountId = String(employee.account_id || "").trim();
+    if (!accountId || seen.has(accountId.toLowerCase())) return false;
+    seen.add(accountId.toLowerCase());
+    return true;
+  });
+};
+const activeReportAccount = () => {
+  const accounts = reportAccounts();
+  return accounts.find((employee) => employee.account_id === ui.reportAccount)?.account_id || accounts[0]?.account_id || "";
+};
 
 async function request(path, options = {}) {
   let response;
@@ -92,7 +106,7 @@ const workflowCard = (workflow) => {
       ${badge(workflow.stage, statusTone(workflow.stage))}
     </header>
     <div class="hr-workflow-meta">
-      <span>${escapeHtml(workflow.employee.department)} · ${escapeHtml(workflow.employee.position)}</span>
+      <span>${escapeHtml(workflow.employee.department)} · ${escapeHtml(workflow.employee.position)}<br />账号 ${escapeHtml(workflow.employee.account_id)}</span>
       <strong>${completed}/${workflow.tasks.length} 项完成</strong>
     </div>
     <div class="hr-progress"><span style="width:${workflow.tasks.length ? Math.round(completed / workflow.tasks.length * 100) : 0}%"></span></div>
@@ -130,7 +144,7 @@ const dashboard = () => {
 const employeesPage = () => {
   const employees = ui.data?.employees || [];
   if (!employees.length) return empty("还没有员工记录", "创建入职流程后，员工会从“待入职”开始进入生命周期管理。");
-  return `<section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>员工</th><th>部门 / 岗位</th><th>负责人</th><th>入职日期</th><th>状态</th><th>联系方式</th></tr></thead><tbody>${employees.map((employee) => `<tr><td><strong>${escapeHtml(employee.name)}</strong><div class="caption">${escapeHtml(employee.id)}</div></td><td>${escapeHtml(employee.department)}<div class="caption">${escapeHtml(employee.position)}</div></td><td>${escapeHtml(employee.manager)}</td><td>${escapeHtml(employee.start_date)}</td><td>${badge(employee.status, statusTone(employee.status))}</td><td>${escapeHtml(employee.mobile || "未填写")}<div class="caption">${escapeHtml(employee.email || "未填写邮箱")}</div></td></tr>`).join("")}</tbody></table></div></section>`;
+  return `<section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>员工</th><th>登录账号</th><th>部门 / 岗位</th><th>负责人</th><th>入职日期</th><th>状态</th><th>联系方式</th></tr></thead><tbody>${employees.map((employee) => `<tr><td><strong>${escapeHtml(employee.name)}</strong><div class="caption">${escapeHtml(employee.id)}</div></td><td>${escapeHtml(employee.account_id || "待补齐")}</td><td>${escapeHtml(employee.department)}<div class="caption">${escapeHtml(employee.position)}</div></td><td>${escapeHtml(employee.manager)}</td><td>${escapeHtml(employee.start_date)}</td><td>${badge(employee.status, statusTone(employee.status))}</td><td>${escapeHtml(employee.mobile || "未填写")}<div class="caption">${escapeHtml(employee.email || "未填写邮箱")}</div></td></tr>`).join("")}</tbody></table></div></section>`;
 };
 
 const workflowsPage = (type) => {
@@ -140,11 +154,15 @@ const workflowsPage = (type) => {
 };
 
 const reportsPage = () => {
-  const reports = ui.data?.reports || [];
-  const generator = `<div class="hr-report-actions">${Object.entries(periodLabels).map(([period, label]) => `<button class="btn" data-action="hr-generate-report" data-id="${period}">生成${label}</button>`).join("")}</div>`;
-  if (!reports.length) return `${generator}<section class="card">${empty("还没有人事报告", "生成后会按当前员工、流程和任务记录汇总，不填充虚构数据。")}</section>`;
-  return `${generator}<div class="stack">${reports.slice(0, 30).map((report) => `<article class="card hr-report">
-    <header><div><span>${escapeHtml(report.period_label)}</span><h3>${formatDate(report.range_start, false)} 至 ${formatDate(report.range_end, false)}</h3></div>${badge(`生成于 ${formatDate(report.generated_at)}`, "outline")}</header>
+  const accounts = reportAccounts();
+  const selectedAccount = activeReportAccount();
+  const reports = (ui.data?.reports || []).filter((report) => report.account_id === selectedAccount);
+  const accountBar = `<div class="hr-report-account-bar"><label><span>报告账号</span><select id="hr-report-account">${accounts.map((employee) => `<option value="${escapeHtml(employee.account_id)}" ${employee.account_id === selectedAccount ? "selected" : ""}>${escapeHtml(employee.name)} · ${escapeHtml(employee.account_id)}</option>`).join("")}</select></label><span>${accounts.length} 个账号，每个账号独立保存日报、周报、月报</span><button class="btn" data-action="hr-generate-all-reports">${icon("refresh",14)}更新全部账号</button></div>`;
+  const generator = `<div class="hr-report-actions">${Object.entries(periodLabels).map(([period, label]) => `<button class="btn" data-action="hr-generate-report" data-id="${period}" data-account-id="${escapeHtml(selectedAccount)}">更新本账号${label}</button>`).join("")}</div>`;
+  if (!accounts.length) return `${accountBar}<section class="card">${empty("还没有带登录账号的员工", "完成入职时登记登录账号后，系统会自动为每个账号建立日报、周报和月报。")}</section>`;
+  if (!reports.length) return `${accountBar}${generator}<section class="card">${empty("该账号暂无报告", "刷新人事数据后，系统会为当前账号自动汇总本期日报、周报和月报。")}</section>`;
+  return `${accountBar}${generator}<div class="stack">${reports.slice(0, 30).map((report) => `<article class="card hr-report">
+    <header><div><span>${escapeHtml(report.period_label)} · ${escapeHtml(report.account_id)}</span><h3>${escapeHtml(report.employee_name || report.account_id)} · ${formatDate(report.range_start, false)} 至 ${formatDate(report.range_end, false)}</h3></div>${badge(`生成于 ${formatDate(report.generated_at)}`, "outline")}</header>
     <div class="hr-report-metrics">${Object.entries(report.metrics || {}).map(([name, value]) => `<div><strong>${Number(value) || 0}</strong><span>${escapeHtml(({ active_employees:"在职员工", onboarded:"完成入职", departed:"完成离职", open_onboarding:"在办入职", open_offboarding:"在办离职", completed_tasks:"本期完成任务", overdue_tasks:"逾期任务" })[name] || name)}</span></div>`).join("")}</div>
     <div class="hr-report-sections">${(report.sections || []).map((section) => `<section><h4>${escapeHtml(section.title)}</h4><ul>${(section.items || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></section>`).join("")}</div>
     <p class="caption">${escapeHtml(report.automation_note)}</p>
@@ -179,6 +197,7 @@ const showOnboardingModal = () => {
     wide:true,
     body:`<form id="hr-onboarding-form" class="form-grid">
       ${formField("姓名","name","",{required:true})}
+      ${formField("登录账号","account_id","",{required:true})}
       ${formField("部门","department","",{required:true})}
       ${formField("岗位","position","",{required:true})}
       ${formField("入职日期","start_date",new Date().toISOString().slice(0, 10),{type:"date",required:true})}
@@ -248,12 +267,13 @@ const handleHrAction = async (action, id, target) => {
     if (target.disabled) return;
     target.disabled = true;
     const label = periodLabels[id] || "报告";
+    const accountId = target.dataset.accountId || activeReportAccount();
     target.textContent = `正在生成${label}…`;
     try {
       await request("/api/admin/hr/reports/generate", {
         method:"POST",
         headers:{ "Idempotency-Key":key(`hr-report-${id}`) },
-        body:JSON.stringify({ period:id })
+        body:JSON.stringify({ period:id, account_id:accountId })
       });
       await hydrateHr({ force:true });
       toast(`${label}已生成`, "success");
@@ -262,6 +282,28 @@ const handleHrAction = async (action, id, target) => {
     } finally {
       target.disabled = false;
       target.textContent = `生成${label}`;
+    }
+    return;
+  }
+  if (action === "hr-generate-all-reports") {
+    if (target.disabled) return;
+    target.disabled = true;
+    target.textContent = "正在更新全部账号…";
+    try {
+      for (const period of Object.keys(periodLabels)) {
+        await request("/api/admin/hr/reports/generate", {
+          method:"POST",
+          headers:{ "Idempotency-Key":key(`hr-report-all-${period}`) },
+          body:JSON.stringify({ period })
+        });
+      }
+      await hydrateHr({ force:true });
+      toast("全部账号的日报、周报和月报已更新", "success");
+    } catch (error) {
+      toast(error.message, "danger");
+    } finally {
+      target.disabled = false;
+      target.textContent = "更新全部账号";
     }
   }
 };
@@ -324,4 +366,11 @@ document.addEventListener("submit", async (event) => {
     form.dataset.submitting = "false";
     if (submit) submit.disabled = false;
   }
+}, true);
+
+document.addEventListener("change", (event) => {
+  if (event.target.id !== "hr-report-account") return;
+  event.stopImmediatePropagation();
+  ui.reportAccount = String(event.target.value || "");
+  refreshHrContent();
 }, true);

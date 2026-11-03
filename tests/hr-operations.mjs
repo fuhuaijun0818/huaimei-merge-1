@@ -13,6 +13,7 @@ const onboarding = await hr.createOnboardingWorkflow({
   actor,
   payload:{
     name:"测试员工甲",
+    account_id:"employee.one@example.test",
     department:"客户运营部",
     position:"运营专员",
     start_date:today,
@@ -30,7 +31,7 @@ await assert.rejects(
   hr.createOnboardingWorkflow({
     tenantId,
     actor,
-    payload:{ name:"测试员工甲", department:"客户运营部", position:"运营专员", start_date:today }
+    payload:{ name:"测试员工甲", account_id:"another.account@example.test", department:"客户运营部", position:"运营专员", start_date:today }
   }),
   (error) => error.code === "HR_ONBOARDING_DUPLICATE"
 );
@@ -97,12 +98,37 @@ assert.equal(overview.workflows.filter((item) => item.status === "completed").le
 assert.ok(overview.events.some((event) => event.type === "onboarding.created"));
 assert.ok(overview.events.some((event) => event.type === "offboarding.created"));
 
+const secondOnboarding = await hr.createOnboardingWorkflow({
+  tenantId,
+  actor,
+  payload:{
+    name:"测试员工乙",
+    account_id:"employee.two@example.test",
+    department:"内容运营部",
+    position:"内容专员",
+    start_date:new Date(Date.now() + 86400000).toISOString().slice(0, 10),
+    manager:"测试负责人乙"
+  }
+});
+assert.equal(secondOnboarding.employee.account_id, "employee.two@example.test");
+
 for (const period of ["daily", "weekly", "monthly"]) {
-  const report = await hr.generateHrReport({ tenantId, actor, period });
+  const report = await hr.generateHrReport({ tenantId, actor, period, accountId:"employee.one@example.test" });
   assert.equal(report.period, period);
+  assert.equal(report.account_id, "employee.one@example.test");
   assert.ok(report.sections.length >= 3);
   assert.ok(Number.isFinite(report.metrics.onboarded));
-  assert.match(report.automation_note, /外部动作/);
+  assert.match(report.automation_note, /外部账号|完成凭据/);
+}
+const allReports = await hr.generateHrReport({ tenantId, actor, period:"daily" });
+assert.equal(allReports.account_count, 2);
+assert.deepEqual(new Set(allReports.reports.map((item) => item.account_id)), new Set(["employee.one@example.test", "employee.two@example.test"]));
+const accountOverview = await hr.getHrOverview({ tenantId, actor });
+for (const accountId of ["employee.one@example.test", "employee.two@example.test"]) {
+  const reports = accountOverview.reports.filter((report) => report.account_id === accountId);
+  for (const period of ["daily", "weekly", "monthly"]) {
+    assert.ok(reports.some((report) => report.period === period), `${accountId}缺少${period}报告`);
+  }
 }
 
 const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf8");

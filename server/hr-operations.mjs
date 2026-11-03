@@ -78,6 +78,19 @@ const tenantState = (state, tenantId) => {
   for (const field of ["employees", "workflows", "reports", "events"]) {
     if (!Array.isArray(tenant[field])) tenant[field] = [];
   }
+  const usedAccounts = new Set();
+  for (const employee of tenant.employees) {
+    let accountId = text(employee.account_id, 100);
+    if (!accountId) {
+      const base = text(employee.email, 120).toLowerCase()
+        || `employee-${String(employee.id || "").replace(/^hremp_/, "").slice(0, 8)}`;
+      accountId = base;
+      let suffix = 2;
+      while (usedAccounts.has(accountId.toLowerCase())) accountId = `${base}-${suffix++}`;
+      employee.account_id = accountId;
+    }
+    usedAccounts.add(accountId.toLowerCase());
+  }
   tenant.revision = Math.max(0, Number(tenant.revision) || 0);
   return tenant;
 };
@@ -193,6 +206,7 @@ const reconcileTenant = (tenant) => {
 export async function getHrOverview({ tenantId, actor = "system" } = {}) {
   return withState(async (state) => {
     const tenant = reconcileTenant(tenantState(state, tenantId));
+    ensureAccountReports(tenant, actor);
     tenant.revision += 1;
     return clone(tenant);
   });
@@ -202,18 +216,23 @@ export async function createOnboardingWorkflow({ tenantId, actor, payload = {} }
   return withState(async (state) => {
     const tenant = reconcileTenant(tenantState(state, tenantId));
     const name = text(payload.name, 80);
+    const accountId = text(payload.account_id, 100);
     const department = text(payload.department, 80);
     const position = text(payload.position, 80);
     const startDate = dateOnly(payload.start_date);
-    if (!name || !department || !position || !startDate) {
-      throw Object.assign(new Error("姓名、部门、岗位和入职日期不能为空"), { code:"HR_ONBOARDING_INVALID", status:400 });
+    if (!name || !accountId || !department || !position || !startDate) {
+      throw Object.assign(new Error("姓名、登录账号、部门、岗位和入职日期不能为空"), { code:"HR_ONBOARDING_INVALID", status:400 });
     }
     if (tenant.workflows.some((item) => item.type === "onboarding" && item.status !== "completed" && item.employee.name === name)) {
       throw Object.assign(new Error("该姓名已有进行中的入职流程"), { code:"HR_ONBOARDING_DUPLICATE", status:409 });
     }
+    if (tenant.employees.some((item) => String(item.account_id || "").toLowerCase() === accountId.toLowerCase() && item.status !== "已离职")) {
+      throw Object.assign(new Error("该登录账号已绑定未离职员工"), { code:"HR_ACCOUNT_DUPLICATE", status:409 });
+    }
     const employee = {
       id:uid("hremp"),
       name,
+      account_id:accountId,
       department,
       position,
       manager:text(payload.manager, 80) || "待分配",
@@ -330,81 +349,126 @@ const reportRange = (period, now = new Date()) => {
   return { start,end };
 };
 
-export async function generateHrReport({ tenantId, actor, period = "daily" } = {}) {
+const reportPeriods = Object.freeze(["daily", "weekly", "monthly"]);
+const reportPeriodLabel = Object.freeze({ daily:"日报", weekly:"周报", monthly:"月报" });
+
+const buildAccountReport = (tenant, employee, period, { actor = "system", now = new Date() } = {}) => {
+  const normalizedPeriod = { daily:"daily", weekly:"weekly", monthly:"monthly" }[period];
+  const { start, end } = reportRange(normalizedPeriod, now);
+  const startMs = start.getTime();
+  const endMs = end.getTime();
+  const employeeWorkflows = tenant.workflows.filter((item) => item.employee.id === employee.id);
+  const events = tenant.events.filter((item) => {
+    const at = Date.parse(item.at || "");
+    return item.employee_id === employee.id && Number.isFinite(at) && at >= startMs && at <= endMs;
+  });
+  const activatedAt = Date.parse(employee.activated_at || "");
+  const departedAt = Date.parse(employee.departed_at || "");
+  const openWorkflows = employeeWorkflows.filter((item) => item.status !== "completed");
+  const openTasks = openWorkflows.flatMap((workflow) => workflow.tasks
+    .filter((item) => item.status !== "completed")
+    .map((task) => ({ workflow, task })));
+  const overdue = openTasks.filter(({ task }) => task.status === "overdue");
+  const periodLabel = reportPeriodLabel[normalizedPeriod];
+  const eventCount = (type) => events.filter((item) => item.type === type).length;
+  const report = {
+    id:"",
+    account_id:employee.account_id,
+    employee_id:employee.id,
+    employee_name:employee.name,
+    department:employee.department,
+    period:normalizedPeriod,
+    period_label:periodLabel,
+    range_start:start.toISOString(),
+    range_end:end.toISOString(),
+    generated_at:nowIso(),
+    generated_by:text(actor, 120) || "system",
+    metrics:{
+      active_employees:employee.status === "在职" ? 1 : 0,
+      onboarded:Number.isFinite(activatedAt) && activatedAt >= startMs && activatedAt <= endMs ? 1 : 0,
+      departed:Number.isFinite(departedAt) && departedAt >= startMs && departedAt <= endMs ? 1 : 0,
+      open_onboarding:openWorkflows.filter((item) => item.type === "onboarding").length,
+      open_offboarding:openWorkflows.filter((item) => item.type === "offboarding").length,
+      completed_tasks:eventCount("workflow.task_completed"),
+      overdue_tasks:overdue.length
+    },
+    sections:[
+      {
+        key:"movement",
+        title:"账号人员状态",
+        items:[
+          `账号：${employee.account_id}`,
+          `当前员工状态：${employee.status}`,
+          `本期新增在职 ${Number.isFinite(activatedAt) && activatedAt >= startMs && activatedAt <= endMs ? 1 : 0} 人`,
+          `本期完成离职 ${Number.isFinite(departedAt) && departedAt >= startMs && departedAt <= endMs ? 1 : 0} 人`
+        ]
+      },
+      {
+        key:"workflow",
+        title:"流程执行",
+        items:[
+          `本期完成任务 ${eventCount("workflow.task_completed")} 项`,
+          `当前待办 ${openTasks.length} 项`,
+          `逾期任务 ${overdue.length} 项`
+        ]
+      },
+      {
+        key:"risk",
+        title:"风险与待办",
+        items:overdue.length
+          ? overdue.slice(0, 8).map(({ workflow, task }) => `${workflow.employee.name} · ${task.title}（截止 ${task.due_date || "未设置"}）`)
+          : ["当前没有逾期人事任务"]
+      }
+    ],
+    automation_note:"本报告按员工账号独立生成；流程任务、状态和统计由系统自动汇总，外部账号开通、权限停用、财务结算等动作必须在完成凭据登记后才计入完成。"
+  };
+  const rangeKey = start.toISOString().slice(0, 10);
+  const existing = tenant.reports.find((item) => item.account_id === employee.account_id
+    && item.period === normalizedPeriod
+    && String(item.range_start || "").slice(0, 10) === rangeKey);
+  if (existing) {
+    report.id = existing.id || `hrreport_${Buffer.from(`${employee.account_id}:${normalizedPeriod}:${rangeKey}`).toString("base64url").slice(0, 32)}`;
+    Object.assign(existing, report);
+    return clone(existing);
+  }
+  report.id = `hrreport_${Buffer.from(`${employee.account_id}:${normalizedPeriod}:${rangeKey}`).toString("base64url").slice(0, 32)}`;
+  tenant.reports.unshift(report);
+  tenant.reports = tenant.reports.slice(0, 3000);
+  return clone(report);
+};
+
+function ensureAccountReports(tenant, actor = "system", now = new Date()) {
+  const accounts = tenant.employees.filter((item) => item.account_id);
+  for (const employee of accounts) {
+    for (const period of reportPeriods) buildAccountReport(tenant, employee, period, { actor, now });
+  }
+  return accounts;
+}
+
+export async function generateHrReport({ tenantId, actor, period = "daily", accountId = "" } = {}) {
   return withState(async (state) => {
     const tenant = reconcileTenant(tenantState(state, tenantId));
     const normalizedPeriod = { daily:"daily", weekly:"weekly", monthly:"monthly" }[period];
-    const { start, end } = reportRange(normalizedPeriod);
-    const startMs = start.getTime();
-    const endMs = end.getTime();
-    const events = tenant.events.filter((item) => {
-      const at = Date.parse(item.at || "");
-      return Number.isFinite(at) && at >= startMs && at <= endMs;
-    });
-    const onboarded = tenant.employees.filter((item) => {
-      const at = Date.parse(item.activated_at || "");
-      return Number.isFinite(at) && at >= startMs && at <= endMs;
-    });
-    const departed = tenant.employees.filter((item) => {
-      const at = Date.parse(item.departed_at || "");
-      return Number.isFinite(at) && at >= startMs && at <= endMs;
-    });
-    const openWorkflows = tenant.workflows.filter((item) => item.status !== "completed");
-    const openTasks = openWorkflows.flatMap((workflow) => workflow.tasks.filter((item) => item.status !== "completed").map((task) => ({ workflow, task })));
-    const overdue = openTasks.filter(({ task }) => task.status === "overdue");
-    const periodLabel = { daily:"日报", weekly:"周报", monthly:"月报" }[normalizedPeriod];
-    const eventCount = (type) => events.filter((item) => item.type === type).length;
-    const report = {
-      id:uid("hrreport"),
-      period:normalizedPeriod,
-      period_label:periodLabel,
-      range_start:start.toISOString(),
-      range_end:end.toISOString(),
-      generated_at:nowIso(),
-      generated_by:text(actor, 120) || "system",
-      metrics:{
-        active_employees:tenant.employees.filter((item) => item.status === "在职").length,
-        onboarded:onboarded.length,
-        departed:departed.length,
-        open_onboarding:openWorkflows.filter((item) => item.type === "onboarding").length,
-        open_offboarding:openWorkflows.filter((item) => item.type === "offboarding").length,
-        completed_tasks:eventCount("workflow.task_completed"),
-        overdue_tasks:overdue.length
-      },
-      sections:[
-        {
-          key:"movement",
-          title:"人员变动",
-          items:[
-            `新增在职 ${onboarded.length} 人`,
-            `完成离职 ${departed.length} 人`,
-            `当前在办入职 ${openWorkflows.filter((item) => item.type === "onboarding").length} 人`,
-            `当前在办离职 ${openWorkflows.filter((item) => item.type === "offboarding").length} 人`
-          ]
-        },
-        {
-          key:"workflow",
-          title:"流程执行",
-          items:[
-            `本期完成任务 ${eventCount("workflow.task_completed")} 项`,
-            `当前待办 ${openTasks.length} 项`,
-            `逾期任务 ${overdue.length} 项`
-          ]
-        },
-        {
-          key:"risk",
-          title:"风险与待办",
-          items:overdue.length
-            ? overdue.slice(0, 8).map(({ workflow, task }) => `${workflow.employee.name} · ${task.title}（截止 ${task.due_date || "未设置"}）`)
-            : ["当前没有逾期人事任务"]
-        }
-      ],
-      automation_note:"流程任务、状态和统计由系统自动生成；账号开通、权限停用、财务结算等外部动作必须在完成凭据登记后才计入完成。"
-    };
-    tenant.reports.unshift(report);
-    tenant.reports = tenant.reports.slice(0, 300);
-    appendEvent(tenant, { type:"report.generated", actor, detail:`已生成${periodLabel}` });
+    if (!normalizedPeriod) {
+      throw Object.assign(new Error("报告周期仅支持日报、周报或月报"), { code:"HR_REPORT_PERIOD_INVALID", status:400 });
+    }
+    const requestedAccount = text(accountId, 100);
+    const employees = requestedAccount
+      ? tenant.employees.filter((item) => item.account_id.toLowerCase() === requestedAccount.toLowerCase())
+      : tenant.employees.filter((item) => item.account_id);
+    if (!employees.length) {
+      throw Object.assign(new Error("未找到对应的人事账号"), { code:"HR_REPORT_ACCOUNT_NOT_FOUND", status:404 });
+    }
+    const reports = employees.map((employee) => buildAccountReport(tenant, employee, normalizedPeriod, { actor }));
+    for (const report of reports) {
+      appendEvent(tenant, {
+        type:"report.generated",
+        employee:employees.find((item) => item.id === report.employee_id),
+        actor,
+        detail:`已生成${report.period_label}（${report.account_id}）`
+      });
+    }
     tenant.revision += 1;
-    return clone(report);
+    return reports.length === 1 ? reports[0] : { reports, account_count:reports.length };
   });
 }
