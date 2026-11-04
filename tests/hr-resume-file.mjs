@@ -64,27 +64,47 @@ const pdfResume = await extractResumeAttachment({
 assert.equal(pdfResume.parser, "pdf-parse");
 assert.match(pdfResume.text, /Python SQL/);
 
-const screening = await hr.screenResumeAttachment({
+const uploadPayload = {
+  file_name:"candidate.pdf",
+  mime_type:"application/pdf",
+  data_base64:base64(makePdf("Python SQL data analysis for 8 years with clear communication"))
+};
+await assertCode(hr.screenResumeAttachment({
+  tenantId:"tenant-hr-resume-file",
+  actor:"hr-resume-test",
+  payload:uploadPayload
+}), "HR_RESUME_JOB_PROFILE_REQUIRED");
+const profile = await hr.saveResumeJobProfile({
   tenantId:"tenant-hr-resume-file",
   actor:"hr-resume-test",
   payload:{
     job_title:"数据分析专员",
-    candidate_label:"附件候选人-001",
-    job_description:"岗位职责：使用Python、SQL完成数据分析，要求5年以上经验并具备沟通能力。",
-    file_name:"candidate.pdf",
-    mime_type:"application/pdf",
-    data_base64:base64(makePdf("Python SQL data analysis for 8 years with clear communication"))
+    job_description:"岗位职责：使用Python、SQL完成数据分析，要求5年以上经验并具备沟通能力。"
   }
+});
+assert.equal(profile.job_title, "数据分析专员");
+assert.equal(profile.version, 1);
+const screening = await hr.screenResumeAttachment({
+  tenantId:"tenant-hr-resume-file",
+  actor:"hr-resume-test",
+  payload:uploadPayload
 });
 assert.equal(screening.source_type, "file");
 assert.equal(screening.source_filename, "candidate.pdf");
 assert.equal(screening.source_mime, "application/pdf");
 assert.equal(screening.parser, "pdf-parse");
+assert.equal(screening.job_title, "数据分析专员");
+assert.equal(screening.job_profile_id, profile.id);
+assert.equal(screening.job_profile_version, 1);
+assert.equal(screening.candidate_label, "candidate");
 assert.ok(screening.extracted_chars >= 20);
 assert.ok(screening.matched_terms.includes("Python"));
 assert.equal(screening.auto_reject, false);
 assert.equal(Object.hasOwn(screening, "resume_text"), false);
 assert.doesNotMatch(JSON.stringify(screening), /Python SQL data analysis for 8 years/);
+const overview = await hr.getHrOverview({ tenantId:"tenant-hr-resume-file", actor:"hr-resume-test" });
+assert.equal(overview.resumeJobProfile.job_title, "数据分析专员");
+assert.equal(overview.resumeScreenings[0].job_title, "数据分析专员");
 
 await assertCode(extractResumeAttachment({
   file_name:"resume.exe",

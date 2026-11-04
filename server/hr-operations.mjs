@@ -30,6 +30,7 @@ const emptyTenant = () => ({
   workflows: [],
   reports: [],
   resumeScreenings: [],
+  resumeJobProfile: null,
   workLogs: [],
   reportSchedule: {
     enabled:true,
@@ -87,6 +88,9 @@ const tenantState = (state, tenantId) => {
   const tenant = state.tenants[key];
   for (const field of ["employees", "workflows", "reports", "resumeScreenings", "workLogs", "events"]) {
     if (!Array.isArray(tenant[field])) tenant[field] = [];
+  }
+  if (!tenant.resumeJobProfile || typeof tenant.resumeJobProfile !== "object" || Array.isArray(tenant.resumeJobProfile)) {
+    tenant.resumeJobProfile = null;
   }
   tenant.reportSchedule ||= { enabled:true, timezone:"Asia/Shanghai", last_run_at:null, last_error:"" };
   const usedAccounts = new Set();
@@ -402,12 +406,48 @@ const extractResumeTerms = (jd) => {
   return [...new Set([...vocabulary, ...fragments])].slice(0, 16);
 };
 
+export async function saveResumeJobProfile({ tenantId, actor, payload = {} } = {}) {
+  return withState(async (state) => {
+    const tenant = reconcileTenant(tenantState(state, tenantId));
+    const jobTitle = text(payload.job_title, 120);
+    const jobDescription = text(payload.job_description, 20_000);
+    if (jobTitle.length < 2) {
+      throw Object.assign(new Error("固定岗位名称不能少于2个字符"), { code:"HR_RESUME_JOB_TITLE_REQUIRED", status:400 });
+    }
+    if (jobDescription.length < 20) {
+      throw Object.assign(new Error("固定岗位JD不能少于20个字符"), { code:"HR_RESUME_JOB_DESCRIPTION_REQUIRED", status:400 });
+    }
+    const previous = tenant.resumeJobProfile;
+    tenant.resumeJobProfile = {
+      id:previous?.id || uid("hrjob"),
+      job_title:jobTitle,
+      job_description:jobDescription,
+      version:Math.max(0, Number(previous?.version) || 0) + 1,
+      updated_by:text(actor, 120) || "system",
+      updated_at:nowIso()
+    };
+    appendEvent(tenant, {
+      type:"resume.job_profile_updated",
+      actor,
+      detail:`固定简历岗位：${jobTitle} · v${tenant.resumeJobProfile.version}`
+    });
+    tenant.revision += 1;
+    return clone(tenant.resumeJobProfile);
+  });
+}
+
 export async function screenResume({ tenantId, actor, payload = {} } = {}) {
   return withState(async (state) => {
     const tenant = reconcileTenant(tenantState(state, tenantId));
-    const jd = text(payload.job_description, 20_000);
+    const fixedJob = payload.use_fixed_job_profile === true ? tenant.resumeJobProfile : null;
+    if (payload.use_fixed_job_profile === true && !fixedJob) {
+      throw Object.assign(new Error("请先配置固定岗位和岗位JD"), { code:"HR_RESUME_JOB_PROFILE_REQUIRED", status:409 });
+    }
+    const jd = fixedJob ? fixedJob.job_description : text(payload.job_description, 20_000);
     const resume = text(payload.resume_text, 50_000);
-    const candidateLabel = text(payload.candidate_label, 80) || "未命名候选人";
+    const candidateLabel = text(payload.candidate_label, 80)
+      || (fixedJob && payload.source_filename ? text(String(payload.source_filename).replace(/\.[^.]+$/, ""), 80) : "")
+      || "未命名候选人";
     if (jd.length < 20 || resume.length < 20) {
       throw Object.assign(new Error("岗位要求和简历文本均不能少于20个字符"), { code:"HR_RESUME_INPUT_TOO_SHORT", status:400 });
     }
@@ -424,7 +464,9 @@ export async function screenResume({ tenantId, actor, payload = {} } = {}) {
     const screening = {
       id:uid("hrresume"),
       candidate_label:candidateLabel,
-      job_title:text(payload.job_title, 120) || "未命名岗位",
+      job_title:fixedJob?.job_title || text(payload.job_title, 120) || "未命名岗位",
+      job_profile_id:fixedJob?.id || null,
+      job_profile_version:fixedJob?.version || null,
       source_type:payload.source_type === "file" ? "file" : "text",
       source_filename:text(payload.source_filename, 160) || null,
       source_mime:text(payload.source_mime, 120) || null,
@@ -464,6 +506,8 @@ export async function screenResumeAttachment({ tenantId, actor, payload = {} } =
     payload:{
       ...payload,
       resume_text:extracted.text,
+      use_fixed_job_profile:true,
+      candidate_label:text(payload.candidate_label, 80) || text(extracted.file_name.replace(/\.[^.]+$/, ""), 80),
       source_type:"file",
       source_filename:extracted.file_name,
       source_mime:extracted.mime_type,
