@@ -69,7 +69,7 @@ export const metric = (label, value, change, name = "spark", unit = "") => `<div
 </div>`;
 
 export const pageHead = (eyebrow, title, desc, actions = "") => `<header class="page-head">
-  <div><div class="eyebrow">${eyebrow}</div><h1 class="page-title">${title}</h1><p class="page-desc">${desc}</p></div>
+  <div>${eyebrow ? `<div class="eyebrow">${eyebrow}</div>` : ""}<h1 class="page-title">${title}</h1><p class="page-desc">${desc}</p></div>
   <div class="head-actions">${actions}</div>
 </header>`;
 
