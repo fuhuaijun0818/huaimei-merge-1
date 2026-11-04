@@ -73,14 +73,17 @@ const hydrateHr = async ({ force = false, announce = false } = {}) => {
   ui.error = "";
   refreshHrContent();
   try {
-    const [overview, managedAccounts, identity] = await Promise.all([
+    const [overview, accountResult, identity] = await Promise.all([
       request("/api/admin/hr"),
-      request("/api/admin/hr/accounts"),
+      request("/api/admin/hr/accounts")
+        .then((data) => ({ data, error:"" }))
+        .catch((error) => ({ data:[], error:error.message })),
       request("/api/admin/identity")
     ]);
     ui.data = {
       ...overview,
-      managedAccounts:Array.isArray(managedAccounts) ? managedAccounts : [],
+      managedAccounts:Array.isArray(accountResult.data) ? accountResult.data : [],
+      accountError:accountResult.error,
       currentAccount:identity
     };
     ui.loaded = true;
@@ -164,9 +167,10 @@ const accountsPage = () => {
   const accounts = ui.data?.managedAccounts || [];
   const currentSubject = String(ui.data?.currentAccount?.subject || "");
   const header = `<div class="hr-owner-strip"><span>员工账号管理</span><strong>仅限普通岗位</strong><small>人事可以创建和维护员工账号，但不能创建管理员、超级管理员，也不能修改本人权限。</small></div>`;
+  const error = ui.data?.accountError ? `<div class="risk-banner" role="alert">${icon("alert",15)}<div>员工账号暂时无法读取：${escapeHtml(ui.data.accountError)}</div></div>` : "";
   const actions = `<div class="hr-report-actions"><button class="btn primary" data-action="hr-new-managed-account">${icon("plus",14)}新增员工账号</button></div>`;
-  if (!accounts.length) return `${header}${actions}<section class="card">${empty("暂无员工登录账号", "新增员工账号后，账号会立即获得所选岗位对应的菜单和接口权限。")}</section>`;
-  return `${header}${actions}<section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>姓名</th><th>登录账号</th><th>岗位</th><th>科室范围</th><th>状态</th><th>操作</th></tr></thead><tbody>${accounts.map((account) => {
+  if (!accounts.length) return `${header}${error}${actions}<section class="card">${empty("暂无员工登录账号", "新增员工账号后，账号会立即获得所选岗位对应的菜单和接口权限。")}</section>`;
+  return `${header}${error}${actions}<section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>姓名</th><th>登录账号</th><th>岗位</th><th>科室范围</th><th>状态</th><th>操作</th></tr></thead><tbody>${accounts.map((account) => {
     const isSelf = account.subject === currentSubject;
     return `<tr><td><strong>${escapeHtml(account.display_name)}</strong><div class="caption">${escapeHtml(account.subject)}</div></td><td>${escapeHtml(account.account)}</td><td>${badge(account.business_role, "outline")}</td><td>${escapeHtml((account.department_ids || []).join("、"))}</td><td>${badge(account.enabled ? "启用" : "停用", account.enabled ? "success" : "warning")}</td><td>${isSelf ? '<span class="caption">当前登录账号</span>' : `<button class="link" data-action="hr-edit-managed-account" data-id="${escapeHtml(account.subject)}">编辑 / 重置密码</button>`}</td></tr>`;
   }).join("")}</tbody></table></div></section>`;
