@@ -125,11 +125,12 @@ const pettyPage = () => {
     || (ui.pettyFilter === "pending" && item.writeoff_status === "pending")
     || (ui.pettyFilter === "completed" && item.writeoff_status === "completed")
     || (ui.pettyFilter === "not_issued" && item.writeoff_status === "not_issued"));
-  const action = item => item.application_status === "pending"
-    ? `<button class="link" data-action="finance-issue-petty" data-id="${escapeHtml(item.id)}">确认发放</button>`
-    : item.writeoff_status === "pending"
-      ? `<button class="link" data-action="finance-writeoff-petty" data-id="${escapeHtml(item.id)}">登记核销</button>`
-      : '<span class="caption">已处理</span>';
+  const action = (item) => {
+    const actions = [`<button class="link" data-action="finance-view-petty" data-id="${escapeHtml(item.id)}">查看</button>`];
+    if (item.application_status === "pending") actions.push(`<button class="link" data-action="finance-issue-petty" data-id="${escapeHtml(item.id)}">确认发放</button>`);
+    else if (item.writeoff_status === "pending") actions.push(`<button class="link" data-action="finance-writeoff-petty" data-id="${escapeHtml(item.id)}">登记核销</button>`);
+    return `<div class="finance-row-actions">${actions.join("")}</div>`;
+  };
   return `<div class="finance-toolbar"><label><span>员工核销状态</span><select id="finance-petty-filter">
     ${[["all","全部"],["not_issued","尚未发放"],["pending","待核销"],["completed","已核销"]].map(([value, label]) => `<option value="${value}" ${ui.pettyFilter === value ? "selected" : ""}>${label}</option>`).join("")}
   </select></label><span>当前显示 ${rows.length} / ${all.length} 笔</span><button class="btn primary" data-action="finance-new-petty">${icon("plus",14)}新增备用金申请</button></div>
@@ -146,7 +147,7 @@ const requestPage = () => {
   return `<div class="finance-toolbar"><label><span>审批类型</span><select id="finance-request-filter">
     ${[["all","全部"],["expense","费用报销"],["payment","付款申请"],["procurement","采购申请"]].map(([value, label]) => `<option value="${value}" ${ui.requestFilter === value ? "selected" : ""}>${label}</option>`).join("")}
   </select></label><span>当前显示 ${rows.length} / ${all.length} 笔</span><div class="finance-toolbar-actions"><button class="btn" data-action="finance-export-approved" ${approvedCount ? "" : "disabled"}>${icon("download",14)}导出已完成审批 Excel</button><button class="btn primary" data-action="finance-new-request">${icon("plus",14)}新增财务申请</button></div></div>
-  <section class="card">${rows.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>流程类型</th><th>所属公司 / 项目</th><th>费用类型</th><th>申请人</th><th>金额</th><th>凭据图片</th><th>审批状态</th><th>完成时间</th><th>操作</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${badge(requestType(item.type), "outline")}<div class="caption">${escapeHtml(item.id)}</div></td><td><strong>${escapeHtml(item.company)}</strong><div class="caption">${escapeHtml(item.project_name)}</div></td><td>${escapeHtml(item.expense_type)}<div class="caption">${escapeHtml(item.cost_center || "未填成本中心")}</div></td><td>${escapeHtml(item.applicant)}<div class="caption">${escapeHtml(item.employee_account || "")}</div></td><td><strong>¥${amount(item.amount)}</strong></td><td>${(item.evidence || []).length ? item.evidence.map((evidence) => `<button class="link" data-action="finance-preview-evidence" data-request-id="${escapeHtml(item.id)}" data-id="${escapeHtml(evidence.id)}">${escapeHtml(evidence.file_name)}</button>`).join("<br/>") : '<span class="caption">未上传</span>'}</td><td>${badge(item.approval_status === "approved" ? "审批完成" : "待审批", item.approval_status === "approved" ? "success" : "warning")}</td><td>${item.approved_at ? formatDate(item.approved_at) : "—"}</td><td>${item.approval_status === "pending" ? `<button class="link" data-action="finance-approve-request" data-id="${escapeHtml(item.id)}">完成审批</button>` : '<span class="caption">已完成</span>'}</td></tr>`).join("")}</tbody></table></div>` : empty("没有符合条件的财务申请", "调整审批类型筛选，或新增费用报销、付款、采购申请。")}</section>`;
+  <section class="card">${rows.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>流程类型</th><th>所属公司 / 项目</th><th>费用类型</th><th>申请人</th><th>金额</th><th>凭据图片</th><th>审批状态</th><th>完成时间</th><th>操作</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${badge(requestType(item.type), "outline")}<div class="caption">${escapeHtml(item.id)}</div></td><td><strong>${escapeHtml(item.company)}</strong><div class="caption">${escapeHtml(item.project_name)}</div></td><td>${escapeHtml(item.expense_type)}<div class="caption">${escapeHtml(item.cost_center || "未填成本中心")}</div></td><td>${escapeHtml(item.applicant)}<div class="caption">${escapeHtml(item.employee_account || "")}</div></td><td><strong>¥${amount(item.amount)}</strong></td><td>${(item.evidence || []).length ? item.evidence.map((evidence) => `<button class="link" data-action="finance-preview-evidence" data-request-id="${escapeHtml(item.id)}" data-id="${escapeHtml(evidence.id)}">${escapeHtml(evidence.file_name)}</button>`).join("<br/>") : '<span class="caption">未上传</span>'}</td><td>${badge(item.approval_status === "approved" ? "审批完成" : "待审批", item.approval_status === "approved" ? "success" : "warning")}</td><td>${item.approved_at ? formatDate(item.approved_at) : "—"}</td><td><div class="finance-row-actions"><button class="link" data-action="finance-view-request" data-id="${escapeHtml(item.id)}">查看</button>${item.approval_status === "pending" ? `<button class="link" data-action="finance-approve-request" data-id="${escapeHtml(item.id)}">完成审批</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div>` : empty("没有符合条件的财务申请", "调整审批类型筛选，或新增费用报销、付款、采购申请。")}</section>`;
 };
 
 export function renderFinancePage() {
@@ -190,6 +191,68 @@ const showWriteOffModal = (id) => {
       ${formField("核销凭据 / 说明","writeoff_reference","",{required:true})}
     </div></form>`,
     footer:`<button class="btn" data-action="modal-close">取消</button><button class="btn primary" data-action="finance-submit-form" data-id="finance-writeoff-form">确认核销</button>`
+  });
+};
+
+const detailRow = (label, value) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value ?? "—")}</strong></div>`;
+const showPettyDetail = (id) => {
+  const record = (ui.data?.pettyCash || []).find((item) => item.id === id);
+  if (!record) return toast("未找到备用金记录", "warning");
+  const status = pettyStatus(record);
+  openModal({
+    title:`备用金详情 · ${record.employee_name}`,
+    desc:`${record.company} · ${record.project_name || "未填写项目"}`,
+    wide:true,
+    body:`<div class="finance-detail">
+      <div class="finance-detail-status">${badge(status.label, status.tone)}${badge(record.application_status === "approved" ? "已发放" : "待发放", record.application_status === "approved" ? "success" : "warning")}</div>
+      <div class="finance-detail-grid">
+        ${detailRow("单据编号", record.id)}
+        ${detailRow("员工", record.employee_name)}
+        ${detailRow("登录账号", record.employee_account)}
+        ${detailRow("所属公司", record.company)}
+        ${detailRow("项目名称", record.project_name || "未填写")}
+        ${detailRow("申请金额", `¥${amount(record.amount)}`)}
+        ${detailRow("发放时间", record.issued_at ? formatDate(record.issued_at) : "尚未发放")}
+        ${detailRow("核销状态", status.label)}
+        ${detailRow("核销金额", record.written_off_at ? `¥${amount(record.written_off_amount)}` : "待登记")}
+        ${detailRow("核销凭据", record.writeoff_reference || "待登记")}
+        ${detailRow("核销时间", record.written_off_at ? formatDate(record.written_off_at) : "待登记")}
+        ${detailRow("创建人", record.created_by)}
+      </div>
+      <section class="finance-detail-note"><span>用途</span><p>${escapeHtml(record.purpose)}</p></section>
+    </div>`,
+    footer:`<button class="btn" data-action="modal-close">关闭</button>`
+  });
+};
+
+const showRequestDetail = (id) => {
+  const record = (ui.data?.requests || []).find((item) => item.id === id);
+  if (!record) return toast("未找到财务申请", "warning");
+  const evidence = record.evidence || [];
+  openModal({
+    title:`财务申请详情 · ${requestType(record.type)}`,
+    desc:`${record.company} · ${record.project_name}`,
+    wide:true,
+    body:`<div class="finance-detail">
+      <div class="finance-detail-status">${badge(requestType(record.type), "outline")}${badge(record.approval_status === "approved" ? "审批完成" : "待审批", record.approval_status === "approved" ? "success" : "warning")}</div>
+      <div class="finance-detail-grid">
+        ${detailRow("单据编号", record.id)}
+        ${detailRow("所属公司", record.company)}
+        ${detailRow("费用类型", record.expense_type)}
+        ${detailRow("项目名称", record.project_name)}
+        ${detailRow("申请人", record.applicant)}
+        ${detailRow("工号 / 登录账号", record.employee_account || "未填写")}
+        ${detailRow("费用金额", `¥${amount(record.amount)}`)}
+        ${detailRow("成本中心", record.cost_center || "未填写")}
+        ${detailRow("发票 / 凭据号", record.invoice_reference || "未填写")}
+        ${detailRow("创建时间", formatDate(record.created_at))}
+        ${detailRow("审批完成时间", record.approved_at ? formatDate(record.approved_at) : "待审批")}
+        ${detailRow("审批人", record.approved_by || "待审批")}
+      </div>
+      <section class="finance-detail-note"><span>报销说明</span><p>${escapeHtml(record.description || "未填写")}</p></section>
+      <section class="finance-evidence-section"><header><strong>凭据图片</strong><span>${evidence.length} 张</span></header>${evidence.length ? `<div class="finance-evidence-gallery">${evidence.map((item) => `<figure><button type="button" data-action="finance-preview-evidence" data-request-id="${escapeHtml(record.id)}" data-id="${escapeHtml(item.id)}"><img src="/api/admin/finance/requests/${encodeURIComponent(record.id)}/evidence/${encodeURIComponent(item.id)}" alt="${escapeHtml(item.file_name)}" loading="lazy" /></button><figcaption>${escapeHtml(item.file_name)}<small>${Math.ceil(Number(item.size || 0) / 1024)} KB</small></figcaption></figure>`).join("")}</div>` : '<div class="finance-detail-empty">该申请未上传凭据图片</div>'}</section>
+    </div>`,
+    footer:`<button class="btn" data-action="modal-close">关闭</button>`
   });
 };
 
@@ -332,6 +395,8 @@ const handleFinanceAction = async (action, id, target) => {
   if (action === "finance-new-petty") return showPettyCashModal();
   if (action === "finance-new-request") return showRequestModal();
   if (action === "finance-writeoff-petty") return showWriteOffModal(id);
+  if (action === "finance-view-petty") return showPettyDetail(id);
+  if (action === "finance-view-request") return showRequestDetail(id);
   if (action === "finance-issue-petty") {
     const record = (ui.data?.pettyCash || []).find((item) => item.id === id);
     if (!record) return toast("未找到备用金记录", "warning");

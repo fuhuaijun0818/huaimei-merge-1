@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import JSZip from "jszip";
@@ -161,6 +161,10 @@ assert.equal(overview.pettyCash[0].writeoff_status, "completed");
 assert.equal(overview.requests.length, 3);
 assert.equal(overview.requests.filter((item) => item.approval_status === "approved").length, 2);
 assert.ok(overview.events.some((item) => item.type === "finance.export.completed"));
+const financeUiSource = readFileSync(new URL("../src/modules/finance/index.js", import.meta.url), "utf8");
+assert.match(financeUiSource, /finance-view-petty/);
+assert.match(financeUiSource, /finance-view-request/);
+assert.match(financeUiSource, /finance-evidence-gallery/);
 
 console.log("finance-operations: passed");
 rmSync(evidenceRoot, { recursive:true, force:true });
