@@ -101,6 +101,9 @@ const tenantState = (state, tenantId) => {
     }
     usedAccounts.add(accountId.toLowerCase());
   }
+  // Remove the retired owner label from historical screening records so it
+  // cannot resurface in the UI after a reload.
+  for (const screening of tenant.resumeScreenings) delete screening.owner;
   // JSON persistence breaks object references. Re-link every workflow to the
   // canonical employee record so status changes cannot diverge between tabs.
   const employeesById = new Map(tenant.employees.filter((item) => item?.id).map((item) => [item.id, item]));
@@ -428,7 +431,6 @@ export async function screenResume({ tenantId, actor, payload = {} } = {}) {
       required_years:requiredYears || null,
       resume_years:resumeYears || null,
       resume_sha256:createHash("sha256").update(resume).digest("hex"),
-      owner:"李江龙",
       created_by:text(actor, 120) || "system",
       created_at:nowIso(),
       note:HR_RESUME_NOTE,

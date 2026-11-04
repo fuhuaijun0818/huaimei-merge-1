@@ -130,6 +130,8 @@ assert.ok(resumeScreening.score >= 60);
 assert.equal(resumeScreening.auto_reject, false);
 assert.ok(resumeScreening.matched_terms.includes("招聘"));
 assert.equal(typeof resumeScreening.resume_sha256, "string");
+assert.equal(Object.hasOwn(resumeScreening, "owner"), false);
+assert.doesNotMatch(JSON.stringify(resumeScreening), /李江龙/);
 assert.doesNotMatch(JSON.stringify(resumeScreening), /本人有5年人事运营经验/);
 
 const workLog = await hr.createHrWorkLog({
@@ -181,7 +183,7 @@ assert.match(apiSource, /\/api\/admin\/hr\/resume-screenings/);
 assert.match(apiSource, /\/api\/admin\/hr\/work-logs/);
 assert.match(apiSource, /reports\/generate/);
 assert.match(hrUiSource, /简历筛选助手/);
-assert.match(hrUiSource, /负责人：李江龙/);
+assert.doesNotMatch(hrUiSource, /李江龙/);
 assert.match(hrUiSource, /报告生成助手 · 负责人：孟夕然/);
 assert.match(hrUiSource, /语音输入/);
 assert.match(hrUiSource, /飞书报告/);

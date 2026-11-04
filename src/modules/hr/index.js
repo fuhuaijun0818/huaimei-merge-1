@@ -175,7 +175,7 @@ const reportsPage = () => {
 
 const resumePage = () => {
   const screenings = ui.data?.resumeScreenings || [];
-  const header = `<div class="hr-owner-strip"><span>简历筛选助手</span><strong>负责人：李江龙</strong><small>只基于JD和简历文本做辅助匹配，不自动淘汰，不读取年龄、性别、婚育、民族或照片等敏感信息。</small></div>`;
+  const header = `<div class="hr-owner-strip"><span>简历筛选助手</span><small>只基于JD和简历文本做辅助匹配，不自动淘汰，不读取年龄、性别、婚育、民族或照片等敏感信息。</small></div>`;
   const actions = `<div class="hr-report-actions"><button class="btn primary" data-action="hr-new-resume-screen">${icon("plus",14)}新建简历筛选</button></div>`;
   if (!screenings.length) return `${header}${actions}<section class="card">${empty("还没有简历筛选记录", "输入岗位JD和简历文本后，系统会给出匹配关键词、缺口和建议复核分数。")}</section>`;
   return `${header}${actions}<div class="hr-resume-grid">${screenings.map((item) => `<article class="card hr-resume-card">
@@ -183,7 +183,7 @@ const resumePage = () => {
     ${badge(item.verdict, item.score >= 80 ? "success" : item.score >= 60 ? "warning" : "outline")}
     <div class="hr-resume-terms"><div><span class="hr-resume-term-label">匹配项</span>${item.matched_terms.length ? item.matched_terms.map((term) => badge(term, "success")).join("") : "<em>暂无</em>"}</div><div><span class="hr-resume-term-label">待核实</span>${item.missing_terms.length ? item.missing_terms.map((term) => badge(term, "outline")).join("") : "<em>无</em>"}</div></div>
     <p>${escapeHtml(item.note)}</p>
-    <footer>${escapeHtml(item.owner)} · ${formatDate(item.created_at)} · 不自动淘汰</footer>
+    <footer>简历筛选 · ${formatDate(item.created_at)} · 不自动淘汰</footer>
   </article>`).join("")}</div>`;
 };
 
@@ -266,7 +266,7 @@ const showCompleteTaskModal = (workflowId, taskId) => {
 const showResumeScreeningModal = () => {
   openModal({
     title:"简历筛选助手",
-    desc:"负责人：李江龙。根据JD和简历文本判断关键词覆盖及经验匹配，结果只用于人工初筛，不自动淘汰候选人。",
+    desc:"根据JD和简历文本判断关键词覆盖及经验匹配，结果只用于人工初筛，不自动淘汰候选人。",
     wide:true,
     body:`<form id="hr-resume-form" class="form-grid">
       ${formField("岗位名称","job_title","",{required:true})}
