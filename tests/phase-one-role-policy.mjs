@@ -49,6 +49,7 @@ assert.throws(
 const administrator = { roles:["管理员"] };
 const presales = { roles:["售前人员"] };
 const hrSpecialist = { roles:["人事专员"] };
+const financeSpecialist = { roles:["财务专员"] };
 assert.equal(
   hasPhaseOneCapability(administrator, PHASE_ONE_CAPABILITIES.agentsManage),
   true,
@@ -99,6 +100,42 @@ const authorizedHr = authorizeManagementPrincipal({
   tenantId:"tenant-a"
 });
 assert.equal(authorizedHr.phaseOneRole, PHASE_ONE_BUSINESS_ROLES.hr);
+assert.deepEqual(
+  [...phaseOneCapabilitiesFor(financeSpecialist)].sort(),
+  [
+    PHASE_ONE_CAPABILITIES.financeRead,
+    PHASE_ONE_CAPABILITIES.financeManage,
+    PHASE_ONE_CAPABILITIES.financeExport
+  ].sort(),
+  "财务专员能力必须严格收敛为财务读取、办理和导出"
+);
+const authorizedFinance = authorizeManagementPrincipal({
+  subject:"oidc|phase-one-finance",
+  roles:["财务专员"],
+  tenantIds:["tenant-a"]
+}, {
+  requiredCapabilities:[
+    PHASE_ONE_CAPABILITIES.financeRead,
+    PHASE_ONE_CAPABILITIES.financeManage,
+    PHASE_ONE_CAPABILITIES.financeExport
+  ],
+  tenantId:"tenant-a"
+});
+assert.equal(authorizedFinance.phaseOneRole, PHASE_ONE_BUSINESS_ROLES.finance);
+for (const capability of [
+  PHASE_ONE_CAPABILITIES.usersManage,
+  PHASE_ONE_CAPABILITIES.hrRead,
+  PHASE_ONE_CAPABILITIES.knowledgeManage,
+  PHASE_ONE_CAPABILITIES.customersReadAll,
+  PHASE_ONE_CAPABILITIES.systemManage
+]) {
+  assert.equal(hasPhaseOneCapability(financeSpecialist, capability), false, `财务专员不得拥有 ${capability}`);
+}
+for (const role of ["系统管理员","售前顾问","内容专员","发布与索引管理员","质量与运营人员","人事专员"]) {
+  assert.equal(hasPhaseOneCapability({ roles:[role] }, PHASE_ONE_CAPABILITIES.financeRead), false, `${role}不得访问财务模块`);
+  assert.equal(hasPhaseOneCapability({ roles:[role] }, PHASE_ONE_CAPABILITIES.financeManage), false, `${role}不得办理财务审批`);
+  assert.equal(hasPhaseOneCapability({ roles:[role] }, PHASE_ONE_CAPABILITIES.financeExport), false, `${role}不得导出财务数据`);
+}
 assert.throws(
   () => authorizeManagementPrincipal({
     subject:"oidc|phase-one-hr",
@@ -251,7 +288,7 @@ assert.throws(
 
 console.log("✓ 一期管理员/售前人员角色策略、技术权限兼容和本地默认管理员身份通过");
 
-for (const role of ["系统管理员","内容专员","质量与运营人员","售前顾问","人事专员"]) {
+for (const role of ["系统管理员","内容专员","质量与运营人员","售前顾问","人事专员","财务专员"]) {
   assert.equal(hasPhaseOneCapability({roles:[role,"knowledge.publisher"]},"knowledge:publish"),false);
   assert.ok(!effectiveManagementRolesFor({roles:[role,"knowledge.publisher"]}).includes("knowledge.publisher"));
 }
