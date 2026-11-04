@@ -1,0 +1,11 @@
+.expense-claim-body { display:grid; gap:16px; }
+.expense-claim-metrics { margin-bottom:0; }
+.expense-claim-owner { display:flex; align-items:center; gap:12px; padding:13px 15px; border:1px solid #e5d7c4; border-radius:13px; color:#8a592f; background:linear-gradient(135deg,#fffbf4,#f8eddc); }
+.expense-claim-owner > svg { flex:none; }
+.expense-claim-owner strong { display:block; color:#59402c; font-size:12px; }
+.expense-claim-owner span { display:block; margin-top:3px; color:#947b63; font-size:10px; }
+.expense-claims-page .danger-text { color:#a4463d; }
+
+@media (max-width: 640px) {
+  .expense-claim-owner { align-items:flex-start; }
+}

@@ -141,6 +141,7 @@
     "scripts/team-",
     "src/modules/hr/",
     "src/modules/finance/",
+    "src/modules/expense-claims/",
     "tests/hr-operations.mjs",
     "README.md",
     "AGENTS.md",

@@ -11,6 +11,7 @@ import { MESSAGE_TEMPLATE_CATEGORIES, MESSAGE_TEMPLATE_VARIABLES, renderTemplate
 import { setIdentityCapabilities } from "./modules/administration/identity-capabilities.js";
 import { renderHrPage } from "./modules/hr/index.js";
 import { renderFinancePage } from "./modules/finance/index.js";
+import { renderExpenseClaimsPage } from "./modules/expense-claims/index.js";
 import { sanitizeDisplayData, store } from "./store.js";
 import {
   claimManagementAppointmentIntake,
@@ -331,7 +332,7 @@ const PHASE_ONE_ROLE_LABELS = Object.freeze(ROLE_CATALOG.map(r=>r.name));
 const normalizePhaseOneRole = value => roleCatalogEntry(value)?.name || "未授权";
 const currentPhaseOneRole = () => normalizePhaseOneRole(ui.managementIdentity?.role);
 const isPresalesWorkspace = () => currentPhaseOneRole() === "售前顾问";
-const presalesRouteAllowlist = new Set(["workbench", "customers", "conversations", "conversation"]);
+const presalesRouteAllowlist = new Set(["workbench", "customers", "conversations", "conversation", "expense-claims"]);
 // 质量与运营人员的岗位范围是“授权科室脱敏数据”（role-catalog）。前端只放行
 // 脱敏质检链路：Bad Case 库；会话收件箱、人工接管与客户档案都不在该岗位的
 // 可见范围内。服务端 capability（feedback:manage / conversations:read_redacted）
@@ -343,9 +344,11 @@ const qualitySubrouteAllowlist = Object.freeze({
 });
 const isHrWorkspace = () => currentPhaseOneRole() === "人事专员";
 const isFinanceWorkspace = () => currentPhaseOneRole() === "财务专员";
+const expenseClaimRoles = new Set(["administrator", "presales", "content", "publisher", "quality", "hr", "finance", "superadministrator"]);
 const canOpenRouteInCurrentRole = route => {
  const key=roleCatalogEntry(currentPhaseOneRole())?.key;
  if(key==='superadministrator')return true;
+ if(route==="expense-claims")return expenseClaimRoles.has(key);
  return key==="presales"?presalesRouteAllowlist.has(route):key==="administrator"?["workbench","administration","integrations"].includes(route):key==="hr"?route==="hr":key==="finance"?route==="finance":key==="quality"?qualityRouteAllowlist.has(route):["content","publisher"].includes(key)?["workbench","knowledge"].includes(route):false;
 };
 const presalesSubrouteAllowlist = Object.freeze({
@@ -422,7 +425,7 @@ function shell(content) {
     </aside>
     <main class="main">
       <header class="topbar"><div class="breadcrumb"><span>时代之美</span>${icon("chevron", 12)}<strong>${routeTitle(route, id, resourceId)}</strong></div>
-        ${handoverOnlyMode ? `<span class="caption">仅展示已接入服务端并可审计的操作</span>` : `${isPresalesWorkspace() ? `<span class="caption">售前工作台仅展示已进入聊天或已进入接待队列的客户会话</span>` : isHrWorkspace() ? `<span class="caption">人事权限：员工档案、入职离职、简历筛选与日报周报月报</span>` : isFinanceWorkspace() ? `<span class="caption">财务权限：备用金核销、费用审批与Excel导出</span>` : `<div class="global-search">${icon("search", 17)}<input id="global-search" type="search" placeholder="搜索客户姓名、手机号、档案编号…" autocomplete="off"/><div class="search-results" id="global-results"></div></div>`}<select disabled class="role-select" id="role-select" aria-label="切换角色">${localRoles.map((role) => `<option ${role === activeRole ? "selected" : ""}>${escapeHtml(role)}</option>`).join("")}</select>`}
+        ${handoverOnlyMode ? `<span class="caption">仅展示已接入服务端并可审计的操作</span>` : `${route === "expense-claims" ? `<span class="caption">员工自助费用报销 · 提交后进入财务审批</span>` : isPresalesWorkspace() ? `<span class="caption">售前工作台仅展示已进入聊天或已进入接待队列的客户会话</span>` : isHrWorkspace() ? `<span class="caption">人事权限：员工档案、入职离职、简历筛选与日报周报月报</span>` : isFinanceWorkspace() ? `<span class="caption">财务权限：备用金核销、费用审批与Excel导出</span>` : `<div class="global-search">${icon("search", 17)}<input id="global-search" type="search" placeholder="搜索客户姓名、手机号、档案编号…" autocomplete="off"/><div class="search-results" id="global-results"></div></div>`}<select disabled class="role-select" id="role-select" aria-label="切换角色">${localRoles.map((role) => `<option ${role === activeRole ? "selected" : ""}>${escapeHtml(role)}</option>`).join("")}</select>`}
         ${window.__HUAMEI_MANAGEMENT_RUNTIME__?.browser_session_auth ? `<button class="btn" data-action="admin-logout">退出登录</button>` : ""}
         <button class="topbar-action" data-action="notifications" aria-label="${hasOpenHandover ? "有新的人工接管通知" : "通知"}">${icon("bell", 17)}${hasOpenHandover ? `<span class="notification-dot"></span>` : ""}</button>
       </header>
@@ -2382,6 +2385,7 @@ function settingsSubPage() {
 function currentPage() {
   if(!ui.managementIdentity)return `<div class="page"><p role="alert">${escapeHtml(ui.identityError||"正在验证管理身份…")}</p></div>`;
   const businessRole=roleCatalogEntry(ui.managementIdentity.role)?.key;
+  if(routeInfo().route==="expense-claims")return renderExpenseClaimsPage();
   if(businessRole==='superadministrator'&&routeInfo().route==='administration')return managedAccountsPage();
   if(businessRole==='superadministrator'&&routeInfo().route==='knowledge')return productionKnowledgeGovernancePage();
   if(businessRole==="administrator"){
@@ -2459,6 +2463,7 @@ function currentPage() {
     analytics: analyticsPage,
     hr: renderHrPage,
     finance: renderFinancePage,
+    "expense-claims": renderExpenseClaimsPage,
     integrations: integrationsPage,
     administration: () => renderSubpage("administration", "overview")
   }[route] || workbenchPage)();

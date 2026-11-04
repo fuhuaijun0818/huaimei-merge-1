@@ -200,6 +200,7 @@ export const navGroups = [
     label: "经营治理",
     items: [
       ["analytics", "chart", "经营分析"],
+      ["expense-claims", "wallet", "费用申请"],
       ["hr", "users", "人事管理"],
       ["finance", "wallet", "财务管理"],
       ["integrations", "settings", "系统配置"],
