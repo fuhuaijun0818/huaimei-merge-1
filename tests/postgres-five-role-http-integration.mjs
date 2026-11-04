@@ -15,7 +15,7 @@ const port=await new Promise(resolve=>{const s=createServer();s.listen(0,'127.0.
 // This fixture verifies the Basic-auth compatibility path.  Do not inherit a
 // developer's browser-session gate, otherwise the request is rejected before
 // the managed-account authenticator being tested is reached.
-const child=spawn(process.execPath,['server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,PORT:String(port),HUAMEI_HOST:'127.0.0.1',HUAMEI_API_KEY:randomBytes(24).toString('hex'),HUAMEI_RUNTIME_ENV:'development',HUAMEI_EXTERNAL_TEST_MODE:'true',HUAMEI_ADMIN_SESSION_AUTH:'false',HUAMEI_LOCAL_REQUIRE_AUTH:'false',HUAMEI_ADMIN_USERNAME:'fixture-bootstrap',HUAMEI_ADMIN_PASSWORD:password,HUAMEI_PREVIEW_USERNAME:'fixture-preview',HUAMEI_PREVIEW_PASSWORD:randomBytes(24).toString('hex'),HUAMEI_PUBLIC_TENANT_ID:tenant,HUAMEI_DEFAULT_TENANT_ID:tenant,HUAMEI_ACQUISITION_TENANT_ID:tenant,HUAMEI_LLM_ENABLED:'false',HUAMEI_MEMBER_CHECK_ENABLED:'false',HUAMEI_GRAPHRAG_ENABLED:'false',HUAMEI_HR_STORE_FILE:':memory:',HUAMEI_FIELD_ENCRYPTION_KEYRING_JSON:JSON.stringify({active_key_id:'fixture',keys:{fixture:randomBytes(32).toString('base64')}})},stdio:['ignore','ignore','pipe']});
+const child=spawn(process.execPath,['server.mjs'],{cwd:new URL('..',import.meta.url),env:{...process.env,PORT:String(port),HUAMEI_HOST:'127.0.0.1',HUAMEI_API_KEY:randomBytes(24).toString('hex'),HUAMEI_RUNTIME_ENV:'development',HUAMEI_EXTERNAL_TEST_MODE:'true',HUAMEI_ADMIN_SESSION_AUTH:'false',HUAMEI_LOCAL_REQUIRE_AUTH:'false',HUAMEI_ADMIN_USERNAME:'fixture-bootstrap',HUAMEI_ADMIN_PASSWORD:password,HUAMEI_PREVIEW_USERNAME:'fixture-preview',HUAMEI_PREVIEW_PASSWORD:randomBytes(24).toString('hex'),HUAMEI_PUBLIC_TENANT_ID:tenant,HUAMEI_DEFAULT_TENANT_ID:tenant,HUAMEI_ACQUISITION_TENANT_ID:tenant,HUAMEI_LLM_ENABLED:'false',HUAMEI_MEMBER_CHECK_ENABLED:'false',HUAMEI_GRAPHRAG_ENABLED:'false',HUAMEI_HR_STORE_FILE:':memory:',HUAMEI_FINANCE_STORE_FILE:':memory:',HUAMEI_FIELD_ENCRYPTION_KEYRING_JSON:JSON.stringify({active_key_id:'fixture',keys:{fixture:randomBytes(32).toString('base64')}})},stdio:['ignore','ignore','pipe']});
 let stderr='';child.stderr.on('data',b=>{stderr+=b.toString();});
 const exited=new Promise(resolve=>child.once('exit',resolve));
 const callAccount=(account,path,body)=>fetch(`http://127.0.0.1:${port}${path}`,{headers:{Authorization:'Basic '+Buffer.from(`${account}:${password}`).toString('base64'),...(body?{'Content-Type':'application/json','Idempotency-Key':randomUUID()}: {})},...(body?{method:'POST',body:JSON.stringify(body)}:{})});
@@ -31,6 +31,8 @@ try{
   assert.equal((await call(role.key,'/api/admin/integrations/member-check')).status,role.key==='administrator'?200:403);
   assert.equal((await call(role.key,'/api/admin/hr')).status,role.key==='hr'?200:403,role.key+' HR permission boundary');
   assert.equal((await call(role.key,'/api/admin/hr/accounts')).status,role.key==='hr'?200:403,role.key+' HR account boundary');
+  assert.equal((await call(role.key,'/api/admin/finance')).status,role.key==='finance'?200:403,role.key+' finance permission boundary');
+  assert.equal((await call(role.key,'/api/admin/finance/exports/approved.xlsx')).status,role.key==='finance'?200:403,role.key+' finance export boundary');
  }
  const hrAccountList=await call('hr','/api/admin/hr/accounts');assert.equal(hrAccountList.status,200);
  const visibleHrAccounts=(await hrAccountList.json()).data;
@@ -57,7 +59,7 @@ try{
  const disabled=await call('administrator','/api/admin/accounts',{subject:content.subject,expected_version:1,display_name:'fixture',role:'content',departments:['*'],enabled:false});assert.equal(disabled.status,200);
  assert.equal((await call('content','/api/admin/identity')).status,403,'disabled credentials must not authenticate');
  assert.equal((await call('publisher','/api/admin/knowledge/publications',{document_ids:['missing']})).status,403);
- console.log('PASS: five real Basic accounts, HR ordinary-account provisioning without administration escalation, role claims, backend permission matrix, content creation and immediate account revocation');
+ console.log('PASS: six real Basic accounts, HR provisioning, finance-only module boundary, role claims, backend permission matrix, content creation and immediate account revocation');
 }finally{
  child.kill('SIGTERM');await Promise.race([exited,delay(1500)]);if(child.exitCode===null)child.kill('SIGKILL');await closePostgresClient();
 }

@@ -79,6 +79,15 @@ import {
   startHrReportScheduler
 } from "./hr-operations.mjs";
 import { HR_RESUME_FILE_MAX_JSON_BYTES } from "./hr-resume-file.mjs";
+import {
+  approveFinanceRequest,
+  createFinanceRequest,
+  createPettyCashApplication,
+  exportApprovedFinanceRequests,
+  getFinanceOverview,
+  issuePettyCash,
+  writeOffPettyCash
+} from "./finance-operations.mjs";
 
 export const DEMO_API_KEY = "hm_local_demo_key_2026";
 const API_KEY = process.env.HUAMEI_API_KEY || DEMO_API_KEY;
@@ -232,6 +241,20 @@ const sendJson = (request, response, requestId, status, payload, extraHeaders = 
 
 const sendError = (request, response, requestId, status, code, message, details = [], extraHeaders = {}) => {
   sendJson(request, response, requestId, status, { error: { code, message, ...(details.length ? { details } : {}) }, request_id: requestId }, extraHeaders);
+};
+
+const sendDownload = (request, response, requestId, status, buffer, contentType, fileName) => {
+  const fallback = String(fileName || "download").replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
+  response.writeHead(status, {
+    ...corsHeaders(request),
+    "Content-Type":contentType,
+    "Content-Length":buffer.length,
+    "Content-Disposition":`attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    "Cache-Control":"no-store",
+    "X-Content-Type-Options":"nosniff",
+    "X-Request-Id":requestId
+  });
+  response.end(buffer);
 };
 
 const readJsonBody = async (request, maxBytes = MAX_BODY_BYTES) => {
@@ -700,6 +723,88 @@ export async function handleApiRequest(request, response) {
 
   if (request.method === "GET" && url.pathname === "/api/v1/openapi.json") {
     sendJson(request, response, requestId, 200, createOpenApiDocument(`${url.protocol}//${url.host}`));
+    return true;
+  }
+
+  if (url.pathname.startsWith("/api/admin/finance")) {
+    const method = request.method;
+    const exportRoute = url.pathname === "/api/admin/finance/exports/approved.xlsx";
+    const pettyCashIssueMatch = url.pathname.match(/^\/api\/admin\/finance\/petty-cash\/(finpc_[a-f0-9-]+)\/issue$/i);
+    const pettyCashWriteOffMatch = url.pathname.match(/^\/api\/admin\/finance\/petty-cash\/(finpc_[a-f0-9-]+)\/write-off$/i);
+    const requestApprovalMatch = url.pathname.match(/^\/api\/admin\/finance\/requests\/(finreq_[a-f0-9-]+)\/approve$/i);
+    const supported = (method === "GET" && url.pathname === "/api/admin/finance")
+      || (method === "GET" && exportRoute)
+      || (method === "POST" && url.pathname === "/api/admin/finance/petty-cash")
+      || (method === "POST" && url.pathname === "/api/admin/finance/requests")
+      || (method === "POST" && pettyCashIssueMatch)
+      || (method === "POST" && pettyCashWriteOffMatch)
+      || (method === "POST" && requestApprovalMatch);
+    if (!supported) {
+      sendError(request, response, requestId, 404, "API_NOT_FOUND", "未找到指定财务管理端点");
+      return true;
+    }
+    let principal;
+    try {
+      principal = await authorizeManagementRequest(request, {
+        requiredCapabilities:[exportRoute ? PHASE_ONE_CAPABILITIES.financeExport : method === "GET" ? PHASE_ONE_CAPABILITIES.financeRead : PHASE_ONE_CAPABILITIES.financeManage],
+        tenantId:PUBLIC_TENANT_ID,
+        tenantField:"token.tenant_ids"
+      });
+      await recordManagementAccess({
+        principal,
+        requestId,
+        request,
+        action:`management.finance.${pettyCashIssueMatch ? "petty_cash_issue" : pettyCashWriteOffMatch ? "petty_cash_writeoff" : requestApprovalMatch ? "request_approve" : exportRoute ? "export" : url.pathname.split("/").at(-1)}`,
+        resourceType:"finance_operations",
+        resourceId:pettyCashIssueMatch?.[1] || pettyCashWriteOffMatch?.[1] || requestApprovalMatch?.[1] || principal.tenantId
+      });
+    } catch (error) {
+      sendManagementAuthorizationError(request, response, requestId, error);
+      return true;
+    }
+    if (method === "GET") {
+      try {
+        if (exportRoute) {
+          const exported = await exportApprovedFinanceRequests({ tenantId:principal.tenantId, actor:principal.subject });
+          sendDownload(request, response, requestId, 200, exported.buffer, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", exported.file_name);
+        } else {
+          const data = await getFinanceOverview({ tenantId:principal.tenantId });
+          sendJson(request, response, requestId, 200, { data, request_id:requestId });
+        }
+      } catch (error) {
+        sendError(request, response, requestId, Number(error.status) || 500, error.code || "FINANCE_READ_FAILED", error.message || "财务数据读取失败");
+      }
+      return true;
+    }
+    const idempotencyKey = String(request.headers["idempotency-key"] || "").trim();
+    if (idempotencyKey.length < 8 || idempotencyKey.length > 128) {
+      sendError(request, response, requestId, 400, "IDEMPOTENCY_KEY_REQUIRED", "财务写操作必须提供8–128字符的Idempotency-Key");
+      return true;
+    }
+    let payload;
+    try {
+      payload = await readJsonBody(request);
+    } catch (error) {
+      sendError(request, response, requestId, error.code === "BODY_TOO_LARGE" ? 413 : 400, error.code || "INVALID_JSON", "请求体不是有效JSON");
+      return true;
+    }
+    try {
+      let data;
+      if (url.pathname === "/api/admin/finance/petty-cash") {
+        data = await createPettyCashApplication({ tenantId:principal.tenantId, actor:principal.subject, payload });
+      } else if (url.pathname === "/api/admin/finance/requests") {
+        data = await createFinanceRequest({ tenantId:principal.tenantId, actor:principal.subject, payload });
+      } else if (pettyCashIssueMatch) {
+        data = await issuePettyCash({ tenantId:principal.tenantId, actor:principal.subject, id:pettyCashIssueMatch[1], expectedVersion:payload.expected_version });
+      } else if (pettyCashWriteOffMatch) {
+        data = await writeOffPettyCash({ tenantId:principal.tenantId, actor:principal.subject, id:pettyCashWriteOffMatch[1], expectedVersion:payload.expected_version, payload });
+      } else {
+        data = await approveFinanceRequest({ tenantId:principal.tenantId, actor:principal.subject, id:requestApprovalMatch[1], expectedVersion:payload.expected_version });
+      }
+      sendJson(request, response, requestId, 201, { data, request_id:requestId });
+    } catch (error) {
+      sendError(request, response, requestId, Number(error.status) || 400, error.code || "FINANCE_OPERATION_FAILED", error.message || "财务操作失败", error.details || []);
+    }
     return true;
   }
 
