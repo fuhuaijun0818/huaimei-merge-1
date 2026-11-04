@@ -8,6 +8,7 @@ import {saveManagementAccount} from '../server/platform/management-accounts.mjs'
 import {ROLE_CATALOG} from '../src/role-catalog.js';
 assert.equal(process.env.HUAMEI_PERSISTENCE_BACKEND,'postgres');
 const tenant='role-http-'+randomUUID().slice(0,8),password=randomBytes(24).toString('hex');
+const evidencePng=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=','base64').toString('base64');
 const admin={subject:'fixture-bootstrap',roles:['administrator'],tenantId:tenant,departmentIds:['*']};
 const accounts={};
 for(const role of ROLE_CATALOG.filter(r=>r.key!=="superadministrator"))accounts[role.key]=await saveManagementAccount({account:'fixture-'+role.key,display_name:role.name,role:role.key,departments:['*'],password},admin);
@@ -33,7 +34,17 @@ try{
   assert.equal((await call(role.key,'/api/admin/hr/accounts')).status,role.key==='hr'?200:403,role.key+' HR account boundary');
   assert.equal((await call(role.key,'/api/admin/finance')).status,role.key==='finance'?200:403,role.key+' finance permission boundary');
   assert.equal((await call(role.key,'/api/admin/finance/exports/approved.xlsx')).status,role.key==='finance'?200:403,role.key+' finance export boundary');
+  assert.equal((await call(role.key,'/api/admin/expense-claims')).status,200,role.key+' employee expense claim access');
  }
+ const presalesIdentity=(await (await call('presales','/api/admin/identity')).json()).data;
+ const employeeClaimResponse=await call('presales','/api/admin/expense-claims',{type:'payment',company:'fixture company',expense_type:'交通费',project_name:'employee submit project',amount:66.8,description:'employee claim',evidence_files:[{file_name:'receipt.png',mime_type:'image/png',data_base64:evidencePng}]});
+ assert.equal(employeeClaimResponse.status,201);
+ const employeeClaim=(await employeeClaimResponse.json()).data;
+ assert.equal(employeeClaim.type,'expense');
+ assert.equal(employeeClaim.applicant_subject,presalesIdentity.subject);
+ assert.equal(employeeClaim.source,'employee_self_service');
+ const financeClaims=(await (await call('finance','/api/admin/finance')).json()).data.requests;
+ assert.ok(financeClaims.some(request=>request.id===employeeClaim.id),'employee expense claim must enter finance approval queue');
  const hrAccountList=await call('hr','/api/admin/hr/accounts');assert.equal(hrAccountList.status,200);
  const visibleHrAccounts=(await hrAccountList.json()).data;
  assert.ok(visibleHrAccounts.every(account=>!['系统管理员','超级管理员'].includes(account.business_role)),'HR must not see administrator accounts');
@@ -59,7 +70,7 @@ try{
  const disabled=await call('administrator','/api/admin/accounts',{subject:content.subject,expected_version:1,display_name:'fixture',role:'content',departments:['*'],enabled:false});assert.equal(disabled.status,200);
  assert.equal((await call('content','/api/admin/identity')).status,403,'disabled credentials must not authenticate');
  assert.equal((await call('publisher','/api/admin/knowledge/publications',{document_ids:['missing']})).status,403);
- console.log('PASS: six real Basic accounts, HR provisioning, finance-only module boundary, role claims, backend permission matrix, content creation and immediate account revocation');
+ console.log('PASS: six real Basic accounts, HR provisioning, employee expense submission to finance approval, finance-only approval backend, role claims, content creation and immediate account revocation');
 }finally{
  child.kill('SIGTERM');await Promise.race([exited,delay(1500)]);if(child.exitCode===null)child.kill('SIGKILL');await closePostgresClient();
 }

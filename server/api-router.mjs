@@ -88,6 +88,8 @@ import {
   getFinanceEvidence,
   getFinanceOverview,
   issuePettyCash,
+  listMyExpenseClaims,
+  submitEmployeeExpenseClaim,
   writeOffPettyCash
 } from "./finance-operations.mjs";
 
@@ -728,6 +730,59 @@ export async function handleApiRequest(request, response) {
     return true;
   }
 
+  if (url.pathname === "/api/admin/expense-claims") {
+    if (!["GET", "POST"].includes(request.method)) {
+      sendError(request, response, requestId, 405, "METHOD_NOT_ALLOWED", "费用申请端点仅支持读取或提交", [], { Allow:"GET, POST" });
+      return true;
+    }
+    let principal;
+    try {
+      principal = await authorizeManagementRequest(request, {
+        tenantId:PUBLIC_TENANT_ID,
+        tenantField:"token.tenant_ids"
+      });
+      await recordManagementAccess({
+        principal,
+        requestId,
+        request,
+        action:`management.expense_claim.${request.method === "GET" ? "list" : "submit"}`,
+        resourceType:"expense_claim",
+        resourceId:principal.subject
+      });
+    } catch (error) {
+      sendManagementAuthorizationError(request, response, requestId, error);
+      return true;
+    }
+    if (request.method === "GET") {
+      try {
+        const data = await listMyExpenseClaims({ tenantId:principal.tenantId, subject:principal.subject });
+        sendJson(request, response, requestId, 200, { data, request_id:requestId });
+      } catch (error) {
+        sendError(request, response, requestId, Number(error.status) || 500, error.code || "EXPENSE_CLAIMS_READ_FAILED", error.message || "费用申请读取失败");
+      }
+      return true;
+    }
+    const idempotencyKey = String(request.headers["idempotency-key"] || "").trim();
+    if (idempotencyKey.length < 8 || idempotencyKey.length > 128) {
+      sendError(request, response, requestId, 400, "IDEMPOTENCY_KEY_REQUIRED", "费用申请必须提供8–128字符的Idempotency-Key");
+      return true;
+    }
+    let payload;
+    try {
+      payload = await readJsonBody(request, 24 * 1024 * 1024);
+    } catch (error) {
+      sendError(request, response, requestId, error.code === "BODY_TOO_LARGE" ? 413 : 400, error.code || "INVALID_JSON", "请求体不是有效JSON");
+      return true;
+    }
+    try {
+      const data = await submitEmployeeExpenseClaim({ tenantId:principal.tenantId, principal, payload });
+      sendJson(request, response, requestId, 201, { data, request_id:requestId });
+    } catch (error) {
+      sendError(request, response, requestId, Number(error.status) || 400, error.code || "EXPENSE_CLAIM_SUBMIT_FAILED", error.message || "费用申请提交失败", error.details || []);
+    }
+    return true;
+  }
+
   if (url.pathname.startsWith("/api/admin/finance")) {
     const method = request.method;
     const exportRoute = url.pathname === "/api/admin/finance/exports/approved.xlsx";
@@ -1049,7 +1104,7 @@ export async function handleApiRequest(request, response) {
   }
   if (url.pathname === "/api/admin/identity" && request.method === "GET") {
     try { const p=await authorizeManagementRequest(request,{tenantId:PUBLIC_TENANT_ID});
-      sendJson(request,response,requestId,200,{data:{subject:p.subject,tenant_id:p.tenantId,tenant_ids:p.tenantIds,scope:p.phaseOneCapabilities.includes(PHASE_ONE_CAPABILITIES.superadminManage)?"platform":"tenant",role:p.phaseOneRole,capabilities:p.phaseOneCapabilities,departments:p.departmentIds}});
+      sendJson(request,response,requestId,200,{data:{subject:p.subject,account:p.account||null,display_name:p.displayName||null,tenant_id:p.tenantId,tenant_ids:p.tenantIds,scope:p.phaseOneCapabilities.includes(PHASE_ONE_CAPABILITIES.superadminManage)?"platform":"tenant",role:p.phaseOneRole,capabilities:p.phaseOneCapabilities,departments:p.departmentIds}});
     } catch(e) {sendManagementAuthorizationError(request,response,requestId,e);}
     return true;
   }
