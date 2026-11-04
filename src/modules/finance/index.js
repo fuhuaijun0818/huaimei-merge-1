@@ -24,6 +24,12 @@ const tabs = [
 const amount = (value) => new Intl.NumberFormat("zh-CN", { minimumFractionDigits:2, maximumFractionDigits:2 }).format(Number(value) || 0);
 const requestType = (value) => requestTypes[value] || value || "未分类";
 const key = (prefix) => `${prefix}-${crypto.randomUUID()}`.slice(0, 128);
+const fileBase64 = (file) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.addEventListener("load", () => resolve(String(reader.result || "").split(",")[1] || ""));
+  reader.addEventListener("error", () => reject(new Error("凭据图片读取失败")));
+  reader.readAsDataURL(file);
+});
 
 async function request(path, options = {}) {
   let response;
@@ -140,7 +146,7 @@ const requestPage = () => {
   return `<div class="finance-toolbar"><label><span>审批类型</span><select id="finance-request-filter">
     ${[["all","全部"],["expense","费用报销"],["payment","付款申请"],["procurement","采购申请"]].map(([value, label]) => `<option value="${value}" ${ui.requestFilter === value ? "selected" : ""}>${label}</option>`).join("")}
   </select></label><span>当前显示 ${rows.length} / ${all.length} 笔</span><div class="finance-toolbar-actions"><button class="btn" data-action="finance-export-approved" ${approvedCount ? "" : "disabled"}>${icon("download",14)}导出已完成审批 Excel</button><button class="btn primary" data-action="finance-new-request">${icon("plus",14)}新增财务申请</button></div></div>
-  <section class="card">${rows.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>流程类型</th><th>所属公司 / 项目</th><th>费用类型</th><th>申请人</th><th>金额</th><th>审批状态</th><th>完成时间</th><th>操作</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${badge(requestType(item.type), "outline")}<div class="caption">${escapeHtml(item.id)}</div></td><td><strong>${escapeHtml(item.company)}</strong><div class="caption">${escapeHtml(item.project_name)}</div></td><td>${escapeHtml(item.expense_type)}<div class="caption">${escapeHtml(item.cost_center || "未填成本中心")}</div></td><td>${escapeHtml(item.applicant)}<div class="caption">${escapeHtml(item.employee_account || "")}</div></td><td><strong>¥${amount(item.amount)}</strong></td><td>${badge(item.approval_status === "approved" ? "审批完成" : "待审批", item.approval_status === "approved" ? "success" : "warning")}</td><td>${item.approved_at ? formatDate(item.approved_at) : "—"}</td><td>${item.approval_status === "pending" ? `<button class="link" data-action="finance-approve-request" data-id="${escapeHtml(item.id)}">完成审批</button>` : '<span class="caption">已完成</span>'}</td></tr>`).join("")}</tbody></table></div>` : empty("没有符合条件的财务申请", "调整审批类型筛选，或新增费用报销、付款、采购申请。")}</section>`;
+  <section class="card">${rows.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>流程类型</th><th>所属公司 / 项目</th><th>费用类型</th><th>申请人</th><th>金额</th><th>凭据图片</th><th>审批状态</th><th>完成时间</th><th>操作</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${badge(requestType(item.type), "outline")}<div class="caption">${escapeHtml(item.id)}</div></td><td><strong>${escapeHtml(item.company)}</strong><div class="caption">${escapeHtml(item.project_name)}</div></td><td>${escapeHtml(item.expense_type)}<div class="caption">${escapeHtml(item.cost_center || "未填成本中心")}</div></td><td>${escapeHtml(item.applicant)}<div class="caption">${escapeHtml(item.employee_account || "")}</div></td><td><strong>¥${amount(item.amount)}</strong></td><td>${(item.evidence || []).length ? item.evidence.map((evidence) => `<button class="link" data-action="finance-preview-evidence" data-request-id="${escapeHtml(item.id)}" data-id="${escapeHtml(evidence.id)}">${escapeHtml(evidence.file_name)}</button>`).join("<br/>") : '<span class="caption">未上传</span>'}</td><td>${badge(item.approval_status === "approved" ? "审批完成" : "待审批", item.approval_status === "approved" ? "success" : "warning")}</td><td>${item.approved_at ? formatDate(item.approved_at) : "—"}</td><td>${item.approval_status === "pending" ? `<button class="link" data-action="finance-approve-request" data-id="${escapeHtml(item.id)}">完成审批</button>` : '<span class="caption">已完成</span>'}</td></tr>`).join("")}</tbody></table></div>` : empty("没有符合条件的财务申请", "调整审批类型筛选，或新增费用报销、付款、采购申请。")}</section>`;
 };
 
 export function renderFinancePage() {
@@ -202,6 +208,7 @@ const showRequestModal = () => {
       <label class="form-group"><span class="form-label">费用金额（元）</span><input class="form-control" name="amount" type="number" min="0.01" step="0.01" required /></label>
       ${formField("成本中心","cost_center","")}
       ${formField("发票 / 凭据号","invoice_reference","")}
+      <label class="form-group full"><span class="form-label">发票 / 报销凭据图片（最多3张，每张5MB，支持JPG、PNG、WebP）</span><input class="form-control" name="evidence_files" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple /><span class="caption">图片用于财务审批和后续查看；服务端校验图片签名后保存，Excel会记录图片数量和文件名。</span></label>
       ${formField("报销说明","description","",{type:"textarea",full:true})}
     </form>`,
     footer:`<button class="btn" data-action="modal-close">取消</button><button class="btn primary" data-action="finance-submit-form" data-id="finance-request-form">提交申请</button>`
@@ -241,6 +248,27 @@ const downloadExport = async (target) => {
   }
 };
 
+const previewEvidence = async (requestId, evidenceId) => {
+  const preview = window.open("", "_blank");
+  if (preview) preview.opener = null;
+  try {
+    const response = await fetch(`/api/admin/finance/requests/${encodeURIComponent(requestId)}/evidence/${encodeURIComponent(evidenceId)}`, {
+      credentials:"same-origin",
+      cache:"no-store"
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error?.message || "凭据图片读取失败");
+    }
+    const url = URL.createObjectURL(await response.blob());
+    if (preview) preview.location.href = url;
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch (error) {
+    preview?.close();
+    toast(error.message, "danger");
+  }
+};
+
 const submitFinanceForm = async (form) => {
   const data = Object.fromEntries(new FormData(form));
   if (form.id === "finance-petty-form") {
@@ -269,10 +297,18 @@ const submitFinanceForm = async (form) => {
     toast("备用金核销已登记", "success");
     return;
   }
+  const selectedEvidence = [...(form.querySelector('[name="evidence_files"]')?.files || [])];
+  if (selectedEvidence.length > 3) throw new Error("每笔财务申请最多上传3张凭据图片");
+  if (selectedEvidence.some((file) => file.size > 5 * 1024 * 1024)) throw new Error("每张凭据图片不能超过5MB");
+  const evidenceFiles = await Promise.all(selectedEvidence.map(async (file) => ({
+    file_name:file.name,
+    mime_type:file.type,
+    data_base64:await fileBase64(file)
+  })));
   await request("/api/admin/finance/requests", {
     method:"POST",
     headers:{ "Idempotency-Key":key("finance-request") },
-    body:JSON.stringify(data)
+    body:JSON.stringify({ ...data, evidence_files:evidenceFiles })
   });
   closeModal();
   await hydrateFinance({ force:true });
@@ -333,6 +369,7 @@ const handleFinanceAction = async (action, id, target) => {
     return;
   }
   if (action === "finance-export-approved") return downloadExport(target);
+  if (action === "finance-preview-evidence") return previewEvidence(target.dataset.requestId || "", id);
   if (action === "finance-submit-form") {
     const form = document.getElementById(id);
     if (!form) return toast("表单已失效，请重新打开", "warning");
