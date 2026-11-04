@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { deliverFeishuReport, getFeishuReportStatus } from "./feishu-report-client.mjs";
+import { extractResumeAttachment } from "./hr-resume-file.mjs";
 
 const DEFAULT_STORE_FILE = resolve(process.cwd(), ".local-data", "hr", "operations.json");
 const STORE_FILE = String(process.env.HUAMEI_HR_STORE_FILE || "").trim();
@@ -387,7 +388,7 @@ const RESUME_SKILL_TERMS = Object.freeze([
   "Python", "SQL", "Java", "JavaScript", "React", "Node.js", "运营", "内容", "医疗", "医美",
   "客服", "销售", "CRM", "SaaS", "英语", "本科", "硕士", "博士"
 ]);
-const HR_RESUME_NOTE = "评分只基于岗位要求和简历文本中的可匹配信息，供人工初筛参考；不得用于自动淘汰，不读取或推断年龄、性别、婚育、民族、照片等敏感信息。";
+const HR_RESUME_NOTE = "评分只基于岗位要求和简历中的技能、经历等可匹配信息，供人工初筛参考；不得用于自动淘汰，不将年龄、性别、婚育、民族或照片等作为评分项。";
 
 const normalizedResumeText = (value) => String(value || "").normalize("NFKC").replace(/\r/g, "").toLowerCase();
 const extractResumeTerms = (jd) => {
@@ -424,6 +425,13 @@ export async function screenResume({ tenantId, actor, payload = {} } = {}) {
       id:uid("hrresume"),
       candidate_label:candidateLabel,
       job_title:text(payload.job_title, 120) || "未命名岗位",
+      source_type:payload.source_type === "file" ? "file" : "text",
+      source_filename:text(payload.source_filename, 160) || null,
+      source_mime:text(payload.source_mime, 120) || null,
+      source_size:Number.isInteger(payload.source_size) && payload.source_size > 0 ? payload.source_size : null,
+      source_sha256:/^[a-f0-9]{64}$/i.test(String(payload.source_sha256 || "")) ? String(payload.source_sha256).toLowerCase() : null,
+      parser:text(payload.parser, 40) || null,
+      extracted_chars:Number.isInteger(payload.extracted_chars) && payload.extracted_chars > 0 ? payload.extracted_chars : null,
       score,
       verdict,
       matched_terms:matched,
@@ -445,6 +453,25 @@ export async function screenResume({ tenantId, actor, payload = {} } = {}) {
     });
     tenant.revision += 1;
     return clone(screening);
+  });
+}
+
+export async function screenResumeAttachment({ tenantId, actor, payload = {} } = {}) {
+  const extracted = await extractResumeAttachment(payload);
+  return screenResume({
+    tenantId,
+    actor,
+    payload:{
+      ...payload,
+      resume_text:extracted.text,
+      source_type:"file",
+      source_filename:extracted.file_name,
+      source_mime:extracted.mime_type,
+      source_size:extracted.file_size,
+      source_sha256:extracted.file_sha256,
+      parser:extracted.parser,
+      extracted_chars:extracted.extracted_chars
+    }
   });
 }
 

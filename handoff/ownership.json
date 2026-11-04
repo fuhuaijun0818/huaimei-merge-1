@@ -119,6 +119,7 @@
     "styles.css",
     "server/api-router.mjs",
     "server/hr-operations.mjs",
+    "server/hr-resume-",
     "server/feishu-report-client.mjs",
     "server.mjs",
     "server/acquisition-service-server.mjs",

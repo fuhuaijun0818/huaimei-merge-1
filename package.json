@@ -9,6 +9,8 @@
   "description": "时代之美·客户360——医美客户全生命周期 AI SaaS 本地 MVP",
   "dependencies": {
     "ali-oss": "^6.23.0",
+    "jszip": "^3.10.1",
+    "pdf-parse": "^2.4.5",
     "pg": "8.23.0",
     "redis": "6.2.1"
   },
@@ -97,7 +99,7 @@
     "test:phase-one-core": "node tests/phase-one-core-improvements.mjs && node tests/knowledge-draft-lifecycle.mjs && node tests/runtime-knowledge-index-cross-process.mjs && node tests/phase-one-api-boundary.mjs",
     "test:member-check": "node tests/member-repeatcheck.mjs && node tests/lead-store.mjs && node tests/contact-pii-boundaries.mjs",
     "test:turn-planning": "node tests/acquisition-turn-planning.mjs && node tests/chat-contact-capture.mjs && node tests/acquisition-semantic-followup.mjs && node tests/presales-journey.mjs",
-    "test:hr-operations": "node tests/hr-operations.mjs",
+    "test:hr-operations": "node tests/hr-operations.mjs && node tests/hr-resume-file.mjs",
     "team:init": "node scripts/team-init.mjs",
     "team:build": "npm --prefix apps/acquisition-advisor run build",
     "team:verify": "node scripts/team-verify.mjs",
