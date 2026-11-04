@@ -28,6 +28,21 @@ await assert.rejects(
   }),
   (error) => error.code === "FINANCE_EVIDENCE_TYPE_INVALID"
 );
+await assert.rejects(
+  finance.createFinanceRequest({
+    tenantId,
+    actor,
+    payload:{
+      type:"expense",
+      company:"时代之美测试公司",
+      expense_type:"差旅费",
+      project_name:"无凭据报销项目",
+      applicant:"测试员工",
+      amount:100
+    }
+  }),
+  (error) => error.code === "FINANCE_EVIDENCE_REQUIRED"
+);
 const petty = await finance.createPettyCashApplication({
   tenantId,
   actor,
@@ -165,6 +180,8 @@ const financeUiSource = readFileSync(new URL("../src/modules/finance/index.js", 
 assert.match(financeUiSource, /finance-view-petty/);
 assert.match(financeUiSource, /finance-view-request/);
 assert.match(financeUiSource, /finance-evidence-gallery/);
+assert.match(financeUiSource, /费用报销必须上传至少一张凭据截图/);
+assert.match(financeUiSource, /evidence\.required = event\.target\.value === "expense"/);
 
 console.log("finance-operations: passed");
 rmSync(evidenceRoot, { recursive:true, force:true });

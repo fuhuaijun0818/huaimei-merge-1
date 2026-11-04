@@ -271,7 +271,7 @@ const showRequestModal = () => {
       <label class="form-group"><span class="form-label">费用金额（元）</span><input class="form-control" name="amount" type="number" min="0.01" step="0.01" required /></label>
       ${formField("成本中心","cost_center","")}
       ${formField("发票 / 凭据号","invoice_reference","")}
-      <label class="form-group full"><span class="form-label">发票 / 报销凭据图片（最多3张，每张5MB，支持JPG、PNG、WebP）</span><input class="form-control" name="evidence_files" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple /><span class="caption">图片用于财务审批和后续查看；服务端校验图片签名后保存，Excel会记录图片数量和文件名。</span></label>
+      <label class="form-group full"><span class="form-label">发票 / 报销凭据图片（费用报销必传，最多3张，每张5MB，支持JPG、PNG、WebP）</span><input class="form-control" name="evidence_files" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple required /><span class="caption">费用报销必须上传至少1张凭据截图；图片用于财务审批和后续查看，Excel会记录图片数量和文件名。</span></label>
       ${formField("报销说明","description","",{type:"textarea",full:true})}
     </form>`,
     footer:`<button class="btn" data-action="modal-close">取消</button><button class="btn primary" data-action="finance-submit-form" data-id="finance-request-form">提交申请</button>`
@@ -363,6 +363,7 @@ const submitFinanceForm = async (form) => {
   const selectedEvidence = [...(form.querySelector('[name="evidence_files"]')?.files || [])];
   if (selectedEvidence.length > 3) throw new Error("每笔财务申请最多上传3张凭据图片");
   if (selectedEvidence.some((file) => file.size > 5 * 1024 * 1024)) throw new Error("每张凭据图片不能超过5MB");
+  if (data.type === "expense" && selectedEvidence.length === 0) throw new Error("费用报销必须上传至少一张凭据截图");
   const evidenceFiles = await Promise.all(selectedEvidence.map(async (file) => ({
     file_name:file.name,
     mime_type:file.type,
@@ -458,6 +459,10 @@ document.addEventListener("change", (event) => {
   if (event.target?.id === "finance-request-filter") {
     ui.requestFilter = event.target.value;
     refreshFinanceContent();
+  }
+  if (event.target?.matches?.('#finance-request-form select[name="type"]')) {
+    const evidence = document.querySelector('#finance-request-form input[name="evidence_files"]');
+    if (evidence) evidence.required = event.target.value === "expense";
   }
 });
 

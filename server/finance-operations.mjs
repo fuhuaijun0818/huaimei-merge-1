@@ -239,6 +239,9 @@ export async function createFinanceRequest({ tenantId, actor, payload = {} } = {
     const tenant = tenantState(state, tenantId);
     const type = text(payload.type, 30);
     if (!requestTypes.has(type)) throw Object.assign(new Error("请选择费用报销、付款申请或采购申请"), { code:"FINANCE_REQUEST_TYPE_INVALID", status:400 });
+    if (type === "expense" && evidenceFiles.length === 0) {
+      throw Object.assign(new Error("费用报销必须上传至少一张凭据截图"), { code:"FINANCE_EVIDENCE_REQUIRED", status:400 });
+    }
     const record = {
       id:uid("finreq"),
       type,
