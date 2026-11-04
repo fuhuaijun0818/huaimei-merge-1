@@ -1,0 +1,239 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { buildApprovedFinanceWorkbook } from "./finance-export.mjs";
+
+const DEFAULT_STORE_FILE = resolve(process.cwd(), ".local-data", "finance", "operations.json");
+const STORE_FILE = String(process.env.HUAMEI_FINANCE_STORE_FILE || "").trim();
+const memoryMode = STORE_FILE === ":memory:";
+const storeFile = memoryMode ? "" : resolve(STORE_FILE || DEFAULT_STORE_FILE);
+let memoryState = null;
+let operationQueue = Promise.resolve();
+
+const requestTypes = new Set(["expense", "payment", "procurement"]);
+const requestTypeLabels = Object.freeze({ expense:"费用报销", payment:"付款申请", procurement:"采购申请" });
+const text = (value, max = 120) => String(value || "").normalize("NFKC").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, max);
+const money = (value) => {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0 || number > 100_000_000) {
+    throw Object.assign(new Error("金额必须大于0且不超过1亿元"), { code:"FINANCE_AMOUNT_INVALID", status:400 });
+  }
+  return Math.round(number * 100) / 100;
+};
+const nowIso = () => new Date().toISOString();
+const uid = (prefix) => `${prefix}_${randomUUID()}`;
+const clone = (value) => JSON.parse(JSON.stringify(value));
+const emptyTenant = () => ({ pettyCash:[], requests:[], events:[], revision:0 });
+const emptyState = () => ({ schemaVersion:1, tenants:{} });
+const readState = async () => {
+  if (memoryMode) {
+    memoryState ||= emptyState();
+    return clone(memoryState);
+  }
+  try {
+    const parsed = JSON.parse(await readFile(storeFile, "utf8"));
+    if (!parsed || parsed.schemaVersion !== 1 || !parsed.tenants || typeof parsed.tenants !== "object") throw new Error("invalid");
+    return parsed;
+  } catch (error) {
+    if (error.code === "ENOENT") return emptyState();
+    throw Object.assign(new Error("财务数据文件无法读取，请检查本地数据服务"), { code:"FINANCE_STORE_INVALID", status:500 });
+  }
+};
+const writeState = async (state) => {
+  if (memoryMode) {
+    memoryState = clone(state);
+    return;
+  }
+  await mkdir(dirname(storeFile), { recursive:true });
+  await writeFile(storeFile, `${JSON.stringify(state, null, 2)}\n`, { encoding:"utf8", mode:0o600 });
+};
+const withState = (operation) => {
+  const run = operationQueue.then(async () => {
+    const state = await readState();
+    const result = await operation(state);
+    await writeState(state);
+    return result;
+  });
+  operationQueue = run.catch(() => {});
+  return run;
+};
+const tenantState = (state, tenantId) => {
+  const key = text(tenantId, 120) || "default";
+  state.tenants[key] ||= emptyTenant();
+  const tenant = state.tenants[key];
+  for (const field of ["pettyCash", "requests", "events"]) if (!Array.isArray(tenant[field])) tenant[field] = [];
+  tenant.revision = Math.max(0, Number(tenant.revision) || 0);
+  return tenant;
+};
+const appendEvent = (tenant, { type, actor, resourceType, resourceId, detail }) => {
+  tenant.events.unshift({
+    id:uid("finevt"),
+    type:text(type, 80),
+    actor:text(actor, 120) || "system",
+    resource_type:text(resourceType, 40),
+    resource_id:text(resourceId, 100),
+    detail:text(detail, 240),
+    at:nowIso()
+  });
+  tenant.events = tenant.events.slice(0, 10_000);
+};
+const assertVersion = (record, expectedVersion) => {
+  if (!record) throw Object.assign(new Error("未找到财务记录"), { code:"FINANCE_RECORD_NOT_FOUND", status:404 });
+  if (Number(expectedVersion) !== record.version) {
+    throw Object.assign(new Error("财务记录已变化，请刷新后再操作"), { code:"FINANCE_VERSION_CONFLICT", status:409 });
+  }
+};
+
+export async function getFinanceOverview({ tenantId } = {}) {
+  return withState(async (state) => clone(tenantState(state, tenantId)));
+}
+
+export async function createPettyCashApplication({ tenantId, actor, payload = {} } = {}) {
+  return withState(async (state) => {
+    const tenant = tenantState(state, tenantId);
+    const record = {
+      id:uid("finpc"),
+      employee_name:text(payload.employee_name, 80),
+      employee_account:text(payload.employee_account, 100),
+      company:text(payload.company, 120),
+      project_name:text(payload.project_name, 120),
+      amount:money(payload.amount),
+      purpose:text(payload.purpose, 500),
+      application_status:"pending",
+      writeoff_status:"not_issued",
+      issued_at:null,
+      written_off_amount:null,
+      writeoff_reference:null,
+      written_off_at:null,
+      version:1,
+      created_by:text(actor, 120) || "system",
+      created_at:nowIso(),
+      updated_at:nowIso()
+    };
+    if (!record.employee_name || !record.employee_account || !record.company || !record.purpose) {
+      throw Object.assign(new Error("请填写员工、登录账号、所属公司和备用金用途"), { code:"FINANCE_PETTY_CASH_INVALID", status:400 });
+    }
+    tenant.pettyCash.unshift(record);
+    tenant.pettyCash = tenant.pettyCash.slice(0, 10_000);
+    appendEvent(tenant, { type:"finance.petty_cash.created", actor, resourceType:"petty_cash", resourceId:record.id, detail:`${record.employee_name} · ¥${record.amount.toFixed(2)}` });
+    tenant.revision += 1;
+    return clone(record);
+  });
+}
+
+export async function issuePettyCash({ tenantId, actor, id, expectedVersion } = {}) {
+  return withState(async (state) => {
+    const tenant = tenantState(state, tenantId);
+    const record = tenant.pettyCash.find((item) => item.id === id);
+    assertVersion(record, expectedVersion);
+    if (record.application_status !== "pending") {
+      throw Object.assign(new Error("备用金已发放或状态不允许重复发放"), { code:"FINANCE_PETTY_CASH_STATE_INVALID", status:409 });
+    }
+    record.application_status = "approved";
+    record.writeoff_status = "pending";
+    record.issued_at = nowIso();
+    record.updated_at = nowIso();
+    record.version += 1;
+    appendEvent(tenant, { type:"finance.petty_cash.issued", actor, resourceType:"petty_cash", resourceId:record.id, detail:`${record.employee_name} · 待核销` });
+    tenant.revision += 1;
+    return clone(record);
+  });
+}
+
+export async function writeOffPettyCash({ tenantId, actor, id, expectedVersion, payload = {} } = {}) {
+  return withState(async (state) => {
+    const tenant = tenantState(state, tenantId);
+    const record = tenant.pettyCash.find((item) => item.id === id);
+    assertVersion(record, expectedVersion);
+    if (record.application_status !== "approved" || record.writeoff_status !== "pending") {
+      throw Object.assign(new Error("只有待核销备用金可以登记核销"), { code:"FINANCE_PETTY_CASH_STATE_INVALID", status:409 });
+    }
+    const writtenOffAmount = money(payload.written_off_amount);
+    if (writtenOffAmount > record.amount) {
+      throw Object.assign(new Error("核销金额不能大于备用金金额"), { code:"FINANCE_WRITEOFF_AMOUNT_EXCEEDED", status:400 });
+    }
+    const reference = text(payload.writeoff_reference, 200);
+    if (!reference) throw Object.assign(new Error("请填写核销凭据或说明"), { code:"FINANCE_WRITEOFF_REFERENCE_REQUIRED", status:400 });
+    record.writeoff_status = "completed";
+    record.written_off_amount = writtenOffAmount;
+    record.writeoff_reference = reference;
+    record.written_off_at = nowIso();
+    record.updated_at = nowIso();
+    record.version += 1;
+    appendEvent(tenant, { type:"finance.petty_cash.written_off", actor, resourceType:"petty_cash", resourceId:record.id, detail:`${record.employee_name} · 已核销 ¥${writtenOffAmount.toFixed(2)}` });
+    tenant.revision += 1;
+    return clone(record);
+  });
+}
+
+export async function createFinanceRequest({ tenantId, actor, payload = {} } = {}) {
+  return withState(async (state) => {
+    const tenant = tenantState(state, tenantId);
+    const type = text(payload.type, 30);
+    if (!requestTypes.has(type)) throw Object.assign(new Error("请选择费用报销、付款申请或采购申请"), { code:"FINANCE_REQUEST_TYPE_INVALID", status:400 });
+    const record = {
+      id:uid("finreq"),
+      type,
+      type_label:requestTypeLabels[type],
+      company:text(payload.company, 120),
+      expense_type:text(payload.expense_type, 80),
+      project_name:text(payload.project_name, 120),
+      applicant:text(payload.applicant, 80),
+      employee_account:text(payload.employee_account, 100),
+      amount:money(payload.amount),
+      cost_center:text(payload.cost_center, 120),
+      invoice_reference:text(payload.invoice_reference, 120),
+      description:text(payload.description, 1000),
+      approval_status:"pending",
+      approved_at:null,
+      approved_by:null,
+      version:1,
+      created_by:text(actor, 120) || "system",
+      created_at:nowIso(),
+      updated_at:nowIso()
+    };
+    if (!record.company || !record.expense_type || !record.project_name || !record.applicant) {
+      throw Object.assign(new Error("请填写所属公司、费用类型、项目名称和申请人"), { code:"FINANCE_REQUEST_INVALID", status:400 });
+    }
+    tenant.requests.unshift(record);
+    tenant.requests = tenant.requests.slice(0, 100_000);
+    appendEvent(tenant, { type:"finance.request.created", actor, resourceType:"finance_request", resourceId:record.id, detail:`${record.type_label} · ¥${record.amount.toFixed(2)}` });
+    tenant.revision += 1;
+    return clone(record);
+  });
+}
+
+export async function approveFinanceRequest({ tenantId, actor, id, expectedVersion } = {}) {
+  return withState(async (state) => {
+    const tenant = tenantState(state, tenantId);
+    const record = tenant.requests.find((item) => item.id === id);
+    assertVersion(record, expectedVersion);
+    if (record.approval_status !== "pending") {
+      throw Object.assign(new Error("该申请已审批完成，不能重复审批"), { code:"FINANCE_APPROVAL_STATE_INVALID", status:409 });
+    }
+    record.approval_status = "approved";
+    record.approved_at = nowIso();
+    record.approved_by = text(actor, 120) || "system";
+    record.updated_at = nowIso();
+    record.version += 1;
+    appendEvent(tenant, { type:"finance.request.approved", actor, resourceType:"finance_request", resourceId:record.id, detail:`${record.type_label} · 审批完成` });
+    tenant.revision += 1;
+    return clone(record);
+  });
+}
+
+export async function exportApprovedFinanceRequests({ tenantId, actor } = {}) {
+  return withState(async (state) => {
+    const tenant = tenantState(state, tenantId);
+    const approved = tenant.requests.filter((item) => item.approval_status === "approved");
+    const buffer = await buildApprovedFinanceWorkbook(approved);
+    const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+    appendEvent(tenant, { type:"finance.export.completed", actor, resourceType:"finance_export", resourceId:stamp, detail:`导出已完成审批 ${approved.length} 条` });
+    tenant.revision += 1;
+    return {
+      buffer,
+      count:approved.length,
+      file_name:`财务审批已完成_${stamp}.xlsx`
+    };
+  });
+}

@@ -100,6 +100,7 @@
     "test:member-check": "node tests/member-repeatcheck.mjs && node tests/lead-store.mjs && node tests/contact-pii-boundaries.mjs",
     "test:turn-planning": "node tests/acquisition-turn-planning.mjs && node tests/chat-contact-capture.mjs && node tests/acquisition-semantic-followup.mjs && node tests/presales-journey.mjs",
     "test:hr-operations": "node tests/hr-operations.mjs && node tests/hr-resume-file.mjs",
+    "test:finance-operations": "node tests/finance-operations.mjs",
     "team:init": "node scripts/team-init.mjs",
     "team:build": "npm --prefix apps/acquisition-advisor run build",
     "team:verify": "node scripts/team-verify.mjs",
