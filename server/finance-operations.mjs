@@ -251,6 +251,8 @@ export async function createFinanceRequest({ tenantId, actor, payload = {} } = {
       project_name:text(payload.project_name, 120),
       applicant:text(payload.applicant, 80),
       employee_account:text(payload.employee_account, 100),
+      applicant_subject:text(payload.applicant_subject, 160) || null,
+      source:["employee_self_service", "finance_entry"].includes(payload.source) ? payload.source : "finance_entry",
       amount:money(payload.amount),
       cost_center:text(payload.cost_center, 120),
       invoice_reference:text(payload.invoice_reference, 120),
@@ -278,6 +280,35 @@ export async function createFinanceRequest({ tenantId, actor, payload = {} } = {
     appendEvent(tenant, { type:"finance.request.created", actor, resourceType:"finance_request", resourceId:record.id, detail:`${record.type_label} · ¥${record.amount.toFixed(2)}` });
     tenant.revision += 1;
     return publicRequest(record);
+  });
+}
+
+export async function submitEmployeeExpenseClaim({ tenantId, principal, payload = {} } = {}) {
+  const applicant = text(principal?.displayName || principal?.subject, 80);
+  const employeeAccount = text(principal?.account || principal?.subject, 100);
+  if (!principal?.subject || !applicant || !employeeAccount) {
+    throw Object.assign(new Error("当前实名账号无法提交费用申请"), { code:"FINANCE_APPLICANT_IDENTITY_REQUIRED", status:403 });
+  }
+  return createFinanceRequest({
+    tenantId,
+    actor:principal.subject,
+    payload:{
+      ...payload,
+      type:"expense",
+      applicant,
+      employee_account:employeeAccount,
+      applicant_subject:principal.subject,
+      source:"employee_self_service"
+    }
+  });
+}
+
+export async function listMyExpenseClaims({ tenantId, subject } = {}) {
+  return withState(async (state) => {
+    const tenant = tenantState(state, tenantId);
+    return tenant.requests
+      .filter((item) => item.type === "expense" && item.applicant_subject === subject)
+      .map(publicRequest);
   });
 }
 

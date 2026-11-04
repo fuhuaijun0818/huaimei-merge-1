@@ -120,6 +120,7 @@ export function authorizeManagementPrincipal(principal, options = {}) {
 
   return Object.freeze({
     subject:String(principal.subject).trim().slice(0, 160),
+    account:String(principal.account || "").trim().slice(0, 100),
     displayName:String(principal.displayName || principal.subject).trim().slice(0, 160),
     roles:[...roles],
     effectiveRoles:[...effectiveRoles],

@@ -191,8 +191,44 @@ assert.equal(overview.pettyCash[0].writeoff_status, "completed");
 assert.equal(overview.requests.length, 3);
 assert.equal(overview.requests.filter((item) => item.approval_status === "approved").length, 2);
 assert.ok(overview.events.some((item) => item.type === "finance.export.completed"));
+const employeePrincipal = { subject:"staff_expense_employee_001", account:"employee.expense.001", displayName:"费用申请员工" };
+const employeeClaim = await finance.submitEmployeeExpenseClaim({
+  tenantId,
+  principal:employeePrincipal,
+  payload:{
+    type:"payment",
+    company:"时代之美测试公司",
+    expense_type:"员工报销",
+    project_name:"员工自助项目",
+    amount:268.5,
+    description:"员工账号提交的费用报销",
+    evidence_files:[{
+      file_name:"员工凭据.png",
+      mime_type:"image/png",
+      data_base64:receiptPng.toString("base64")
+    }]
+  }
+});
+assert.equal(employeeClaim.type, "expense");
+assert.equal(employeeClaim.applicant, "费用申请员工");
+assert.equal(employeeClaim.employee_account, "employee.expense.001");
+assert.equal(employeeClaim.applicant_subject, employeePrincipal.subject);
+assert.equal(employeeClaim.source, "employee_self_service");
+const mine = await finance.listMyExpenseClaims({ tenantId, subject:employeePrincipal.subject });
+assert.equal(mine.length, 1);
+assert.equal(mine[0].id, employeeClaim.id);
+const otherMine = await finance.listMyExpenseClaims({ tenantId, subject:"staff_other_account" });
+assert.equal(otherMine.length, 0);
+const approvedEmployeeClaim = await finance.approveFinanceRequest({
+  tenantId,
+  actor,
+  id:employeeClaim.id,
+  expectedVersion:employeeClaim.version
+});
+assert.equal(approvedEmployeeClaim.approval_status, "approved");
 const financeUiSource = readFileSync(new URL("../src/modules/finance/index.js", import.meta.url), "utf8");
 const financeServiceSource = readFileSync(new URL("../server/finance-operations.mjs", import.meta.url), "utf8");
+const expenseClaimUiSource = readFileSync(new URL("../src/modules/expense-claims/index.js", import.meta.url), "utf8");
 assert.match(financeUiSource, /finance-view-petty/);
 assert.match(financeUiSource, /finance-view-request/);
 assert.match(financeUiSource, /finance-evidence-gallery/);
@@ -200,6 +236,8 @@ assert.match(financeUiSource, /费用报销必须上传至少一张凭据截图/
 assert.match(financeUiSource, /evidence\.required = event\.target\.value === "expense"/);
 assert.match(financeUiSource, /finance-add-evidence/);
 assert.match(financeServiceSource, /FINANCE_EVIDENCE_REQUIRED/);
+assert.match(expenseClaimUiSource, /\/api\/admin\/expense-claims/);
+assert.match(expenseClaimUiSource, /费用报销必须上传至少一张凭据截图/);
 
 console.log("finance-operations: passed");
 rmSync(evidenceRoot, { recursive:true, force:true });
