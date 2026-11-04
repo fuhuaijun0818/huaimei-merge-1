@@ -327,7 +327,7 @@ const showHrManagedAccountModal = (subject = "") => {
     desc:"人事只能创建和维护普通员工岗位；不能创建管理员、超级管理员，也不能修改本人账号。",
     wide:true,
     body:`<form id="hr-managed-account-form" data-subject="${escapeHtml(account?.subject || "")}" data-version="${account?.version || 0}"><div class="form-grid">
-      ${formField("姓名","display_name",account?.display_name || "",{required:true})}
+      ${formField("真实姓名","display_name",account?.display_name || "",{required:true})}
       ${account
         ? `<label class="form-group"><span class="form-label">登录账号</span><input class="form-control" value="${escapeHtml(account.account)}" disabled /></label>`
         : formField("登录账号","account","",{required:true})}

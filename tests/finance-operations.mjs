@@ -157,9 +157,10 @@ const paymentWithEvidence = await finance.attachFinanceRequestEvidence({
 assert.equal(paymentWithEvidence.evidence.length, 1);
 assert.equal(paymentWithEvidence.evidence[0].file_name, "付款凭据.png");
 const approvedExpense = await finance.approveFinanceRequest({ tenantId, actor, id:expense.id, expectedVersion:expense.version });
-const approvedPayment = await finance.approveFinanceRequest({ tenantId, actor, id:payment.id, expectedVersion:paymentWithEvidence.version });
+const approvedPayment = await finance.approveFinanceRequest({ tenantId, actor, actorName:"财务审批人", id:payment.id, expectedVersion:paymentWithEvidence.version });
 assert.equal(approvedExpense.approval_status, "approved");
-assert.equal(approvedPayment.approved_by, actor);
+assert.equal(approvedPayment.approved_by, "财务审批人");
+assert.equal(approvedPayment.approved_by_subject, actor);
 await assert.rejects(
   finance.approveFinanceRequest({ tenantId, actor, id:expense.id, expectedVersion:expense.version }),
   (error) => error.code === "FINANCE_VERSION_CONFLICT"
@@ -192,6 +193,20 @@ assert.equal(overview.requests.length, 3);
 assert.equal(overview.requests.filter((item) => item.approval_status === "approved").length, 2);
 assert.ok(overview.events.some((item) => item.type === "finance.export.completed"));
 const employeePrincipal = { subject:"staff_expense_employee_001", account:"employee.expense.001", displayName:"费用申请员工" };
+await assert.rejects(
+  finance.submitEmployeeExpenseClaim({
+    tenantId,
+    principal:{ subject:"staff_without_real_name", account:"employee.no.name" },
+    payload:{
+      company:"时代之美测试公司",
+      expense_type:"员工报销",
+      project_name:"无实名项目",
+      amount:1,
+      evidence_files:[{ file_name:"员工凭据.png", mime_type:"image/png", data_base64:receiptPng.toString("base64") }]
+    }
+  }),
+  (error) => error.code === "FINANCE_APPLICANT_REAL_NAME_REQUIRED"
+);
 const employeeClaim = await finance.submitEmployeeExpenseClaim({
   tenantId,
   principal:employeePrincipal,

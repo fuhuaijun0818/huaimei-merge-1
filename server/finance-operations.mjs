@@ -284,10 +284,10 @@ export async function createFinanceRequest({ tenantId, actor, payload = {} } = {
 }
 
 export async function submitEmployeeExpenseClaim({ tenantId, principal, payload = {} } = {}) {
-  const applicant = text(principal?.displayName || principal?.subject, 80);
+  const applicant = text(principal?.displayName, 160);
   const employeeAccount = text(principal?.account || principal?.subject, 100);
-  if (!principal?.subject || !applicant || !employeeAccount) {
-    throw Object.assign(new Error("当前实名账号无法提交费用申请"), { code:"FINANCE_APPLICANT_IDENTITY_REQUIRED", status:403 });
+  if (!principal?.subject || !applicant || applicant === principal.subject || /^staff_/i.test(applicant) || !employeeAccount) {
+    throw Object.assign(new Error("当前账号未配置真实姓名，无法提交费用申请，请联系管理员"), { code:"FINANCE_APPLICANT_REAL_NAME_REQUIRED", status:403 });
   }
   return createFinanceRequest({
     tenantId,
@@ -312,7 +312,7 @@ export async function listMyExpenseClaims({ tenantId, subject } = {}) {
   });
 }
 
-export async function approveFinanceRequest({ tenantId, actor, id, expectedVersion } = {}) {
+export async function approveFinanceRequest({ tenantId, actor, actorName, id, expectedVersion } = {}) {
   return withState(async (state) => {
     const tenant = tenantState(state, tenantId);
     const record = tenant.requests.find((item) => item.id === id);
@@ -325,7 +325,8 @@ export async function approveFinanceRequest({ tenantId, actor, id, expectedVersi
     }
     record.approval_status = "approved";
     record.approved_at = nowIso();
-    record.approved_by = text(actor, 120) || "system";
+    record.approved_by = text(actorName, 120) || text(actor, 120) || "system";
+    record.approved_by_subject = text(actor, 160) || null;
     record.updated_at = nowIso();
     record.version += 1;
     appendEvent(tenant, { type:"finance.request.approved", actor, resourceType:"finance_request", resourceId:record.id, detail:`${record.type_label} · 审批完成` });

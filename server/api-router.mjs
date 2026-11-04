@@ -870,7 +870,7 @@ export async function handleApiRequest(request, response) {
       } else if (pettyCashWriteOffMatch) {
         data = await writeOffPettyCash({ tenantId:principal.tenantId, actor:principal.subject, id:pettyCashWriteOffMatch[1], expectedVersion:payload.expected_version, payload });
       } else {
-        data = await approveFinanceRequest({ tenantId:principal.tenantId, actor:principal.subject, id:requestApprovalMatch[1], expectedVersion:payload.expected_version });
+        data = await approveFinanceRequest({ tenantId:principal.tenantId, actor:principal.subject, actorName:principal.displayName, id:requestApprovalMatch[1], expectedVersion:payload.expected_version });
       }
       sendJson(request, response, requestId, 201, { data, request_id:requestId });
     } catch (error) {
