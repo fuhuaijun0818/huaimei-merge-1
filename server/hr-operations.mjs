@@ -101,6 +101,19 @@ const tenantState = (state, tenantId) => {
     }
     usedAccounts.add(accountId.toLowerCase());
   }
+  // JSON persistence breaks object references. Re-link every workflow to the
+  // canonical employee record so status changes cannot diverge between tabs.
+  const employeesById = new Map(tenant.employees.filter((item) => item?.id).map((item) => [item.id, item]));
+  for (const workflow of tenant.workflows) {
+    const employeeId = workflow?.employee?.id;
+    if (!employeeId) continue;
+    const canonical = employeesById.get(employeeId);
+    if (canonical) workflow.employee = canonical;
+    else {
+      tenant.employees.push(workflow.employee);
+      employeesById.set(employeeId, workflow.employee);
+    }
+  }
   tenant.revision = Math.max(0, Number(tenant.revision) || 0);
   return tenant;
 };
@@ -200,6 +213,11 @@ const reconcileTenant = (tenant) => {
     const previousStage = workflow.stage;
     const previousStatus = workflow.status;
     reconcileWorkflow(workflow, today);
+    const canonical = tenant.employees.find((item) => item.id === workflow.employee.id);
+    if (canonical && canonical !== workflow.employee) {
+      Object.assign(canonical, workflow.employee);
+      workflow.employee = canonical;
+    }
     if (workflow.stage !== previousStage || workflow.status !== previousStatus) {
       appendEvent(tenant, {
         type:"workflow.auto_transition",
@@ -208,6 +226,21 @@ const reconcileTenant = (tenant) => {
         actor:"system",
         detail:`${previousStage || "流程"} → ${workflow.stage}`
       });
+    }
+  }
+  // A workflow's employee reference is shared across the full employment
+  // lifecycle. Reconcile status from the latest workflow instead of whichever
+  // workflow happens to be visited last, otherwise a completed onboarding can
+  // overwrite a completed offboarding back to "在职".
+  for (const employee of tenant.employees) {
+    const latestWorkflow = tenant.workflows
+      .filter((item) => item.employee.id === employee.id)
+      .sort((left, right) => Date.parse(right.created_at || 0) - Date.parse(left.created_at || 0))[0];
+    if (!latestWorkflow) continue;
+    if (latestWorkflow.type === "offboarding") {
+      employee.status = latestWorkflow.status === "completed" ? "已离职" : "待离职";
+    } else {
+      employee.status = latestWorkflow.status === "completed" ? "在职" : "待入职";
     }
   }
   return tenant;

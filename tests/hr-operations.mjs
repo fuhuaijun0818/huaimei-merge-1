@@ -50,6 +50,8 @@ for (const task of onboarding.tasks) {
 }
 assert.equal(currentOnboarding.status, "completed");
 assert.equal(currentOnboarding.employee.status, "在职");
+const afterOnboarding = await hr.getHrOverview({ tenantId, actor });
+assert.equal(afterOnboarding.employees.find((item) => item.id === onboarding.employee.id).status, "在职", "流程完成后员工列表状态必须同步为在职");
 
 const offboarding = await hr.createOffboardingWorkflow({
   tenantId,
@@ -94,6 +96,7 @@ assert.equal(currentOffboarding.employee.status, "已离职");
 
 const overview = await hr.getHrOverview({ tenantId, actor });
 assert.equal(overview.employees.length, 1);
+assert.equal(overview.employees[0].status, "已离职", "离职流程完成后员工列表状态必须同步为已离职");
 assert.equal(overview.workflows.length, 2);
 assert.equal(overview.workflows.filter((item) => item.status === "completed").length, 2);
 assert.ok(overview.events.some((event) => event.type === "onboarding.created"));
