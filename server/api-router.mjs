@@ -74,8 +74,10 @@ import {
   generateHrReport,
   getHrOverview,
   screenResume,
+  screenResumeAttachment,
   startHrReportScheduler
 } from "./hr-operations.mjs";
+import { HR_RESUME_FILE_MAX_JSON_BYTES } from "./hr-resume-file.mjs";
 
 export const DEMO_API_KEY = "hm_local_demo_key_2026";
 const API_KEY = process.env.HUAMEI_API_KEY || DEMO_API_KEY;
@@ -704,8 +706,10 @@ export async function handleApiRequest(request, response) {
     const method = request.method;
     const taskMatch = url.pathname.match(/^\/api\/admin\/hr\/workflows\/(hr(?:onb|off)_[a-f0-9-]+)\/tasks\/(hrtask_[a-f0-9-]+)\/complete$/i);
     const accountRoute = url.pathname === "/api/admin/hr/accounts";
+    const resumeFileRoute = url.pathname === "/api/admin/hr/resume-screenings/file";
     const supported = (method === "GET" && url.pathname === "/api/admin/hr")
       || (["GET", "POST"].includes(method) && accountRoute)
+      || (method === "POST" && resumeFileRoute)
       || (method === "POST" && url.pathname === "/api/admin/hr/onboarding")
       || (method === "POST" && url.pathname === "/api/admin/hr/offboarding")
       || (method === "POST" && url.pathname === "/api/admin/hr/resume-screenings")
@@ -758,7 +762,7 @@ export async function handleApiRequest(request, response) {
     }
     let payload;
     try {
-      payload = await readJsonBody(request);
+      payload = await readJsonBody(request, resumeFileRoute ? HR_RESUME_FILE_MAX_JSON_BYTES : MAX_BODY_BYTES);
     } catch (error) {
       sendError(request, response, requestId, error.code === "BODY_TOO_LARGE" ? 413 : 400, error.code || "INVALID_JSON", "请求体不是有效JSON");
       return true;
@@ -773,6 +777,8 @@ export async function handleApiRequest(request, response) {
         data = payload.subject
           ? await saveManagementAccount(payload, principal)
           : await createManagedAccountForHr(payload, principal);
+      } else if (resumeFileRoute) {
+        data = await screenResumeAttachment({ tenantId:principal.tenantId, actor:principal.subject, payload });
       } else if (url.pathname === "/api/admin/hr/resume-screenings") {
         data = await screenResume({ tenantId:principal.tenantId, actor:principal.subject, payload });
       } else if (url.pathname === "/api/admin/hr/work-logs") {
