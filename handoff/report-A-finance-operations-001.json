@@ -32,7 +32,7 @@
     {
       "command": "Chrome CDP 人事账号提交报销并由财务审批",
       "status": "pass",
-      "evidence": "人事账号侧边栏同时显示“费用申请”和“人事管理”；费用申请接口200、财务审批接口403。通过页面填写报销并上传PNG凭据后提交，申请人/账号自动取自实名身份；该记录出现在财务账号审批后台且来源为employee_self_service，财务审批完成后员工端刷新显示审批完成。"
+      "evidence": "人事账号侧边栏同时显示“费用申请”和“人事管理”；费用申请接口200、财务审批接口403。员工页和新增弹窗均显示后台账号的真实姓名“人事专员”，不再回退显示staff_开头的subject；通过页面填写报销并上传PNG凭据后提交，申请人/账号自动取自实名身份；该记录出现在财务账号审批后台且来源为employee_self_service，财务审批完成后员工端刷新显示审批完成。"
     },
     {
       "command": "node --env-file=.env.local tests/postgres-five-role-http-integration.mjs",

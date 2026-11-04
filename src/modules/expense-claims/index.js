@@ -86,7 +86,7 @@ export function renderExpenseClaimsPage() {
       ? `<div class="risk-banner">${icon("alert",16)}<div><strong>费用申请暂时无法读取</strong><br/>${escapeHtml(ui.error)}</div></div>`
       : `<section class="card">${empty(ui.loading ? "正在读取费用申请" : "正在准备费用申请", "将读取当前账号提交的费用报销记录。")}</section>`
     : `<div class="grid cols-3 expense-claim-metrics">${metric("我的申请", String(ui.claims.length), "仅当前账号可见", "wallet")}${metric("审批完成", String(approved.length), "财务已完成审批", "check")}${metric("申请总额", `¥${amount(submittedAmount)}`, "当前账号全部申请", "chart")}</div>
-      <div class="expense-claim-owner">${icon("shield",16)}<div><strong>申请人：${escapeHtml(ui.identity?.displayName || ui.identity?.subject || "当前实名账号")}</strong><span>提交后自动进入财务后台审批；财务账号是唯一审批入口。</span></div></div>
+      <div class="expense-claim-owner">${icon("shield",16)}<div><strong>申请人：${escapeHtml(ui.identity?.display_name || ui.identity?.displayName || ui.identity?.subject || "当前实名账号")}</strong><span>提交后自动进入财务后台审批；财务账号是唯一审批入口。</span></div></div>
       ${claimsTable()}`;
   return `<div class="page expense-claims-page">${pageHead("员工自助", "费用申请", "提交费用报销并上传凭据截图；审批由财务后台完成。", `<button class="btn" data-action="expense-claim-refresh">${icon("refresh",15)}刷新</button><button class="btn primary" data-action="expense-claim-new">${icon("plus",15)}新增费用报销</button>`)}
     <div class="expense-claim-body">${content}</div>
@@ -99,7 +99,7 @@ const showClaimModal = () => {
     desc:"申请人自动使用当前实名账号；必须上传至少一张凭据截图，提交后进入财务审批。",
     wide:true,
     body:`<form id="expense-claim-form" class="form-grid">
-      <div class="form-group"><span class="form-label">申请人</span><input class="form-control" value="${escapeHtml(ui.identity?.displayName || ui.identity?.subject || "当前实名账号")}" disabled /></div>
+      <div class="form-group"><span class="form-label">申请人</span><input class="form-control" value="${escapeHtml(ui.identity?.display_name || ui.identity?.displayName || ui.identity?.subject || "当前实名账号")}" disabled /></div>
       <div class="form-group"><span class="form-label">登录账号</span><input class="form-control" value="${escapeHtml(ui.identity?.account || ui.identity?.subject || "")}" disabled /></div>
       ${formField("所属公司","company","",{required:true})}
       ${formField("费用类型","expense_type","",{required:true})}

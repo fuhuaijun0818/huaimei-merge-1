@@ -238,6 +238,7 @@ assert.match(financeUiSource, /finance-add-evidence/);
 assert.match(financeServiceSource, /FINANCE_EVIDENCE_REQUIRED/);
 assert.match(expenseClaimUiSource, /\/api\/admin\/expense-claims/);
 assert.match(expenseClaimUiSource, /费用报销必须上传至少一张凭据截图/);
+assert.match(expenseClaimUiSource, /ui\.identity\?\.display_name/);
 
 console.log("finance-operations: passed");
 rmSync(evidenceRoot, { recursive:true, force:true });
