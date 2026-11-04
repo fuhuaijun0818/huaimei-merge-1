@@ -1,4 +1,4 @@
-import { applyManagementAccount, listManagementAccounts, saveManagementAccount } from "./platform/management-accounts.mjs";
+import { applyManagementAccount, createManagedAccountForHr, listManagedAccountsForHr, listManagementAccounts, saveManagementAccount } from "./platform/management-accounts.mjs";
 import { listKnowledgePublications, createKnowledgePublication, mutateKnowledgePublication } from "./knowledge-publication.mjs";
 import { memberRepeatCheckConfiguration } from "./integrations/member-repeatcheck-client.mjs";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
@@ -703,7 +703,9 @@ export async function handleApiRequest(request, response) {
   if (url.pathname.startsWith("/api/admin/hr")) {
     const method = request.method;
     const taskMatch = url.pathname.match(/^\/api\/admin\/hr\/workflows\/(hr(?:onb|off)_[a-f0-9-]+)\/tasks\/(hrtask_[a-f0-9-]+)\/complete$/i);
+    const accountRoute = url.pathname === "/api/admin/hr/accounts";
     const supported = (method === "GET" && url.pathname === "/api/admin/hr")
+      || (["GET", "POST"].includes(method) && accountRoute)
       || (method === "POST" && url.pathname === "/api/admin/hr/onboarding")
       || (method === "POST" && url.pathname === "/api/admin/hr/offboarding")
       || (method === "POST" && url.pathname === "/api/admin/hr/resume-screenings")
@@ -716,9 +718,11 @@ export async function handleApiRequest(request, response) {
     }
     let principal;
     try {
-      const hrRead = method === "GET";
+      const hrRead = method === "GET" && !accountRoute;
       principal = await authorizeManagementRequest(request, {
-        ...(hrRead
+        ...(accountRoute
+          ? { requiredCapabilities:[PHASE_ONE_CAPABILITIES.hrAccountsCreate] }
+          : hrRead
           ? { requiredAnyCapabilities:[PHASE_ONE_CAPABILITIES.hrRead, PHASE_ONE_CAPABILITIES.hrManage] }
           : { requiredCapabilities:[PHASE_ONE_CAPABILITIES.hrManage] }),
         tenantId:PUBLIC_TENANT_ID,
@@ -738,7 +742,9 @@ export async function handleApiRequest(request, response) {
     }
     if (method === "GET") {
       try {
-        const data = await getHrOverview({ tenantId:principal.tenantId, actor:principal.subject });
+        const data = accountRoute
+          ? await listManagedAccountsForHr(principal)
+          : await getHrOverview({ tenantId:principal.tenantId, actor:principal.subject });
         sendJson(request, response, requestId, 200, { data, request_id:requestId });
       } catch (error) {
         sendError(request, response, requestId, Number(error.status) || 500, error.code || "HR_OVERVIEW_FAILED", error.message || "人事数据读取失败");
@@ -763,6 +769,10 @@ export async function handleApiRequest(request, response) {
         data = await createOnboardingWorkflow({ tenantId:principal.tenantId, actor:principal.subject, payload });
       } else if (url.pathname === "/api/admin/hr/offboarding") {
         data = await createOffboardingWorkflow({ tenantId:principal.tenantId, actor:principal.subject, payload });
+      } else if (accountRoute) {
+        data = payload.subject
+          ? await saveManagementAccount(payload, principal)
+          : await createManagedAccountForHr(payload, principal);
       } else if (url.pathname === "/api/admin/hr/resume-screenings") {
         data = await screenResume({ tenantId:principal.tenantId, actor:principal.subject, payload });
       } else if (url.pathname === "/api/admin/hr/work-logs") {
