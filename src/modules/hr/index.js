@@ -181,7 +181,7 @@ const resumePage = () => {
   return `${header}${actions}<div class="hr-resume-grid">${screenings.map((item) => `<article class="card hr-resume-card">
     <header><div><span>${escapeHtml(item.job_title)}</span><h3>${escapeHtml(item.candidate_label)}</h3></div><strong>${item.score}<small>/100</small></strong></header>
     ${badge(item.verdict, item.score >= 80 ? "success" : item.score >= 60 ? "warning" : "outline")}
-    <div class="hr-resume-terms"><div><span>匹配项</span>${item.matched_terms.length ? item.matched_terms.map((term) => badge(term, "success")).join("") : "<em>暂无</em>"}</div><div><span>待核实</span>${item.missing_terms.length ? item.missing_terms.map((term) => badge(term, "outline")).join("") : "<em>无</em>"}</div></div>
+    <div class="hr-resume-terms"><div><span class="hr-resume-term-label">匹配项</span>${item.matched_terms.length ? item.matched_terms.map((term) => badge(term, "success")).join("") : "<em>暂无</em>"}</div><div><span class="hr-resume-term-label">待核实</span>${item.missing_terms.length ? item.missing_terms.map((term) => badge(term, "outline")).join("") : "<em>无</em>"}</div></div>
     <p>${escapeHtml(item.note)}</p>
     <footer>${escapeHtml(item.owner)} · ${formatDate(item.created_at)} · 不自动淘汰</footer>
   </article>`).join("")}</div>`;

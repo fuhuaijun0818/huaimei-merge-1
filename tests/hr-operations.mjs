@@ -169,6 +169,7 @@ const appSource = await readFile(new URL("../src/app.js", import.meta.url), "utf
 const navSource = await readFile(new URL("../src/ui.js", import.meta.url), "utf8");
 const apiSource = await readFile(new URL("../server/api-router.mjs", import.meta.url), "utf8");
 const hrUiSource = await readFile(new URL("../src/modules/hr/index.js", import.meta.url), "utf8");
+const hrCssSource = await readFile(new URL("../src/modules/hr/hr.css", import.meta.url), "utf8");
 assert.match(navSource, /\["hr", "users", "人事管理"\]/);
 assert.match(appSource, /renderHrPage/);
 assert.match(appSource, /hr: renderHrPage/);
@@ -182,6 +183,10 @@ assert.match(hrUiSource, /负责人：李江龙/);
 assert.match(hrUiSource, /报告生成助手 · 负责人：孟夕然/);
 assert.match(hrUiSource, /语音输入/);
 assert.match(hrUiSource, /飞书报告/);
+assert.match(hrUiSource, /class="hr-resume-term-label"/);
+assert.doesNotMatch(hrCssSource, /\.hr-resume-terms > div > span\s*\{/);
+assert.match(hrCssSource, /\.hr-resume-terms \.badge\s*\{[^}]*width:auto/);
+assert.match(hrCssSource, /\.hr-resume-terms \.badge\s*\{[^}]*overflow-wrap:anywhere/);
 assert.equal(feishuReports.getFeishuReportStatus({}).configured, false);
 let sentPayload = null;
 const delivered = await feishuReports.deliverFeishuReport({

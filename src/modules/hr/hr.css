@@ -65,7 +65,8 @@
 .hr-resume-card > header small { color:#9b8588; font-size:10px; }
 .hr-resume-terms { display:grid; gap:9px; margin:13px 0; }
 .hr-resume-terms > div { display:flex; align-items:center; gap:5px; flex-wrap:wrap; }
-.hr-resume-terms > div > span { width:50px; flex:none; color:#8d7779; font-size:9px; }
+.hr-resume-term-label { width:50px; flex:none; color:#8d7779; font-size:9px; }
+.hr-resume-terms .badge { width:auto; max-width:100%; white-space:normal; overflow-wrap:anywhere; text-align:left; line-height:1.35; }
 .hr-resume-terms em { color:#a28e90; font-size:9px; font-style:normal; }
 .hr-resume-card > p { margin:0 0 10px; color:#8b7678; font-size:9px; line-height:1.55; }
 .hr-resume-card > footer { padding-top:9px; border-top:1px solid #f0e5e3; color:#937f81; font-size:9px; }
