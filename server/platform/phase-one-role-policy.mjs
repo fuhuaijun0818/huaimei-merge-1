@@ -56,6 +56,8 @@ export const PHASE_ONE_CAPABILITIES = Object.freeze({
   appointmentsReadAssigned:"appointments:read_assigned",
   appointmentsManageAssigned:"appointments:manage_assigned",
   analyticsRead:"analytics:read",
+  hrRead:"hr:read",
+  hrManage:"hr:manage",
   auditRead:"audit:read",
   integrationsManage:"integrations:manage",
   systemManage:"system:manage"

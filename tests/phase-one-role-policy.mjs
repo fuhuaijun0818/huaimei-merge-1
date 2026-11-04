@@ -26,6 +26,7 @@ assert.deepEqual(
 );
 assert.equal(resolvePhaseOneBusinessRole(["管理员"]), PHASE_ONE_BUSINESS_ROLES.administrator);
 assert.equal(resolvePhaseOneBusinessRole(["售前顾问"]), PHASE_ONE_BUSINESS_ROLES.presales);
+assert.equal(resolvePhaseOneBusinessRole(["人事专员"]), PHASE_ONE_BUSINESS_ROLES.hr);
 assert.equal(
   resolvePhaseOneBusinessRole([MANAGEMENT_TECHNICAL_ROLES.operationsAgent]),
   PHASE_ONE_BUSINESS_ROLES.presales,
@@ -47,6 +48,7 @@ assert.throws(
 
 const administrator = { roles:["管理员"] };
 const presales = { roles:["售前人员"] };
+const hrSpecialist = { roles:["人事专员"] };
 assert.equal(
   hasPhaseOneCapability(administrator, PHASE_ONE_CAPABILITIES.agentsManage),
   true,
@@ -70,6 +72,44 @@ assert.equal(
 assert.throws(
   () => requirePhaseOneCapability(presales, PHASE_ONE_CAPABILITIES.systemManage),
   (error) => error.code === "PHASE_ONE_CAPABILITY_FORBIDDEN" && error.status === 403
+);
+assert.equal(hasPhaseOneCapability(hrSpecialist, PHASE_ONE_CAPABILITIES.hrRead), true, "人事专员可读取人事数据");
+assert.equal(hasPhaseOneCapability(hrSpecialist, PHASE_ONE_CAPABILITIES.hrManage), true, "人事专员可办理人事流程");
+assert.deepEqual(
+  [...phaseOneCapabilitiesFor(hrSpecialist)].sort(),
+  [PHASE_ONE_CAPABILITIES.hrManage, PHASE_ONE_CAPABILITIES.hrRead].sort(),
+  "人事专员能力必须严格收敛为人事读写"
+);
+for (const capability of [
+  PHASE_ONE_CAPABILITIES.usersManage,
+  PHASE_ONE_CAPABILITIES.knowledgeManage,
+  PHASE_ONE_CAPABILITIES.customersReadAll,
+  PHASE_ONE_CAPABILITIES.conversationsReadAll,
+  PHASE_ONE_CAPABILITIES.analyticsRead,
+  PHASE_ONE_CAPABILITIES.systemManage
+]) {
+  assert.equal(hasPhaseOneCapability(hrSpecialist, capability), false, `人事专员不得拥有 ${capability}`);
+}
+const authorizedHr = authorizeManagementPrincipal({
+  subject:"oidc|phase-one-hr",
+  roles:["人事专员"],
+  tenantIds:["tenant-a"]
+}, {
+  requiredCapabilities:[PHASE_ONE_CAPABILITIES.hrManage],
+  tenantId:"tenant-a"
+});
+assert.equal(authorizedHr.phaseOneRole, PHASE_ONE_BUSINESS_ROLES.hr);
+assert.throws(
+  () => authorizeManagementPrincipal({
+    subject:"oidc|phase-one-hr",
+    roles:["人事专员"],
+    tenantIds:["tenant-a"]
+  }, {
+    requiredCapabilities:[PHASE_ONE_CAPABILITIES.agentsManage],
+    tenantId:"tenant-a"
+  }),
+  (error) => error.code === "PHASE_ONE_CAPABILITY_FORBIDDEN" && error.status === 403,
+  "人事专员不得获得其他管理权限"
 );
 
 const legacyOperationsOnly = { roles:[MANAGEMENT_TECHNICAL_ROLES.operationsAgent] };
@@ -211,7 +251,7 @@ assert.throws(
 
 console.log("✓ 一期管理员/售前人员角色策略、技术权限兼容和本地默认管理员身份通过");
 
-for (const role of ["系统管理员","内容专员","质量与运营人员","售前顾问"]) {
+for (const role of ["系统管理员","内容专员","质量与运营人员","售前顾问","人事专员"]) {
   assert.equal(hasPhaseOneCapability({roles:[role,"knowledge.publisher"]},"knowledge:publish"),false);
   assert.ok(!effectiveManagementRolesFor({roles:[role,"knowledge.publisher"]}).includes("knowledge.publisher"));
 }
