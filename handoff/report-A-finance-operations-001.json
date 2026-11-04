@@ -1,0 +1,199 @@
+{
+  "role": "A",
+  "task_id": "finance-operations-001",
+  "summary": "新增独立财务管理和“财务专员”最小权限岗位。财务账号可创建备用金申请、确认发放、按待核销/已核销状态筛选，并在登记核销金额与凭据后完成核销；可录入费用报销、付款申请和采购申请，完成审批，并将所有已审批完成记录导出为带字段表头的标准Excel工作簿。除超级管理员平台兜底权限外，系统管理员、售前、内容、发布、质量、人事账号均不能访问财务模块。",
+  "acceptance_steps": [
+    "使用财务专员账号登录；预期默认进入#/finance，侧边栏只有“财务管理”，/api/admin/finance返回200。",
+    "使用系统管理员、售前顾问、内容专员、发布与索引管理员、质量与运营人员或人事专员访问财务接口；预期均返回403。",
+    "在备用金页新增申请，确认发放后状态变为待核销；使用“员工核销状态”筛选待核销和已核销，预期列表按状态隔离显示。",
+    "对待核销备用金登记不超过申请金额的实际核销金额和核销凭据；预期状态变为已核销，超额核销、无凭据或旧版本操作被拒绝。",
+    "分别新增费用报销、付款申请和采购申请，并完成财务审批；预期只有审批完成记录进入Excel导出范围。",
+    "点击“导出已完成审批 Excel”；预期下载标准.xlsx文件，包含单据编号、流程类型、所属公司、费用类型、项目名称、申请人、工号/账号、费用金额、成本中心、发票/凭据号、说明、审批人和审批完成时间。",
+    "构造以=、+、-或@开头的文本字段；预期Excel单元格按文本保存，不执行公式注入。"
+  ],
+  "tests": [
+    {
+      "command": "node tests/finance-operations.mjs",
+      "status": "pass",
+      "evidence": "备用金创建、发放、待核销、超额核销拒绝、核销金额与凭据登记通过；费用报销和付款审批通过；待审批采购申请未进入导出；生成的.xlsx包含workbook、worksheet和styles，包含所属公司、费用类型、费用金额、项目名称及三类审批记录，公式注入文本被转义。"
+    },
+    {
+      "command": "Chrome CDP 财务专员真实页面验收",
+      "status": "pass",
+      "evidence": "财务专员登录后可见导航仅“财务管理”；备用金通过页面创建并依次完成待发放、待核销、已核销，待核销筛选下不显示已核销记录，已核销筛选下可见；费用报销页面创建并完成审批；费用报销、付款申请、采购申请三类已完成记录成功下载为.xlsx，待审批采购记录未导出。财务接口200，HR、全局账号、知识、集成和覆盖层接口均403。"
+    },
+    {
+      "command": "node --env-file=.env.local tests/postgres-five-role-http-integration.mjs",
+      "status": "pass",
+      "evidence": "真实PostgreSQL账号矩阵覆盖六个普通岗位；仅财务账号访问/api/admin/finance及Excel导出返回200，其他普通岗位均403；财务岗位能力为finance:read/finance:manage/finance:export。"
+    },
+    {
+      "command": "node tests/phase-one-role-policy.mjs；node tests/superadministrator-policy.mjs；node tests/management-role-navigation.mjs",
+      "status": "pass",
+      "evidence": "财务专员能力严格收敛为财务读取、办理和导出；系统管理员、售前、内容、发布、质量和人事均无财务能力；财务页面分发到独立财务模块；超级管理员保留平台兜底权限。"
+    },
+    {
+      "command": "npm run team:test:mock",
+      "status": "pass",
+      "evidence": "Mock契约58项通过，两个模拟租户均包含财务账号并可登录；Mock不替代真实财务应用验收，真实页面和PostgreSQL链路已单独记录。"
+    },
+    {
+      "command": "npm run team:test:http",
+      "status": "pass",
+      "evidence": "隔离真实Node应用HTTP回归37项通过；新增财务服务可随应用启动，既有登录、会话、流式回复和权限链路无回归。"
+    },
+    {
+      "command": "npm run team:verify",
+      "status": "pass",
+      "evidence": "team-baseline 23项套件全部通过，包含finance-operations新增验收。"
+    },
+    {
+      "command": "node --env-file=.env.local --input-type=module -e \"process.env.HUAMEI_DATABASE_URL=process.env.HUAMEI_MIGRATION_DATABASE_URL; await import('./scripts/run-migrations.mjs');\"",
+      "status": "pass",
+      "evidence": "020_finance_role.sql已成功应用，management_accounts岗位约束现包含财务专员。"
+    }
+  ],
+  "shared_changes": [
+    {
+      "path": "server/api-router.mjs",
+      "owner": "shared",
+      "change": "新增财务总览、备用金创建/发放/核销、财务申请创建/审批和Excel下载API；分别要求finance:read、finance:manage、finance:export"
+    },
+    {
+      "path": "src/app.js",
+      "owner": "shared",
+      "change": "接入财务模块；财务专员默认路由和导航收敛到财务管理，其他普通岗位不能打开财务路由"
+    },
+    {
+      "path": "src/ui.js",
+      "owner": "shared",
+      "change": "经营治理导航新增财务管理入口"
+    },
+    {
+      "path": "index.html",
+      "owner": "shared",
+      "change": "加载独立财务模块样式"
+    },
+    {
+      "path": "src/role-catalog.js",
+      "owner": "C",
+      "change": "新增R-FINANCE财务专员角色，能力限定为finance:read、finance:manage、finance:export"
+    },
+    {
+      "path": "server/platform/phase-one-role-policy.mjs",
+      "owner": "shared",
+      "change": "新增财务读取、管理和导出能力常量"
+    },
+    {
+      "path": "package.json",
+      "owner": "shared",
+      "change": "新增test:finance-operations脚本"
+    },
+    {
+      "path": "scripts/team-verify.mjs",
+      "owner": "shared",
+      "change": "团队回归加入finance-operations"
+    },
+    {
+      "path": "handoff/ownership.json",
+      "owner": "shared",
+      "change": "申报财务服务与财务前端模块为共享评审路径"
+    },
+    {
+      "path": ".env.example",
+      "owner": "shared",
+      "change": "新增HUAMEI_FINANCE_STORE_FILE"
+    },
+    {
+      "path": "devkit/fixtures.mjs",
+      "owner": "shared",
+      "change": "Mock每租户新增财务账号"
+    },
+    {
+      "path": "devkit/seed.mjs",
+      "owner": "shared",
+      "change": "更新Mock账号数量说明"
+    },
+    {
+      "path": "devkit/seed-postgres.mjs",
+      "owner": "shared",
+      "change": "更新开发库账号数量说明"
+    },
+    {
+      "path": "docs/onboarding/00_开始开发.md",
+      "owner": "shared",
+      "change": "更新Mock八角色与16个账号说明"
+    },
+    {
+      "path": "tests/phase-one-role-policy.mjs",
+      "owner": "C",
+      "change": "新增财务角色最小权限及其他岗位拒绝断言"
+    },
+    {
+      "path": "tests/management-role-navigation.mjs",
+      "owner": "C",
+      "change": "新增财务专员页面分发断言"
+    },
+    {
+      "path": "tests/postgres-five-role-http-integration.mjs",
+      "owner": "shared",
+      "change": "真实账号HTTP矩阵新增财务接口和导出仅财务允许断言"
+    }
+  ],
+  "api_changes": [
+    {
+      "interface": "GET /api/admin/finance",
+      "change": "新增财务总览、备用金和三类审批记录读取；要求finance:read",
+      "breaking": false
+    },
+    {
+      "interface": "POST /api/admin/finance/petty-cash",
+      "change": "新增备用金申请；要求finance:manage",
+      "breaking": false
+    },
+    {
+      "interface": "POST /api/admin/finance/petty-cash/:id/issue",
+      "change": "确认备用金发放并进入待核销；要求finance:manage",
+      "breaking": false
+    },
+    {
+      "interface": "POST /api/admin/finance/petty-cash/:id/write-off",
+      "change": "登记备用金实际核销金额和凭据；要求finance:manage",
+      "breaking": false
+    },
+    {
+      "interface": "POST /api/admin/finance/requests",
+      "change": "新增费用报销、付款申请或采购申请；要求finance:manage",
+      "breaking": false
+    },
+    {
+      "interface": "POST /api/admin/finance/requests/:id/approve",
+      "change": "完成财务审批；要求finance:manage",
+      "breaking": false
+    },
+    {
+      "interface": "GET /api/admin/finance/exports/approved.xlsx",
+      "change": "导出已完成审批的财务申请为标准Excel工作簿；要求finance:export",
+      "breaking": false
+    }
+  ],
+  "migrations": [
+    {
+      "path": "db/migrations/020_finance_role.sql",
+      "change": "management_accounts岗位约束新增财务专员",
+      "applied": true
+    }
+  ],
+  "dependency_changes": [],
+  "environment_variable_names": [
+    "HUAMEI_FINANCE_STORE_FILE"
+  ],
+  "known_limitations": [
+    "当前财务数据保存在本地JSON文件，生产环境需要迁移到带租户隔离、行级权限、备份和加密的正式数据库。",
+    "模块提供财务侧申请录入、审批、核销和导出，尚未对接ERP、财务共享、银企直连、发票查验或会计凭证系统。",
+    "Excel导出仅包含已审批完成的费用报销、付款申请和采购申请；待审批记录会被排除。",
+    "当前审批为单步完成，不包含多级审批、预算占用、付款回执、发票OCR、反舞弊规则和会计科目映射。",
+    "超级管理员按平台策略保留全部能力；除该兜底角色外，财务能力只授予财务专员。"
+  ],
+  "rollback": "回退server/finance-operations.mjs、server/finance-export.mjs、src/modules/finance/、tests/finance-operations.mjs、020_finance_role.sql以及api-router、app、ui、index.html、role-catalog、phase-one-role-policy、package、team-verify、ownership、env示例和devkit中的财务接入项；不删除HUAMEI_FINANCE_STORE_FILE中的既有财务数据。"
+}
