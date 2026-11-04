@@ -147,7 +147,15 @@ const requestPage = () => {
   return `<div class="finance-toolbar"><label><span>审批类型</span><select id="finance-request-filter">
     ${[["all","全部"],["expense","费用报销"],["payment","付款申请"],["procurement","采购申请"]].map(([value, label]) => `<option value="${value}" ${ui.requestFilter === value ? "selected" : ""}>${label}</option>`).join("")}
   </select></label><span>当前显示 ${rows.length} / ${all.length} 笔</span><div class="finance-toolbar-actions"><button class="btn" data-action="finance-export-approved" ${approvedCount ? "" : "disabled"}>${icon("download",14)}导出已完成审批 Excel</button><button class="btn primary" data-action="finance-new-request">${icon("plus",14)}新增财务申请</button></div></div>
-  <section class="card">${rows.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>流程类型</th><th>所属公司 / 项目</th><th>费用类型</th><th>申请人</th><th>金额</th><th>凭据图片</th><th>审批状态</th><th>完成时间</th><th>操作</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${badge(requestType(item.type), "outline")}<div class="caption">${escapeHtml(item.id)}</div></td><td><strong>${escapeHtml(item.company)}</strong><div class="caption">${escapeHtml(item.project_name)}</div></td><td>${escapeHtml(item.expense_type)}<div class="caption">${escapeHtml(item.cost_center || "未填成本中心")}</div></td><td>${escapeHtml(item.applicant)}<div class="caption">${escapeHtml(item.employee_account || "")}</div></td><td><strong>¥${amount(item.amount)}</strong></td><td>${(item.evidence || []).length ? item.evidence.map((evidence) => `<button class="link" data-action="finance-preview-evidence" data-request-id="${escapeHtml(item.id)}" data-id="${escapeHtml(evidence.id)}">${escapeHtml(evidence.file_name)}</button>`).join("<br/>") : '<span class="caption">未上传</span>'}</td><td>${badge(item.approval_status === "approved" ? "审批完成" : "待审批", item.approval_status === "approved" ? "success" : "warning")}</td><td>${item.approved_at ? formatDate(item.approved_at) : "—"}</td><td><div class="finance-row-actions"><button class="link" data-action="finance-view-request" data-id="${escapeHtml(item.id)}">查看</button>${item.approval_status === "pending" ? `<button class="link" data-action="finance-approve-request" data-id="${escapeHtml(item.id)}">完成审批</button>` : ""}</div></td></tr>`).join("")}</tbody></table></div>` : empty("没有符合条件的财务申请", "调整审批类型筛选，或新增费用报销、付款、采购申请。")}</section>`;
+  <section class="card">${rows.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>流程类型</th><th>所属公司 / 项目</th><th>费用类型</th><th>申请人</th><th>金额</th><th>凭据图片</th><th>审批状态</th><th>完成时间</th><th>操作</th></tr></thead><tbody>${rows.map((item) => {
+    const needsEvidence = item.type === "expense" && (item.evidence || []).length === 0;
+    const pendingAction = item.approval_status === "pending"
+      ? needsEvidence
+        ? `<button class="link" data-action="finance-add-evidence" data-id="${escapeHtml(item.id)}">补充凭据</button>`
+        : `<button class="link" data-action="finance-approve-request" data-id="${escapeHtml(item.id)}">完成审批</button>`
+      : "";
+    return `<tr><td>${badge(requestType(item.type), "outline")}<div class="caption">${escapeHtml(item.id)}</div></td><td><strong>${escapeHtml(item.company)}</strong><div class="caption">${escapeHtml(item.project_name)}</div></td><td>${escapeHtml(item.expense_type)}<div class="caption">${escapeHtml(item.cost_center || "未填成本中心")}</div></td><td>${escapeHtml(item.applicant)}<div class="caption">${escapeHtml(item.employee_account || "")}</div></td><td><strong>¥${amount(item.amount)}</strong></td><td>${(item.evidence || []).length ? item.evidence.map((evidence) => `<button class="link" data-action="finance-preview-evidence" data-request-id="${escapeHtml(item.id)}" data-id="${escapeHtml(evidence.id)}">${escapeHtml(evidence.file_name)}</button>`).join("<br/>") : '<span class="caption">未上传</span>'}</td><td>${badge(item.approval_status === "approved" ? "审批完成" : needsEvidence ? "待补凭据" : "待审批", item.approval_status === "approved" ? "success" : "warning")}</td><td>${item.approved_at ? formatDate(item.approved_at) : "—"}</td><td><div class="finance-row-actions"><button class="link" data-action="finance-view-request" data-id="${escapeHtml(item.id)}">查看</button>${pendingAction}</div></td></tr>`;
+  }).join("")}</tbody></table></div>` : empty("没有符合条件的财务申请", "调整审批类型筛选，或新增费用报销、付款、采购申请。")}</section>`;
 };
 
 export function renderFinancePage() {
@@ -278,6 +286,19 @@ const showRequestModal = () => {
   });
 };
 
+const showEvidenceUploadModal = (id) => {
+  const record = (ui.data?.requests || []).find((item) => item.id === id);
+  if (!record) return toast("未找到财务申请", "warning");
+  openModal({
+    title:`补充报销凭据 · ${record.applicant}`,
+    desc:`${record.company} · ${record.project_name} · ¥${amount(record.amount)}`,
+    body:`<form id="finance-evidence-upload-form" data-id="${escapeHtml(record.id)}" data-version="${record.version}">
+      <label class="form-group"><span class="form-label">凭据截图（最多3张，每张5MB，支持JPG、PNG、WebP）</span><input class="form-control" name="evidence_files" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" multiple required /><span class="caption">当前已有 ${(record.evidence || []).length} 张；补充后总数量不能超过3张。</span></label>
+    </form>`,
+    footer:`<button class="btn" data-action="modal-close">取消</button><button class="btn primary" data-action="finance-submit-form" data-id="finance-evidence-upload-form">上传凭据</button>`
+  });
+};
+
 const downloadExport = async (target) => {
   if (target.disabled) return;
   target.disabled = true;
@@ -332,6 +353,17 @@ const previewEvidence = async (requestId, evidenceId) => {
   }
 };
 
+const collectEvidenceFiles = async (form) => {
+  const selectedEvidence = [...(form.querySelector('[name="evidence_files"]')?.files || [])];
+  if (selectedEvidence.length > 3) throw new Error("每笔财务申请最多上传3张凭据图片");
+  if (selectedEvidence.some((file) => file.size > 5 * 1024 * 1024)) throw new Error("每张凭据图片不能超过5MB");
+  return Promise.all(selectedEvidence.map(async (file) => ({
+    file_name:file.name,
+    mime_type:file.type,
+    data_base64:await fileBase64(file)
+  })));
+};
+
 const submitFinanceForm = async (form) => {
   const data = Object.fromEntries(new FormData(form));
   if (form.id === "finance-petty-form") {
@@ -360,15 +392,8 @@ const submitFinanceForm = async (form) => {
     toast("备用金核销已登记", "success");
     return;
   }
-  const selectedEvidence = [...(form.querySelector('[name="evidence_files"]')?.files || [])];
-  if (selectedEvidence.length > 3) throw new Error("每笔财务申请最多上传3张凭据图片");
-  if (selectedEvidence.some((file) => file.size > 5 * 1024 * 1024)) throw new Error("每张凭据图片不能超过5MB");
-  if (data.type === "expense" && selectedEvidence.length === 0) throw new Error("费用报销必须上传至少一张凭据截图");
-  const evidenceFiles = await Promise.all(selectedEvidence.map(async (file) => ({
-    file_name:file.name,
-    mime_type:file.type,
-    data_base64:await fileBase64(file)
-  })));
+  const evidenceFiles = await collectEvidenceFiles(form);
+  if (data.type === "expense" && evidenceFiles.length === 0) throw new Error("费用报销必须上传至少一张凭据截图");
   await request("/api/admin/finance/requests", {
     method:"POST",
     headers:{ "Idempotency-Key":key("finance-request") },
@@ -379,6 +404,24 @@ const submitFinanceForm = async (form) => {
   ui.tab = "requests";
   refreshFinanceContent();
   toast("财务申请已创建，等待审批", "success");
+};
+
+const submitEvidenceUpload = async (form) => {
+  const evidenceFiles = await collectEvidenceFiles(form);
+  if (!evidenceFiles.length) throw new Error("请选择至少一张凭据截图");
+  await request(`/api/admin/finance/requests/${encodeURIComponent(form.dataset.id)}/evidence`, {
+    method:"POST",
+    headers:{ "Idempotency-Key":key("finance-evidence") },
+    body:JSON.stringify({
+      expected_version:Number(form.dataset.version),
+      evidence_files:evidenceFiles
+    })
+  });
+  closeModal();
+  await hydrateFinance({ force:true });
+  ui.tab = "requests";
+  refreshFinanceContent();
+  toast("凭据图片已补充，现在可以完成审批", "success");
 };
 
 const handleFinanceAction = async (action, id, target) => {
@@ -398,6 +441,7 @@ const handleFinanceAction = async (action, id, target) => {
   if (action === "finance-writeoff-petty") return showWriteOffModal(id);
   if (action === "finance-view-petty") return showPettyDetail(id);
   if (action === "finance-view-request") return showRequestDetail(id);
+  if (action === "finance-add-evidence") return showEvidenceUploadModal(id);
   if (action === "finance-issue-petty") {
     const record = (ui.data?.pettyCash || []).find((item) => item.id === id);
     if (!record) return toast("未找到备用金记录", "warning");
@@ -468,13 +512,14 @@ document.addEventListener("change", (event) => {
 
 document.addEventListener("submit", async (event) => {
   const form = event.target;
-  if (!["finance-petty-form", "finance-writeoff-form", "finance-request-form"].includes(form.id)) return;
+  if (!["finance-petty-form", "finance-writeoff-form", "finance-request-form", "finance-evidence-upload-form"].includes(form.id)) return;
   event.preventDefault();
   event.stopImmediatePropagation();
   if (form.dataset.submitting === "true") return;
   form.dataset.submitting = "true";
   try {
-    await submitFinanceForm(form);
+    if (form.id === "finance-evidence-upload-form") await submitEvidenceUpload(form);
+    else await submitFinanceForm(form);
   } catch (error) {
     toast(error.message, "danger");
   } finally {

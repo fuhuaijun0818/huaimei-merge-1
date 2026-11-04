@@ -286,6 +286,9 @@ export async function approveFinanceRequest({ tenantId, actor, id, expectedVersi
     const tenant = tenantState(state, tenantId);
     const record = tenant.requests.find((item) => item.id === id);
     assertVersion(record, expectedVersion);
+    if (record.type === "expense" && (record.evidence || []).length === 0) {
+      throw Object.assign(new Error("费用报销必须补充至少一张凭据截图后才能审批"), { code:"FINANCE_EVIDENCE_REQUIRED", status:400 });
+    }
     if (record.approval_status !== "pending") {
       throw Object.assign(new Error("该申请已审批完成，不能重复审批"), { code:"FINANCE_APPROVAL_STATE_INVALID", status:409 });
     }
@@ -295,6 +298,39 @@ export async function approveFinanceRequest({ tenantId, actor, id, expectedVersi
     record.updated_at = nowIso();
     record.version += 1;
     appendEvent(tenant, { type:"finance.request.approved", actor, resourceType:"finance_request", resourceId:record.id, detail:`${record.type_label} · 审批完成` });
+    tenant.revision += 1;
+    return publicRequest(record);
+  });
+}
+
+export async function attachFinanceRequestEvidence({ tenantId, actor, id, expectedVersion, payload = {} } = {}) {
+  const evidenceFiles = prepareEvidence(payload.evidence_files);
+  if (!evidenceFiles.length) {
+    throw Object.assign(new Error("请选择至少一张凭据截图"), { code:"FINANCE_EVIDENCE_REQUIRED", status:400 });
+  }
+  return withState(async (state) => {
+    const tenant = tenantState(state, tenantId);
+    const record = tenant.requests.find((item) => item.id === id);
+    assertVersion(record, expectedVersion);
+    if (record.approval_status !== "pending") {
+      throw Object.assign(new Error("只能为待审批申请补充凭据"), { code:"FINANCE_REQUEST_STATE_INVALID", status:409 });
+    }
+    if ((record.evidence || []).length + evidenceFiles.length > MAX_EVIDENCE_FILES) {
+      throw Object.assign(new Error("每笔财务申请最多保留3张凭据图片"), { code:"FINANCE_EVIDENCE_COUNT_EXCEEDED", status:400 });
+    }
+    try {
+      await storeEvidence(tenantId, evidenceFiles);
+    } catch {
+      await removeStoredEvidence(tenantId, evidenceFiles);
+      throw Object.assign(new Error("凭据图片保存失败，请稍后重试"), { code:"FINANCE_EVIDENCE_STORE_FAILED", status:503 });
+    }
+    record.evidence = [
+      ...(record.evidence || []),
+      ...evidenceFiles.map(({ buffer, ...item }) => item)
+    ];
+    record.updated_at = nowIso();
+    record.version += 1;
+    appendEvent(tenant, { type:"finance.request.evidence_added", actor, resourceType:"finance_request", resourceId:record.id, detail:`补充凭据图片 ${evidenceFiles.length} 张` });
     tenant.revision += 1;
     return publicRequest(record);
   });
@@ -321,7 +357,8 @@ export async function getFinanceEvidence({ tenantId, actor, requestId, evidenceI
 export async function exportApprovedFinanceRequests({ tenantId, actor } = {}) {
   return withState(async (state) => {
     const tenant = tenantState(state, tenantId);
-    const approved = tenant.requests.filter((item) => item.approval_status === "approved");
+    const approved = tenant.requests.filter((item) => item.approval_status === "approved"
+      && (item.type !== "expense" || (item.evidence || []).length > 0));
     const buffer = await buildApprovedFinanceWorkbook(approved);
     const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
     appendEvent(tenant, { type:"finance.export.completed", actor, resourceType:"finance_export", resourceId:stamp, detail:`导出已完成审批 ${approved.length} 条` });

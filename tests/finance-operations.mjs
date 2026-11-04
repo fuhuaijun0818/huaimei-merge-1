@@ -141,8 +141,23 @@ const evidence = await finance.getFinanceEvidence({
 });
 assert.equal(evidence.mime_type, "image/png");
 assert.deepEqual(evidence.buffer, receiptPng);
+const paymentWithEvidence = await finance.attachFinanceRequestEvidence({
+  tenantId,
+  actor,
+  id:payment.id,
+  expectedVersion:payment.version,
+  payload:{
+    evidence_files:[{
+      file_name:"付款凭据.png",
+      mime_type:"image/png",
+      data_base64:receiptPng.toString("base64")
+    }]
+  }
+});
+assert.equal(paymentWithEvidence.evidence.length, 1);
+assert.equal(paymentWithEvidence.evidence[0].file_name, "付款凭据.png");
 const approvedExpense = await finance.approveFinanceRequest({ tenantId, actor, id:expense.id, expectedVersion:expense.version });
-const approvedPayment = await finance.approveFinanceRequest({ tenantId, actor, id:payment.id, expectedVersion:payment.version });
+const approvedPayment = await finance.approveFinanceRequest({ tenantId, actor, id:payment.id, expectedVersion:paymentWithEvidence.version });
 assert.equal(approvedExpense.approval_status, "approved");
 assert.equal(approvedPayment.approved_by, actor);
 await assert.rejects(
@@ -177,11 +192,14 @@ assert.equal(overview.requests.length, 3);
 assert.equal(overview.requests.filter((item) => item.approval_status === "approved").length, 2);
 assert.ok(overview.events.some((item) => item.type === "finance.export.completed"));
 const financeUiSource = readFileSync(new URL("../src/modules/finance/index.js", import.meta.url), "utf8");
+const financeServiceSource = readFileSync(new URL("../server/finance-operations.mjs", import.meta.url), "utf8");
 assert.match(financeUiSource, /finance-view-petty/);
 assert.match(financeUiSource, /finance-view-request/);
 assert.match(financeUiSource, /finance-evidence-gallery/);
 assert.match(financeUiSource, /费用报销必须上传至少一张凭据截图/);
 assert.match(financeUiSource, /evidence\.required = event\.target\.value === "expense"/);
+assert.match(financeUiSource, /finance-add-evidence/);
+assert.match(financeServiceSource, /FINANCE_EVIDENCE_REQUIRED/);
 
 console.log("finance-operations: passed");
 rmSync(evidenceRoot, { recursive:true, force:true });

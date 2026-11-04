@@ -81,6 +81,7 @@ import {
 import { HR_RESUME_FILE_MAX_JSON_BYTES } from "./hr-resume-file.mjs";
 import {
   approveFinanceRequest,
+  attachFinanceRequestEvidence,
   createFinanceRequest,
   createPettyCashApplication,
   exportApprovedFinanceRequests,
@@ -733,12 +734,14 @@ export async function handleApiRequest(request, response) {
     const pettyCashIssueMatch = url.pathname.match(/^\/api\/admin\/finance\/petty-cash\/(finpc_[a-f0-9-]+)\/issue$/i);
     const pettyCashWriteOffMatch = url.pathname.match(/^\/api\/admin\/finance\/petty-cash\/(finpc_[a-f0-9-]+)\/write-off$/i);
     const requestApprovalMatch = url.pathname.match(/^\/api\/admin\/finance\/requests\/(finreq_[a-f0-9-]+)\/approve$/i);
+    const requestEvidenceUploadMatch = url.pathname.match(/^\/api\/admin\/finance\/requests\/(finreq_[a-f0-9-]+)\/evidence$/i);
     const evidenceMatch = url.pathname.match(/^\/api\/admin\/finance\/requests\/(finreq_[a-f0-9-]+)\/evidence\/(finevidence_[a-f0-9-]+)$/i);
     const supported = (method === "GET" && url.pathname === "/api/admin/finance")
       || (method === "GET" && exportRoute)
       || (method === "GET" && evidenceMatch)
       || (method === "POST" && url.pathname === "/api/admin/finance/petty-cash")
       || (method === "POST" && url.pathname === "/api/admin/finance/requests")
+      || (method === "POST" && requestEvidenceUploadMatch)
       || (method === "POST" && pettyCashIssueMatch)
       || (method === "POST" && pettyCashWriteOffMatch)
       || (method === "POST" && requestApprovalMatch);
@@ -757,9 +760,9 @@ export async function handleApiRequest(request, response) {
         principal,
         requestId,
         request,
-        action:`management.finance.${pettyCashIssueMatch ? "petty_cash_issue" : pettyCashWriteOffMatch ? "petty_cash_writeoff" : requestApprovalMatch ? "request_approve" : evidenceMatch ? "evidence_view" : exportRoute ? "export" : url.pathname.split("/").at(-1)}`,
+        action:`management.finance.${pettyCashIssueMatch ? "petty_cash_issue" : pettyCashWriteOffMatch ? "petty_cash_writeoff" : requestApprovalMatch ? "request_approve" : requestEvidenceUploadMatch ? "request_evidence_add" : evidenceMatch ? "evidence_view" : exportRoute ? "export" : url.pathname.split("/").at(-1)}`,
         resourceType:"finance_operations",
-        resourceId:pettyCashIssueMatch?.[1] || pettyCashWriteOffMatch?.[1] || requestApprovalMatch?.[1] || evidenceMatch?.[1] || principal.tenantId
+        resourceId:pettyCashIssueMatch?.[1] || pettyCashWriteOffMatch?.[1] || requestApprovalMatch?.[1] || requestEvidenceUploadMatch?.[1] || evidenceMatch?.[1] || principal.tenantId
       });
     } catch (error) {
       sendManagementAuthorizationError(request, response, requestId, error);
@@ -794,7 +797,7 @@ export async function handleApiRequest(request, response) {
     }
     let payload;
     try {
-      payload = await readJsonBody(request, url.pathname === "/api/admin/finance/requests" ? 24 * 1024 * 1024 : MAX_BODY_BYTES);
+      payload = await readJsonBody(request, url.pathname === "/api/admin/finance/requests" || requestEvidenceUploadMatch ? 24 * 1024 * 1024 : MAX_BODY_BYTES);
     } catch (error) {
       sendError(request, response, requestId, error.code === "BODY_TOO_LARGE" ? 413 : 400, error.code || "INVALID_JSON", "请求体不是有效JSON");
       return true;
@@ -805,6 +808,8 @@ export async function handleApiRequest(request, response) {
         data = await createPettyCashApplication({ tenantId:principal.tenantId, actor:principal.subject, payload });
       } else if (url.pathname === "/api/admin/finance/requests") {
         data = await createFinanceRequest({ tenantId:principal.tenantId, actor:principal.subject, payload });
+      } else if (requestEvidenceUploadMatch) {
+        data = await attachFinanceRequestEvidence({ tenantId:principal.tenantId, actor:principal.subject, id:requestEvidenceUploadMatch[1], expectedVersion:payload.expected_version, payload });
       } else if (pettyCashIssueMatch) {
         data = await issuePettyCash({ tenantId:principal.tenantId, actor:principal.subject, id:pettyCashIssueMatch[1], expectedVersion:payload.expected_version });
       } else if (pettyCashWriteOffMatch) {
