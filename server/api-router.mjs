@@ -716,8 +716,11 @@ export async function handleApiRequest(request, response) {
     }
     let principal;
     try {
+      const hrRead = method === "GET";
       principal = await authorizeManagementRequest(request, {
-        requiredCapabilities:[PHASE_ONE_CAPABILITIES.platformManage],
+        ...(hrRead
+          ? { requiredAnyCapabilities:[PHASE_ONE_CAPABILITIES.hrRead, PHASE_ONE_CAPABILITIES.hrManage] }
+          : { requiredCapabilities:[PHASE_ONE_CAPABILITIES.hrManage] }),
         tenantId:PUBLIC_TENANT_ID,
         tenantField:"token.tenant_ids"
       });

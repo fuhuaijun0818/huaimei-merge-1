@@ -10,7 +10,7 @@ const check=(name,actual,expected)=>{assert.deepEqual(actual,expected,name);chec
 const call=async(path,{token,body,method=body?'POST':'GET',key,scenario,origin}={})=>{const r=await fetch(app.url+'/dev/v2'+path,{method,headers:{...(token?{Authorization:'Bearer '+token}:{}),...(body?{'Content-Type':'application/json','Idempotency-Key':key||'test_'+(++n)}:{}),...(scenario?{'X-Mock-Scenario':scenario}:{}),...(origin?{Origin:origin}:{})},...(body?{body:JSON.stringify(body)}:{})});return{code:r.status,data:await r.json()};};
 try{
  const accounts=JSON.parse(readFileSync(join(dir,'accounts.private.json'))).credentials;
- check('12 generated accounts',accounts.length,12);
+ check('14 generated accounts',accounts.length,14);
  const tokens={};for(const a of accounts){const r=await call('/login',{body:{username:a.username,password:a.password}});check('login '+a.username,r.code,200);tokens[a.username]=r.data.token;}
  const sales=tokens.team_alpha_sales,sup=tokens.team_alpha_super,content=tokens.team_alpha_content,pub=tokens.team_alpha_publisher;
  check('anonymous denied',(await call('/conversations')).code,401);

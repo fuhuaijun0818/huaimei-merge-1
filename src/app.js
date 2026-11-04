@@ -340,10 +340,11 @@ const qualityRouteAllowlist = new Set(["workbench", "knowledge", "conversations"
 const qualitySubrouteAllowlist = Object.freeze({
   conversations: new Set(["bad-cases"])
 });
+const isHrWorkspace = () => currentPhaseOneRole() === "人事专员";
 const canOpenRouteInCurrentRole = route => {
  const key=roleCatalogEntry(currentPhaseOneRole())?.key;
  if(key==='superadministrator')return true;
- return key==="presales"?presalesRouteAllowlist.has(route):key==="administrator"?["workbench","administration","integrations","hr"].includes(route):key==="quality"?qualityRouteAllowlist.has(route):["content","publisher"].includes(key)?["workbench","knowledge"].includes(route):false;
+ return key==="presales"?presalesRouteAllowlist.has(route):key==="administrator"?["workbench","administration","integrations"].includes(route):key==="hr"?route==="hr":key==="quality"?qualityRouteAllowlist.has(route):["content","publisher"].includes(key)?["workbench","knowledge"].includes(route):false;
 };
 const presalesSubrouteAllowlist = Object.freeze({
   workbench: new Set([undefined, "overview", "takeovers"]),
@@ -367,7 +368,7 @@ const routeInfo = () => {
   };
   const [route, id, resourceId] = raw.split("/").map(decodeSegment);
   if (handoverOnlyMode && route !== "workbench" && !((knowledgeGovernanceEnabled || knowledgeIntakeEnabled) && route === "knowledge")) return { route:"workbench", id:undefined, resourceId:undefined };
-  if (!handoverOnlyMode && !canOpenRouteInCurrentRole(route)) return { route:"conversations", id:undefined, resourceId:undefined };
+  if (!handoverOnlyMode && !canOpenRouteInCurrentRole(route)) return { route:isHrWorkspace() ? "hr" : "conversations", id:undefined, resourceId:undefined };
   if (!handoverOnlyMode && isPresalesWorkspace() && presalesSubrouteAllowlist[route] && !presalesSubrouteAllowlist[route].has(id)) return { route:"conversations", id:undefined, resourceId:undefined };
   // 质量岗位进入会话模块时只落在 Bad Case 库，未授权二级页面一律改道。
   if (!handoverOnlyMode && isQualityWorkspace() && qualitySubrouteAllowlist[route] && !qualitySubrouteAllowlist[route].has(id)) return { route, id:"bad-cases", resourceId:undefined };
@@ -419,7 +420,7 @@ function shell(content) {
     </aside>
     <main class="main">
       <header class="topbar"><div class="breadcrumb"><span>时代之美</span>${icon("chevron", 12)}<strong>${routeTitle(route, id, resourceId)}</strong></div>
-        ${handoverOnlyMode ? `<span class="caption">仅展示已接入服务端并可审计的操作</span>` : `${isPresalesWorkspace() ? `<span class="caption">售前工作台仅展示已进入聊天或已进入接待队列的客户会话</span>` : `<div class="global-search">${icon("search", 17)}<input id="global-search" type="search" placeholder="搜索客户姓名、手机号、档案编号…" autocomplete="off"/><div class="search-results" id="global-results"></div></div>`}<select disabled class="role-select" id="role-select" aria-label="切换角色">${localRoles.map((role) => `<option ${role === activeRole ? "selected" : ""}>${escapeHtml(role)}</option>`).join("")}</select>`}
+        ${handoverOnlyMode ? `<span class="caption">仅展示已接入服务端并可审计的操作</span>` : `${isPresalesWorkspace() ? `<span class="caption">售前工作台仅展示已进入聊天或已进入接待队列的客户会话</span>` : isHrWorkspace() ? `<span class="caption">人事权限：员工档案、入职离职、简历筛选与日报周报月报</span>` : `<div class="global-search">${icon("search", 17)}<input id="global-search" type="search" placeholder="搜索客户姓名、手机号、档案编号…" autocomplete="off"/><div class="search-results" id="global-results"></div></div>`}<select disabled class="role-select" id="role-select" aria-label="切换角色">${localRoles.map((role) => `<option ${role === activeRole ? "selected" : ""}>${escapeHtml(role)}</option>`).join("")}</select>`}
         ${window.__HUAMEI_MANAGEMENT_RUNTIME__?.browser_session_auth ? `<button class="btn" data-action="admin-logout">退出登录</button>` : ""}
         <button class="topbar-action" data-action="notifications" aria-label="${hasOpenHandover ? "有新的人工接管通知" : "通知"}">${icon("bell", 17)}${hasOpenHandover ? `<span class="notification-dot"></span>` : ""}</button>
       </header>
@@ -2237,7 +2238,7 @@ async function refreshManagedAccounts(){
 }
 function managedAccountsPage(){
  const config=ui.memberIntegration;
- return `<div class="page">${pageHead('系统管理','人员与岗位','按实名账号分配五岗位和科室范围，权限变更在下一次服务端请求生效。','<button class="btn primary" data-action="managed-account-new">新增账号</button><button class="btn" data-action="managed-accounts-refresh">刷新</button>')}<section class="card padded">${ui.accountError?`<p role="alert">${escapeHtml(ui.accountError)}</p>`:''}${(ui.managedAccounts||[]).map(a=>`<div class="row between" style="padding:12px"><span><strong>${escapeHtml(a.display_name)}</strong> · ${escapeHtml(a.account)} · ${escapeHtml(a.business_role)} · ${escapeHtml(a.department_ids.join('、'))} · ${a.enabled?'启用':'停用'}</span><button class="btn" data-action="managed-account-edit" data-id="${escapeHtml(a.subject)}">编辑 / 重置密码</button></div>`).join('')||'<p>尚未配置实名人员账号；当前引导管理账号不自动获得内容发布或联系方式权限。</p>'}</section><section class="card padded" style="margin-top:16px"><h3>院方客户记录查询状态</h3><p>${!config?'状态尚未读取':config.ready?'正式查询配置已就绪':config?.enabled?'配置不完整':'尚未启用正式查询'}</p><p>${escapeHtml((config?.missing||[]).join('、'))}</p><p>手机号先保存，再查询院方记录。院方已确认无需验签；结果仅表示是否已有客户记录。</p></section><section class="card padded" style="margin-top:16px"><h3>岗位权限</h3>${ROLE_CATALOG.map(r=>`<p><strong>${r.name}</strong>：${r.permissions.join('、')}；范围：${r.scope}</p>`).join('')}</section></div>`;
+ return `<div class="page">${pageHead('系统管理','人员与岗位','按实名账号分配授权岗位和科室范围，权限变更在下一次服务端请求生效。','<button class="btn primary" data-action="managed-account-new">新增账号</button><button class="btn" data-action="managed-accounts-refresh">刷新</button>')}<section class="card padded">${ui.accountError?`<p role="alert">${escapeHtml(ui.accountError)}</p>`:''}${(ui.managedAccounts||[]).map(a=>`<div class="row between" style="padding:12px"><span><strong>${escapeHtml(a.display_name)}</strong> · ${escapeHtml(a.account)} · ${escapeHtml(a.business_role)} · ${escapeHtml(a.department_ids.join('、'))} · ${a.enabled?'启用':'停用'}</span><button class="btn" data-action="managed-account-edit" data-id="${escapeHtml(a.subject)}">编辑 / 重置密码</button></div>`).join('')||'<p>尚未配置实名人员账号；当前引导管理账号不自动获得内容发布或联系方式权限。</p>'}</section><section class="card padded" style="margin-top:16px"><h3>院方客户记录查询状态</h3><p>${!config?'状态尚未读取':config.ready?'正式查询配置已就绪':config?.enabled?'配置不完整':'尚未启用正式查询'}</p><p>${escapeHtml((config?.missing||[]).join('、'))}</p><p>手机号先保存，再查询院方记录。院方已确认无需验签；结果仅表示是否已有客户记录。</p></section><section class="card padded" style="margin-top:16px"><h3>岗位权限</h3>${ROLE_CATALOG.map(r=>`<p><strong>${r.name}</strong>：${r.permissions.join('、')}；范围：${r.scope}</p>`).join('')}</section></div>`;
 }
 function roleWorkbenchPage(){
  const admin=hasCapability('users:manage');
@@ -2383,7 +2384,11 @@ function currentPage() {
   if(businessRole==='superadministrator'&&routeInfo().route==='knowledge')return productionKnowledgeGovernancePage();
   if(businessRole==="administrator"){
     const route=routeInfo().route;
-    return route==='administration'?managedAccountsPage():route==='integrations'?systemIntegrationsPage():route==='hr'?renderHrPage():roleWorkbenchPage();
+    return route==='administration'?managedAccountsPage():route==='integrations'?systemIntegrationsPage():roleWorkbenchPage();
+  }
+  if(businessRole==="hr"){
+    if(location.hash!=="#/hr")history.replaceState(null,"","#/hr");
+    return renderHrPage();
   }
   // 质量与运营人员的岗位范围是“授权科室脱敏数据”，会话模块内只开放脱敏的
   // Bad Case 库；其余页面回到本岗位工作台（A-027 AC4）。

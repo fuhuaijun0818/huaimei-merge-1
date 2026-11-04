@@ -1,8 +1,8 @@
 import {randomBytes,scryptSync,timingSafeEqual} from 'node:crypto';
 import {mkdirSync,writeFileSync,existsSync,readFileSync,chmodSync} from 'node:fs';
 import {resolve,join} from 'node:path';
-export const roles=['系统管理员','售前顾问','内容专员','发布与索引管理员','质量与运营人员','超级管理员'];
-export const roleKeys=['admin','sales','content','publisher','quality','super'];
+export const roles=['系统管理员','售前顾问','内容专员','发布与索引管理员','质量与运营人员','人事专员','超级管理员'];
+export const roleKeys=['admin','sales','content','publisher','quality','hr','super'];
 export const passwordHash=(value,salt=randomBytes(16).toString('hex'))=>`${salt}:${scryptSync(value,salt,64).toString('hex')}`;
 export function passwordMatches(value,hash){try{const result=passwordHash(value,hash.split(':')[0]);return result.length===hash.length&&timingSafeEqual(Buffer.from(result),Buffer.from(hash));}catch{return false;}}
 export function makeFixture(){
