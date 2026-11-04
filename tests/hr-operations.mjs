@@ -173,6 +173,8 @@ const hrCssSource = await readFile(new URL("../src/modules/hr/hr.css", import.me
 assert.match(navSource, /\["hr", "users", "人事管理"\]/);
 assert.match(appSource, /renderHrPage/);
 assert.match(appSource, /hr: renderHrPage/);
+assert.match(hrUiSource, /pageHead\("", "人事管理"/);
+assert.doesNotMatch(hrUiSource, /人事方向：叶苏、李凯朝/);
 assert.match(apiSource, /\/api\/admin\/hr\/onboarding/);
 assert.match(apiSource, /\/api\/admin\/hr\/offboarding/);
 assert.match(apiSource, /\/api\/admin\/hr\/resume-screenings/);

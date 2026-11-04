@@ -203,7 +203,7 @@ export function renderHrPage() {
         reports:reportsPage
       }[ui.tab] || dashboard)();
   const actions = `<button class="btn" data-action="hr-refresh">${icon("refresh",15)}刷新</button><button class="btn" data-action="hr-new-offboarding">${icon("route",15)}发起离职</button><button class="btn primary" data-action="hr-new-onboarding">${icon("plus",15)}发起入职</button>`;
-  return `<div class="page hr-page">${pageHead("经营治理 · 人事方向：叶苏、李凯朝", "人事管理", `独立人事工作台 · ${metrics.active} 名在职员工 · ${metrics.onboarding} 个在办入职 · ${metrics.offboarding} 个在办离职`, actions)}
+  return `<div class="page hr-page">${pageHead("", "人事管理", `独立人事工作台 · ${metrics.active} 名在职员工 · ${metrics.onboarding} 个在办入职 · ${metrics.offboarding} 个在办离职`, actions)}
     <nav class="module-subnav hr-tabs" aria-label="人事管理二级导航">${tabs.map(([id, label]) => `<button class="${ui.tab === id ? "active" : ""}" data-action="hr-tab" data-id="${id}" ${ui.tab === id ? 'aria-current="page"' : ""}>${label}</button>`).join("")}</nav>
     <div class="hr-body">${content}</div>
   </div>`;
