@@ -203,7 +203,7 @@ const reportsPage = () => {
 
 const resumePage = () => {
   const screenings = ui.data?.resumeScreenings || [];
-  const header = `<div class="hr-owner-strip"><span>简历筛选助手</span><small>只基于JD和简历文本做辅助匹配，不自动淘汰，不读取年龄、性别、婚育、民族或照片等敏感信息。</small></div>`;
+  const header = `<div class="hr-owner-strip"><span>简历筛选助手</span><small>只基于JD和简历中的技能、经历做辅助匹配，不自动淘汰，不将年龄、性别、婚育、民族或照片等作为评分项。</small></div>`;
   const actions = `<div class="hr-report-actions"><button class="btn primary" data-action="hr-new-resume-screen">${icon("plus",14)}新建简历筛选</button></div>`;
   if (!screenings.length) return `${header}${actions}<section class="card">${empty("还没有简历筛选记录", "输入岗位JD和简历文本后，系统会给出匹配关键词、缺口和建议复核分数。")}</section>`;
   return `${header}${actions}<div class="hr-resume-grid">${screenings.map((item) => `<article class="card hr-resume-card">
@@ -211,7 +211,7 @@ const resumePage = () => {
     ${badge(item.verdict, item.score >= 80 ? "success" : item.score >= 60 ? "warning" : "outline")}
     <div class="hr-resume-terms"><div><span class="hr-resume-term-label">匹配项</span>${item.matched_terms.length ? item.matched_terms.map((term) => badge(term, "success")).join("") : "<em>暂无</em>"}</div><div><span class="hr-resume-term-label">待核实</span>${item.missing_terms.length ? item.missing_terms.map((term) => badge(term, "outline")).join("") : "<em>无</em>"}</div></div>
     <p>${escapeHtml(item.note)}</p>
-    <footer>简历筛选 · ${formatDate(item.created_at)} · 不自动淘汰</footer>
+    <footer>${item.source_type === "file" ? `附件 ${escapeHtml(item.source_filename || "简历")} · ` : "文本录入 · "}${formatDate(item.created_at)} · 不自动淘汰</footer>
   </article>`).join("")}</div>`;
 };
 
@@ -295,14 +295,15 @@ const showCompleteTaskModal = (workflowId, taskId) => {
 const showResumeScreeningModal = () => {
   openModal({
     title:"简历筛选助手",
-    desc:"根据JD和简历文本判断关键词覆盖及经验匹配，结果只用于人工初筛，不自动淘汰候选人。",
+    desc:"上传PDF、DOCX、TXT或Markdown附件，根据岗位JD判断关键词覆盖及经验匹配；结果只用于人工初筛，不自动淘汰候选人。",
     wide:true,
     body:`<form id="hr-resume-form" class="form-grid">
       ${formField("岗位名称","job_title","",{required:true})}
       ${formField("候选人标识（建议使用编号）","candidate_label","",{required:true})}
       ${formField("岗位JD","job_description","",{type:"textarea",full:true,required:true})}
-      ${formField("简历文本","resume_text","",{type:"textarea",full:true,required:true})}
-      <div class="form-group full"><div class="guardrail">${icon("shield",14)}不读取或推断年龄、性别、婚育、民族、照片等敏感信息；系统不会自动拒绝候选人。</div></div>
+      <label class="form-group full"><span class="form-label">简历附件（PDF / DOCX / TXT / Markdown，最大5MB）</span><input class="form-control" name="resume_file" type="file" accept=".pdf,.docx,.txt,.md,.markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/markdown" /></label>
+      ${formField("或粘贴简历文本（附件无法解析时使用）","resume_text","",{type:"textarea",full:true})}
+      <div class="form-group full"><div class="guardrail">${icon("shield",14)}附件只在内存中解析，不保存原文件；不将年龄、性别、婚育、民族、照片等作为评分项，系统不会自动拒绝候选人。扫描版PDF暂不支持OCR。</div></div>
     </form>`,
     footer:`<button class="btn" data-action="modal-close">取消</button><button class="btn primary" data-action="hr-submit-form" data-id="hr-resume-form">开始匹配评分</button>`
   });
@@ -519,10 +520,39 @@ document.addEventListener("submit", async (event) => {
       refreshHrContent();
       toast("离职流程已创建，交接任务已生成", "success");
     } else if (form.id === "hr-resume-form") {
-      await request("/api/admin/hr/resume-screenings", {
+      const file = data.resume_file instanceof File && data.resume_file.size ? data.resume_file : null;
+      if (file && file.size > 5 * 1024 * 1024) throw new Error("简历附件不能超过5MB");
+      if (!file && String(data.resume_text || "").trim().length < 20) {
+        throw new Error("请上传简历附件，或粘贴至少20个字符的简历文本");
+      }
+      let resumePayload;
+      if (file) {
+        const dataBase64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.addEventListener("load", () => resolve(String(reader.result || "").split(",")[1] || ""));
+          reader.addEventListener("error", () => reject(new Error("简历附件读取失败")));
+          reader.readAsDataURL(file);
+        });
+        resumePayload = {
+          job_title:data.job_title,
+          candidate_label:data.candidate_label,
+          job_description:data.job_description,
+          file_name:file.name,
+          mime_type:file.type,
+          data_base64:dataBase64
+        };
+      } else {
+        resumePayload = {
+          job_title:data.job_title,
+          candidate_label:data.candidate_label,
+          job_description:data.job_description,
+          resume_text:data.resume_text
+        };
+      }
+      await request(file ? "/api/admin/hr/resume-screenings/file" : "/api/admin/hr/resume-screenings", {
         method:"POST",
         headers:{ "Idempotency-Key":key("hr-resume") },
-        body:JSON.stringify(data)
+        body:JSON.stringify(resumePayload)
       });
       closeModal();
       await hydrateHr({ force:true });
