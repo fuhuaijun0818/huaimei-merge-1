@@ -77,8 +77,8 @@ assert.equal(hasPhaseOneCapability(hrSpecialist, PHASE_ONE_CAPABILITIES.hrRead),
 assert.equal(hasPhaseOneCapability(hrSpecialist, PHASE_ONE_CAPABILITIES.hrManage), true, "人事专员可办理人事流程");
 assert.deepEqual(
   [...phaseOneCapabilitiesFor(hrSpecialist)].sort(),
-  [PHASE_ONE_CAPABILITIES.hrManage, PHASE_ONE_CAPABILITIES.hrRead].sort(),
-  "人事专员能力必须严格收敛为人事读写"
+  [PHASE_ONE_CAPABILITIES.hrAccountsCreate, PHASE_ONE_CAPABILITIES.hrManage, PHASE_ONE_CAPABILITIES.hrRead].sort(),
+  "人事专员能力必须严格收敛为人事读写和普通员工账号开通"
 );
 for (const capability of [
   PHASE_ONE_CAPABILITIES.usersManage,
@@ -95,7 +95,7 @@ const authorizedHr = authorizeManagementPrincipal({
   roles:["人事专员"],
   tenantIds:["tenant-a"]
 }, {
-  requiredCapabilities:[PHASE_ONE_CAPABILITIES.hrManage],
+  requiredCapabilities:[PHASE_ONE_CAPABILITIES.hrManage, PHASE_ONE_CAPABILITIES.hrAccountsCreate],
   tenantId:"tenant-a"
 });
 assert.equal(authorizedHr.phaseOneRole, PHASE_ONE_BUSINESS_ROLES.hr);

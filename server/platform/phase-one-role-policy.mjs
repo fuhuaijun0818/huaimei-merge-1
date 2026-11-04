@@ -58,6 +58,7 @@ export const PHASE_ONE_CAPABILITIES = Object.freeze({
   analyticsRead:"analytics:read",
   hrRead:"hr:read",
   hrManage:"hr:manage",
+  hrAccountsCreate:"hr:accounts:create",
   auditRead:"audit:read",
   integrationsManage:"integrations:manage",
   systemManage:"system:manage"

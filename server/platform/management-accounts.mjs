@@ -1,14 +1,16 @@
 import { scrypt as scryptCallback, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
 import { postgres, postgresPersistenceEnabled, ensureTenant, appendAuditEvent } from '../persistence/postgres-helpers.mjs';
-import { roleCatalogEntry } from '../../src/role-catalog.js';
-import { requirePhaseOneCapability } from './phase-one-role-policy.mjs';
+import { HR_CREATABLE_ROLE_KEYS, roleCatalogEntry } from '../../src/role-catalog.js';
+import { hasPhaseOneCapability, requirePhaseOneCapability } from './phase-one-role-policy.mjs';
 import { transferAccountAppointments } from '../persistence/appointment-state-store.mjs';
 const scrypt=promisify(scryptCallback);
 const loginFailures=new Map();
 let activePasswordChecks=0;
 const fail=(code,message,status=403)=>Object.assign(new Error(message),{code,status});
 const safe=row=>{const {password_hash,...publicFields}=row;return publicFields;};
+const hrCreatableRole = (value) => HR_CREATABLE_ROLE_KEYS.includes(roleCatalogEntry(value)?.key);
+const accountWithinScope = (row,p) => p.departmentIds?.includes('*') || row.department_ids.every(d=>p.departmentIds?.includes(d));
 const managementTenantIds = (tenantId) => {
  const current=String(tenantId||'').trim().toLowerCase();
  const configured=String(process.env.HUAMEI_MANAGEMENT_TENANT_IDS||'').split(',').map(v=>v.trim().toLowerCase()).filter(Boolean);
@@ -52,12 +54,27 @@ export async function listManagementAccounts(p){
  requirePhaseOneCapability(p,'users:manage');
  return (await postgres().tenantQuery(p.tenantId,'SELECT * FROM management_accounts WHERE tenant_id=$1 ORDER BY account',[p.tenantId])).rows.filter(row=>p.departmentIds?.includes("*")||row.department_ids.every(d=>p.departmentIds?.includes(d))).map(safe);
 }
+export async function listManagedAccountsForHr(p){
+ requirePhaseOneCapability(p,'hr:accounts:create');
+ if(!postgresPersistenceEnabled())throw fail('MANAGEMENT_ACCOUNT_STORE_REQUIRED','人员管理需要数据库',503);
+ return (await postgres().tenantQuery(p.tenantId,'SELECT * FROM management_accounts WHERE tenant_id=$1 ORDER BY account',[p.tenantId]))
+  .rows.filter(row=>hrCreatableRole(row.business_role)&&accountWithinScope(row,p))
+  .map(safe);
+}
+export async function createManagedAccountForHr(input,p){
+ requirePhaseOneCapability(p,'hr:accounts:create');
+ if(String(input?.subject||'').trim())throw fail('HR_ACCOUNT_CREATE_ONLY','人事新增账号接口不能修改已有账号',400);
+ return saveManagementAccount(input,p);
+}
 export async function saveManagementAccount(input,p){
- requirePhaseOneCapability(p,'users:manage');
+ const canManageUsers=hasPhaseOneCapability(p,'users:manage');
+ const canCreateHrAccounts=hasPhaseOneCapability(p,'hr:accounts:create');
+ if(!canManageUsers&&!canCreateHrAccounts)throw fail('PHASE_ONE_CAPABILITY_FORBIDDEN','当前岗位无账号管理权限',403);
  if(!postgresPersistenceEnabled())throw fail('MANAGEMENT_ACCOUNT_STORE_REQUIRED','人员管理需要数据库',503);
   const role=roleCatalogEntry(input.role);
   if(role?.key==='superadministrator')requirePhaseOneCapability(p,'superadmin:manage');
  if(!role||!Array.isArray(input.departments)||!input.departments.length||input.departments.some(d=>typeof d!=='string'||!d.trim()||d.length>80))throw fail('MANAGEMENT_ASSIGNMENT_INVALID','请填写有效岗位和科室范围',400);
+ if(!canManageUsers&&(!HR_CREATABLE_ROLE_KEYS.includes(role.key)||input.subject===p.subject))throw fail('HR_ACCOUNT_ROLE_FORBIDDEN','人事账号只能维护普通员工账号，不能创建管理员、超级管理员或修改本人权限',403);
  const scope=new Set(p.departmentIds||[]);
  if(!scope.has('*')&&input.departments.some(d=>!scope.has(d)))throw fail('MANAGEMENT_GRANT_SCOPE_EXCEEDED','不能授予超出本人范围的科室权限');
  const hash=input.password===undefined?null:await passwordHash(input.password);
@@ -66,6 +83,7 @@ export async function saveManagementAccount(input,p){
   await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',['management-accounts:'+p.tenantId]);
   const existing=input.subject?(await client.query('SELECT * FROM management_accounts WHERE tenant_id=$1 AND subject=$2 FOR UPDATE',[p.tenantId,input.subject])).rows[0]:null;
   if(input.subject&&!existing)throw fail('MANAGEMENT_ACCOUNT_NOT_FOUND','账号不存在',404);
+  if(!canManageUsers&&existing&&(!HR_CREATABLE_ROLE_KEYS.includes(roleCatalogEntry(existing.business_role)?.key)||existing.subject===p.subject))throw fail('HR_ACCOUNT_ROLE_FORBIDDEN','人事账号不能修改管理员、超级管理员或本人的权限',403);
   if(existing?.business_role==='超级管理员')requirePhaseOneCapability(p,'superadmin:manage');
   if(existing?.business_role==='超级管理员'&&existing.enabled&&(input.enabled===false||role.key!=='superadministrator')){
    const count=(await client.query("SELECT count(*)::integer AS n FROM management_accounts WHERE tenant_id=$1 AND enabled AND business_role='超级管理员'",[p.tenantId])).rows[0].n;
