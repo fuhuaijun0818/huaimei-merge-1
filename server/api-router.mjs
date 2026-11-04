@@ -75,6 +75,7 @@ import {
   getHrOverview,
   screenResume,
   screenResumeAttachment,
+  saveResumeJobProfile,
   startHrReportScheduler
 } from "./hr-operations.mjs";
 import { HR_RESUME_FILE_MAX_JSON_BYTES } from "./hr-resume-file.mjs";
@@ -707,9 +708,11 @@ export async function handleApiRequest(request, response) {
     const taskMatch = url.pathname.match(/^\/api\/admin\/hr\/workflows\/(hr(?:onb|off)_[a-f0-9-]+)\/tasks\/(hrtask_[a-f0-9-]+)\/complete$/i);
     const accountRoute = url.pathname === "/api/admin/hr/accounts";
     const resumeFileRoute = url.pathname === "/api/admin/hr/resume-screenings/file";
+    const resumeJobProfileRoute = url.pathname === "/api/admin/hr/resume-job-profile";
     const supported = (method === "GET" && url.pathname === "/api/admin/hr")
       || (["GET", "POST"].includes(method) && accountRoute)
       || (method === "POST" && resumeFileRoute)
+      || (method === "POST" && resumeJobProfileRoute)
       || (method === "POST" && url.pathname === "/api/admin/hr/onboarding")
       || (method === "POST" && url.pathname === "/api/admin/hr/offboarding")
       || (method === "POST" && url.pathname === "/api/admin/hr/resume-screenings")
@@ -779,6 +782,8 @@ export async function handleApiRequest(request, response) {
           : await createManagedAccountForHr(payload, principal);
       } else if (resumeFileRoute) {
         data = await screenResumeAttachment({ tenantId:principal.tenantId, actor:principal.subject, payload });
+      } else if (resumeJobProfileRoute) {
+        data = await saveResumeJobProfile({ tenantId:principal.tenantId, actor:principal.subject, payload });
       } else if (url.pathname === "/api/admin/hr/resume-screenings") {
         data = await screenResume({ tenantId:principal.tenantId, actor:principal.subject, payload });
       } else if (url.pathname === "/api/admin/hr/work-logs") {
