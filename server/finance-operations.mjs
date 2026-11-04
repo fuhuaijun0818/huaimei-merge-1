@@ -1,12 +1,16 @@
-import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { buildApprovedFinanceWorkbook } from "./finance-export.mjs";
 
 const DEFAULT_STORE_FILE = resolve(process.cwd(), ".local-data", "finance", "operations.json");
 const STORE_FILE = String(process.env.HUAMEI_FINANCE_STORE_FILE || "").trim();
+const EVIDENCE_ROOT = String(process.env.HUAMEI_FINANCE_EVIDENCE_ROOT || "").trim();
 const memoryMode = STORE_FILE === ":memory:";
 const storeFile = memoryMode ? "" : resolve(STORE_FILE || DEFAULT_STORE_FILE);
+const evidenceRoot = () => resolve(EVIDENCE_ROOT || join(process.cwd(), ".local-data", "finance", "evidence"));
+const MAX_EVIDENCE_FILES = 3;
+const MAX_EVIDENCE_BYTES = 5 * 1024 * 1024;
 let memoryState = null;
 let operationQueue = Promise.resolve();
 
@@ -23,6 +27,8 @@ const money = (value) => {
 const nowIso = () => new Date().toISOString();
 const uid = (prefix) => `${prefix}_${randomUUID()}`;
 const clone = (value) => JSON.parse(JSON.stringify(value));
+const evidencePublic = (evidence = []) => evidence.map(({ storage_name, ...item }) => item);
+const publicRequest = (record) => ({ ...clone(record), evidence:evidencePublic(record.evidence || []) });
 const emptyTenant = () => ({ pettyCash:[], requests:[], events:[], revision:0 });
 const emptyState = () => ({ schemaVersion:1, tenants:{} });
 const readState = async () => {
@@ -84,8 +90,69 @@ const assertVersion = (record, expectedVersion) => {
   }
 };
 
+const evidenceImageType = (buffer) => {
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer.at(-2) === 0xff && buffer.at(-1) === 0xd9) {
+    return { extension:"jpg", mime_type:"image/jpeg" };
+  }
+  if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return { extension:"png", mime_type:"image/png" };
+  }
+  if (buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP") {
+    return { extension:"webp", mime_type:"image/webp" };
+  }
+  throw Object.assign(new Error("凭据图片仅支持JPG、PNG或WebP"), { code:"FINANCE_EVIDENCE_TYPE_INVALID", status:400 });
+};
+const prepareEvidence = (values) => {
+  if (values === undefined) return [];
+  if (!Array.isArray(values)) throw Object.assign(new Error("凭据图片格式无效"), { code:"FINANCE_EVIDENCE_INVALID", status:400 });
+  if (values.length > MAX_EVIDENCE_FILES) {
+    throw Object.assign(new Error("每笔财务申请最多上传3张凭据图片"), { code:"FINANCE_EVIDENCE_COUNT_EXCEEDED", status:400 });
+  }
+  return values.map((value) => {
+    const encoded = String(value?.data_base64 || "").trim();
+    if (!encoded || encoded.length > Math.ceil(MAX_EVIDENCE_BYTES * 4 / 3) + 4
+        || encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
+      throw Object.assign(new Error("凭据图片内容无效"), { code:"FINANCE_EVIDENCE_INVALID", status:400 });
+    }
+    const buffer = Buffer.from(encoded, "base64");
+    if (!buffer.length || buffer.length > MAX_EVIDENCE_BYTES) {
+      throw Object.assign(new Error("每张凭据图片不能超过5MB"), { code:"FINANCE_EVIDENCE_SIZE_INVALID", status:400 });
+    }
+    const type = evidenceImageType(buffer);
+    const originalName = basename(String(value?.file_name || "凭据图片")).replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 160);
+    if (!originalName) throw Object.assign(new Error("凭据图片文件名无效"), { code:"FINANCE_EVIDENCE_NAME_INVALID", status:400 });
+    const id = uid("finevidence");
+    return {
+      id,
+      file_name:originalName,
+      mime_type:type.mime_type,
+      size:buffer.length,
+      sha256:createHash("sha256").update(buffer).digest("hex"),
+      storage_name:`${id}.${type.extension}`,
+      uploaded_at:nowIso(),
+      buffer
+    };
+  });
+};
+const tenantEvidenceDirectory = (tenantId) => join(evidenceRoot(), createHash("sha256").update(text(tenantId, 120)).digest("hex").slice(0, 24));
+const storeEvidence = async (tenantId, files) => {
+  if (!files.length) return;
+  const directory = tenantEvidenceDirectory(tenantId);
+  await mkdir(directory, { recursive:true, mode:0o700 });
+  for (const file of files) {
+    await writeFile(join(directory, file.storage_name), file.buffer, { mode:0o600, flag:"wx" });
+  }
+};
+const removeStoredEvidence = async (tenantId, files) => {
+  const directory = tenantEvidenceDirectory(tenantId);
+  for (const file of files) await unlink(join(directory, file.storage_name)).catch(() => {});
+};
+
 export async function getFinanceOverview({ tenantId } = {}) {
-  return withState(async (state) => clone(tenantState(state, tenantId)));
+  return withState(async (state) => {
+    const tenant = tenantState(state, tenantId);
+    return { ...clone(tenant), requests:tenant.requests.map(publicRequest) };
+  });
 }
 
 export async function createPettyCashApplication({ tenantId, actor, payload = {} } = {}) {
@@ -167,6 +234,7 @@ export async function writeOffPettyCash({ tenantId, actor, id, expectedVersion, 
 }
 
 export async function createFinanceRequest({ tenantId, actor, payload = {} } = {}) {
+  const evidenceFiles = prepareEvidence(payload.evidence_files);
   return withState(async (state) => {
     const tenant = tenantState(state, tenantId);
     const type = text(payload.type, 30);
@@ -187,6 +255,7 @@ export async function createFinanceRequest({ tenantId, actor, payload = {} } = {
       approval_status:"pending",
       approved_at:null,
       approved_by:null,
+      evidence:evidenceFiles.map(({ buffer, ...item }) => item),
       version:1,
       created_by:text(actor, 120) || "system",
       created_at:nowIso(),
@@ -195,11 +264,17 @@ export async function createFinanceRequest({ tenantId, actor, payload = {} } = {
     if (!record.company || !record.expense_type || !record.project_name || !record.applicant) {
       throw Object.assign(new Error("请填写所属公司、费用类型、项目名称和申请人"), { code:"FINANCE_REQUEST_INVALID", status:400 });
     }
+    try {
+      await storeEvidence(tenantId, evidenceFiles);
+    } catch {
+      await removeStoredEvidence(tenantId, evidenceFiles);
+      throw Object.assign(new Error("凭据图片保存失败，请稍后重试"), { code:"FINANCE_EVIDENCE_STORE_FAILED", status:503 });
+    }
     tenant.requests.unshift(record);
     tenant.requests = tenant.requests.slice(0, 100_000);
     appendEvent(tenant, { type:"finance.request.created", actor, resourceType:"finance_request", resourceId:record.id, detail:`${record.type_label} · ¥${record.amount.toFixed(2)}` });
     tenant.revision += 1;
-    return clone(record);
+    return publicRequest(record);
   });
 }
 
@@ -218,7 +293,25 @@ export async function approveFinanceRequest({ tenantId, actor, id, expectedVersi
     record.version += 1;
     appendEvent(tenant, { type:"finance.request.approved", actor, resourceType:"finance_request", resourceId:record.id, detail:`${record.type_label} · 审批完成` });
     tenant.revision += 1;
-    return clone(record);
+    return publicRequest(record);
+  });
+}
+
+export async function getFinanceEvidence({ tenantId, actor, requestId, evidenceId } = {}) {
+  return withState(async (state) => {
+    const tenant = tenantState(state, tenantId);
+    const request = tenant.requests.find((item) => item.id === requestId);
+    const evidence = request?.evidence?.find((item) => item.id === evidenceId);
+    if (!evidence) throw Object.assign(new Error("未找到凭据图片"), { code:"FINANCE_EVIDENCE_NOT_FOUND", status:404 });
+    let buffer;
+    try {
+      buffer = await readFile(join(tenantEvidenceDirectory(tenantId), evidence.storage_name));
+    } catch {
+      throw Object.assign(new Error("凭据图片文件不存在"), { code:"FINANCE_EVIDENCE_STORAGE_MISSING", status:404 });
+    }
+    appendEvent(tenant, { type:"finance.evidence.viewed", actor, resourceType:"finance_request", resourceId:request.id, detail:`查看凭据图片 ${evidence.file_name}` });
+    tenant.revision += 1;
+    return { buffer, file_name:evidence.file_name, mime_type:evidence.mime_type };
   });
 }
 

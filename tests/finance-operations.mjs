@@ -1,11 +1,33 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import JSZip from "jszip";
 
 process.env.HUAMEI_FINANCE_STORE_FILE = ":memory:";
+const evidenceRoot = mkdtempSync(join(tmpdir(), "huamei-finance-evidence-"));
+process.env.HUAMEI_FINANCE_EVIDENCE_ROOT = evidenceRoot;
 const finance = await import("../server/finance-operations.mjs");
 
 const tenantId = "tenant-finance-test";
 const actor = "finance-operator";
+const receiptPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=", "base64");
+await assert.rejects(
+  finance.createFinanceRequest({
+    tenantId,
+    actor,
+    payload:{
+      type:"expense",
+      company:"时代之美测试公司",
+      expense_type:"差旅费",
+      project_name:"非法凭据项目",
+      applicant:"测试员工",
+      amount:1,
+      evidence_files:[{ file_name:"伪造.png", mime_type:"image/png", data_base64:Buffer.from("not-an-image").toString("base64") }]
+    }
+  }),
+  (error) => error.code === "FINANCE_EVIDENCE_TYPE_INVALID"
+);
 const petty = await finance.createPettyCashApplication({
   tenantId,
   actor,
@@ -54,7 +76,12 @@ const expense = await finance.createFinanceRequest({
     amount:1280.35,
     cost_center:"人力行政",
     invoice_reference:"INV-001",
-    description:"=HYPERLINK(\"https://invalid.example\",\"点击\")"
+    description:"=HYPERLINK(\"https://invalid.example\",\"点击\")",
+    evidence_files:[{
+      file_name:"报销发票.png",
+      mime_type:"image/png",
+      data_base64:receiptPng.toString("base64")
+    }]
   }
 });
 const payment = await finance.createFinanceRequest({
@@ -88,6 +115,17 @@ const procurement = await finance.createFinanceRequest({
   }
 });
 assert.equal(expense.approval_status, "pending");
+assert.equal(expense.evidence.length, 1);
+assert.equal(expense.evidence[0].file_name, "报销发票.png");
+assert.equal(Object.hasOwn(expense.evidence[0], "storage_name"), false);
+const evidence = await finance.getFinanceEvidence({
+  tenantId,
+  actor,
+  requestId:expense.id,
+  evidenceId:expense.evidence[0].id
+});
+assert.equal(evidence.mime_type, "image/png");
+assert.deepEqual(evidence.buffer, receiptPng);
 const approvedExpense = await finance.approveFinanceRequest({ tenantId, actor, id:expense.id, expectedVersion:expense.version });
 const approvedPayment = await finance.approveFinanceRequest({ tenantId, actor, id:payment.id, expectedVersion:payment.version });
 assert.equal(approvedExpense.approval_status, "approved");
@@ -109,6 +147,9 @@ assert.match(sheet, /所属公司/);
 assert.match(sheet, /费用类型/);
 assert.match(sheet, /费用金额（元）/);
 assert.match(sheet, /项目名称/);
+assert.match(sheet, /凭据图片数量/);
+assert.match(sheet, /凭据图片文件/);
+assert.match(sheet, /报销发票\.png/);
 assert.match(sheet, /1280\.35/);
 assert.match(sheet, /5000/);
 assert.doesNotMatch(sheet, new RegExp(procurement.id));
@@ -122,3 +163,4 @@ assert.equal(overview.requests.filter((item) => item.approval_status === "approv
 assert.ok(overview.events.some((item) => item.type === "finance.export.completed"));
 
 console.log("finance-operations: passed");
+rmSync(evidenceRoot, { recursive:true, force:true });
