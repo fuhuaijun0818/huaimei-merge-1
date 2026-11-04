@@ -84,6 +84,7 @@ import {
   createFinanceRequest,
   createPettyCashApplication,
   exportApprovedFinanceRequests,
+  getFinanceEvidence,
   getFinanceOverview,
   issuePettyCash,
   writeOffPettyCash
@@ -243,13 +244,13 @@ const sendError = (request, response, requestId, status, code, message, details 
   sendJson(request, response, requestId, status, { error: { code, message, ...(details.length ? { details } : {}) }, request_id: requestId }, extraHeaders);
 };
 
-const sendDownload = (request, response, requestId, status, buffer, contentType, fileName) => {
+const sendDownload = (request, response, requestId, status, buffer, contentType, fileName, disposition = "attachment") => {
   const fallback = String(fileName || "download").replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_");
   response.writeHead(status, {
     ...corsHeaders(request),
     "Content-Type":contentType,
     "Content-Length":buffer.length,
-    "Content-Disposition":`attachment; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
+    "Content-Disposition":`${disposition}; filename="${fallback}"; filename*=UTF-8''${encodeURIComponent(fileName)}`,
     "Cache-Control":"no-store",
     "X-Content-Type-Options":"nosniff",
     "X-Request-Id":requestId
@@ -732,8 +733,10 @@ export async function handleApiRequest(request, response) {
     const pettyCashIssueMatch = url.pathname.match(/^\/api\/admin\/finance\/petty-cash\/(finpc_[a-f0-9-]+)\/issue$/i);
     const pettyCashWriteOffMatch = url.pathname.match(/^\/api\/admin\/finance\/petty-cash\/(finpc_[a-f0-9-]+)\/write-off$/i);
     const requestApprovalMatch = url.pathname.match(/^\/api\/admin\/finance\/requests\/(finreq_[a-f0-9-]+)\/approve$/i);
+    const evidenceMatch = url.pathname.match(/^\/api\/admin\/finance\/requests\/(finreq_[a-f0-9-]+)\/evidence\/(finevidence_[a-f0-9-]+)$/i);
     const supported = (method === "GET" && url.pathname === "/api/admin/finance")
       || (method === "GET" && exportRoute)
+      || (method === "GET" && evidenceMatch)
       || (method === "POST" && url.pathname === "/api/admin/finance/petty-cash")
       || (method === "POST" && url.pathname === "/api/admin/finance/requests")
       || (method === "POST" && pettyCashIssueMatch)
@@ -754,9 +757,9 @@ export async function handleApiRequest(request, response) {
         principal,
         requestId,
         request,
-        action:`management.finance.${pettyCashIssueMatch ? "petty_cash_issue" : pettyCashWriteOffMatch ? "petty_cash_writeoff" : requestApprovalMatch ? "request_approve" : exportRoute ? "export" : url.pathname.split("/").at(-1)}`,
+        action:`management.finance.${pettyCashIssueMatch ? "petty_cash_issue" : pettyCashWriteOffMatch ? "petty_cash_writeoff" : requestApprovalMatch ? "request_approve" : evidenceMatch ? "evidence_view" : exportRoute ? "export" : url.pathname.split("/").at(-1)}`,
         resourceType:"finance_operations",
-        resourceId:pettyCashIssueMatch?.[1] || pettyCashWriteOffMatch?.[1] || requestApprovalMatch?.[1] || principal.tenantId
+        resourceId:pettyCashIssueMatch?.[1] || pettyCashWriteOffMatch?.[1] || requestApprovalMatch?.[1] || evidenceMatch?.[1] || principal.tenantId
       });
     } catch (error) {
       sendManagementAuthorizationError(request, response, requestId, error);
@@ -767,6 +770,14 @@ export async function handleApiRequest(request, response) {
         if (exportRoute) {
           const exported = await exportApprovedFinanceRequests({ tenantId:principal.tenantId, actor:principal.subject });
           sendDownload(request, response, requestId, 200, exported.buffer, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", exported.file_name);
+        } else if (evidenceMatch) {
+          const evidence = await getFinanceEvidence({
+            tenantId:principal.tenantId,
+            actor:principal.subject,
+            requestId:evidenceMatch[1],
+            evidenceId:evidenceMatch[2]
+          });
+          sendDownload(request, response, requestId, 200, evidence.buffer, evidence.mime_type, evidence.file_name, "inline");
         } else {
           const data = await getFinanceOverview({ tenantId:principal.tenantId });
           sendJson(request, response, requestId, 200, { data, request_id:requestId });
@@ -783,7 +794,7 @@ export async function handleApiRequest(request, response) {
     }
     let payload;
     try {
-      payload = await readJsonBody(request);
+      payload = await readJsonBody(request, url.pathname === "/api/admin/finance/requests" ? 24 * 1024 * 1024 : MAX_BODY_BYTES);
     } catch (error) {
       sendError(request, response, requestId, error.code === "BODY_TOO_LARGE" ? 413 : 400, error.code || "INVALID_JSON", "请求体不是有效JSON");
       return true;
