@@ -1,4 +1,5 @@
 import { icon } from "../../icons.js";
+import { HR_CREATABLE_ROLE_KEYS, ROLE_CATALOG, roleCatalogEntry } from "../../role-catalog.js";
 import { badge, card, closeModal, empty, escapeHtml, formField, formatDate, metric, openModal, pageHead, toast } from "../../ui.js";
 
 const ui = {
@@ -16,9 +17,11 @@ const tabs = [
   ["onboarding", "入职流程"],
   ["offboarding", "离职流程"],
   ["resume", "简历筛选助手"],
-  ["reports", "报告生成助手"]
+  ["reports", "报告生成助手"],
+  ["accounts", "账号管理"]
 ];
 const periodLabels = { daily:"日报", weekly:"周报", monthly:"月报" };
+const hrAccountRoles = ROLE_CATALOG.filter((role) => HR_CREATABLE_ROLE_KEYS.includes(role.key));
 const statusTone = (status) => /完成|在职|正常/.test(String(status || "")) ? "success"
   : /逾期|风险/.test(String(status || "")) ? "danger"
     : /待|准备|交接|进行/.test(String(status || "")) ? "warning" : "outline";
@@ -70,7 +73,16 @@ const hydrateHr = async ({ force = false, announce = false } = {}) => {
   ui.error = "";
   refreshHrContent();
   try {
-    ui.data = await request("/api/admin/hr");
+    const [overview, managedAccounts, identity] = await Promise.all([
+      request("/api/admin/hr"),
+      request("/api/admin/hr/accounts"),
+      request("/api/admin/identity")
+    ]);
+    ui.data = {
+      ...overview,
+      managedAccounts:Array.isArray(managedAccounts) ? managedAccounts : [],
+      currentAccount:identity
+    };
     ui.loaded = true;
     if (announce) toast("人事数据已刷新", "success");
     return ui.data;
@@ -148,6 +160,18 @@ const employeesPage = () => {
   return `<section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>员工</th><th>登录账号</th><th>部门 / 岗位</th><th>负责人</th><th>入职日期</th><th>状态</th><th>联系方式</th></tr></thead><tbody>${employees.map((employee) => `<tr><td><strong>${escapeHtml(employee.name)}</strong><div class="caption">${escapeHtml(employee.id)}</div></td><td>${escapeHtml(employee.account_id || "待补齐")}</td><td>${escapeHtml(employee.department)}<div class="caption">${escapeHtml(employee.position)}</div></td><td>${escapeHtml(employee.manager)}</td><td>${escapeHtml(employee.start_date)}</td><td>${badge(employee.status, statusTone(employee.status))}</td><td>${escapeHtml(employee.mobile || "未填写")}<div class="caption">${escapeHtml(employee.email || "未填写邮箱")}</div></td></tr>`).join("")}</tbody></table></div></section>`;
 };
 
+const accountsPage = () => {
+  const accounts = ui.data?.managedAccounts || [];
+  const currentSubject = String(ui.data?.currentAccount?.subject || "");
+  const header = `<div class="hr-owner-strip"><span>员工账号管理</span><strong>仅限普通岗位</strong><small>人事可以创建和维护员工账号，但不能创建管理员、超级管理员，也不能修改本人权限。</small></div>`;
+  const actions = `<div class="hr-report-actions"><button class="btn primary" data-action="hr-new-managed-account">${icon("plus",14)}新增员工账号</button></div>`;
+  if (!accounts.length) return `${header}${actions}<section class="card">${empty("暂无员工登录账号", "新增员工账号后，账号会立即获得所选岗位对应的菜单和接口权限。")}</section>`;
+  return `${header}${actions}<section class="card"><div class="table-wrap"><table class="data-table"><thead><tr><th>姓名</th><th>登录账号</th><th>岗位</th><th>科室范围</th><th>状态</th><th>操作</th></tr></thead><tbody>${accounts.map((account) => {
+    const isSelf = account.subject === currentSubject;
+    return `<tr><td><strong>${escapeHtml(account.display_name)}</strong><div class="caption">${escapeHtml(account.subject)}</div></td><td>${escapeHtml(account.account)}</td><td>${badge(account.business_role, "outline")}</td><td>${escapeHtml((account.department_ids || []).join("、"))}</td><td>${badge(account.enabled ? "启用" : "停用", account.enabled ? "success" : "warning")}</td><td>${isSelf ? '<span class="caption">当前登录账号</span>' : `<button class="link" data-action="hr-edit-managed-account" data-id="${escapeHtml(account.subject)}">编辑 / 重置密码</button>`}</td></tr>`;
+  }).join("")}</tbody></table></div></section>`;
+};
+
 const workflowsPage = (type) => {
   const workflows = (ui.data?.workflows || []).filter((item) => item.type === type);
   if (!workflows.length) return empty(type === "onboarding" ? "暂无入职流程" : "暂无离职流程", type === "onboarding" ? "发起入职后，系统会自动生成资料、合同、账号、资产、培训和报到任务。" : "发起离职后，系统会自动生成交接、资产、账号、财务和面谈任务。");
@@ -200,7 +224,8 @@ export function renderHrPage() {
         onboarding:() => workflowsPage("onboarding"),
         offboarding:() => workflowsPage("offboarding"),
         resume:resumePage,
-        reports:reportsPage
+        reports:reportsPage,
+        accounts:accountsPage
       }[ui.tab] || dashboard)();
   const actions = `<button class="btn" data-action="hr-refresh">${icon("refresh",15)}刷新</button><button class="btn" data-action="hr-new-offboarding">${icon("route",15)}发起离职</button><button class="btn primary" data-action="hr-new-onboarding">${icon("plus",15)}发起入职</button>`;
   return `<div class="page hr-page">${pageHead("", "人事管理", `独立人事工作台 · ${metrics.active} 名在职员工 · ${metrics.onboarding} 个在办入职 · ${metrics.offboarding} 个在办离职`, actions)}
@@ -276,6 +301,35 @@ const showResumeScreeningModal = () => {
       <div class="form-group full"><div class="guardrail">${icon("shield",14)}不读取或推断年龄、性别、婚育、民族、照片等敏感信息；系统不会自动拒绝候选人。</div></div>
     </form>`,
     footer:`<button class="btn" data-action="modal-close">取消</button><button class="btn primary" data-action="hr-submit-form" data-id="hr-resume-form">开始匹配评分</button>`
+  });
+};
+
+const showHrManagedAccountModal = (subject = "") => {
+  const account = subject ? (ui.data?.managedAccounts || []).find((item) => item.subject === subject) : null;
+  if (subject && !account) return toast("未找到该员工账号", "warning");
+  const roleItems = hrAccountRoles.map((role) => ({ value:role.key, label:role.name }));
+  const currentRole = roleCatalogEntry(account?.business_role)?.key || "presales";
+  const defaultDepartments = account?.department_ids?.length
+    ? account.department_ids
+    : ui.data?.currentAccount?.departments?.length
+      ? ui.data.currentAccount.departments
+      : ["*"];
+  openModal({
+    title:account ? "编辑员工账号" : "新增员工账号",
+    desc:"人事只能创建和维护普通员工岗位；不能创建管理员、超级管理员，也不能修改本人账号。",
+    wide:true,
+    body:`<form id="hr-managed-account-form" data-subject="${escapeHtml(account?.subject || "")}" data-version="${account?.version || 0}"><div class="form-grid">
+      ${formField("姓名","display_name",account?.display_name || "",{required:true})}
+      ${account
+        ? `<label class="form-group"><span class="form-label">登录账号</span><input class="form-control" value="${escapeHtml(account.account)}" disabled /></label>`
+        : formField("登录账号","account","",{required:true})}
+      ${formField("岗位","role",currentRole,{type:"select",items:roleItems})}
+      ${formField("授权科室（逗号分隔，全院填 *）","departments",defaultDepartments.join("，"),{required:true})}
+      ${formField("状态","enabled",account?.enabled === false ? "停用" : "启用",{type:"select",items:["启用","停用"]})}
+      <label class="form-group full"><span class="form-label">${account ? "重置密码（留空则不修改）" : "初始密码（至少8位）"}</span><input class="form-control" name="password" type="password" autocomplete="new-password" minlength="8" maxlength="256" ${account ? "" : "required"} /></label>
+      <div class="form-group full"><div class="guardrail">${icon("shield",14)}账号提交后会立即获得所选普通岗位的权限；管理员和超级管理员账号不能在人事模块创建或修改。</div></div>
+    </div></form>`,
+    footer:`<button class="btn" data-action="modal-close">取消</button><button class="btn primary" data-action="hr-submit-form" data-id="hr-managed-account-form">${account ? "保存账号权限" : "创建员工账号"}</button>`
   });
 };
 
@@ -362,6 +416,8 @@ const handleHrAction = async (action, id, target) => {
   if (action === "hr-new-onboarding") return showOnboardingModal();
   if (action === "hr-new-offboarding") return showOffboardingModal();
   if (action === "hr-new-resume-screen") return showResumeScreeningModal();
+  if (action === "hr-new-managed-account") return showHrManagedAccountModal();
+  if (action === "hr-edit-managed-account") return showHrManagedAccountModal(id);
   if (action === "hr-complete-task") return showCompleteTaskModal(id, target.dataset.taskId || "");
   if (action === "hr-voice-worklog") return startVoiceWorkLog();
   if (action === "hr-save-worklog") return saveHrWorkLog(target);
@@ -426,7 +482,7 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("submit", async (event) => {
   const form = event.target;
-  if (!["hr-onboarding-form", "hr-offboarding-form", "hr-complete-task-form", "hr-resume-form"].includes(form.id)) return;
+  if (!["hr-onboarding-form", "hr-offboarding-form", "hr-complete-task-form", "hr-resume-form", "hr-managed-account-form"].includes(form.id)) return;
   form.dataset.hrSubmitSeen = "true";
   event.preventDefault();
   event.stopImmediatePropagation();
@@ -469,6 +525,29 @@ document.addEventListener("submit", async (event) => {
       ui.tab = "resume";
       refreshHrContent();
       toast("简历匹配评分已生成，请结合岗位要求人工复核", "success");
+    } else if (form.id === "hr-managed-account-form") {
+      const payload = {
+        display_name:String(data.display_name || "").trim(),
+        account:String(data.account || "").trim(),
+        role:data.role,
+        departments:String(data.departments || "").split(/[，,]/).map((item) => item.trim()).filter(Boolean),
+        enabled:data.enabled === "启用"
+      };
+      if (form.dataset.subject) {
+        payload.subject = form.dataset.subject;
+        payload.expected_version = Number(form.dataset.version) || 0;
+      }
+      if (data.password) payload.password = String(data.password);
+      const saved = await request("/api/admin/hr/accounts", {
+        method:"POST",
+        headers:{ "Idempotency-Key":key("hr-managed-account") },
+        body:JSON.stringify(payload)
+      });
+      closeModal();
+      await hydrateHr({ force:true });
+      ui.tab = "accounts";
+      refreshHrContent();
+      toast(`员工账号 ${saved.account} 已${form.dataset.subject ? "更新" : "创建"}`, "success");
     } else {
       await request(`/api/admin/hr/workflows/${encodeURIComponent(form.dataset.workflowId)}/tasks/${encodeURIComponent(form.dataset.taskId)}/complete`, {
         method:"POST",
